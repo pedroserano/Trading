@@ -1,0 +1,49 @@
+# Trading app stack. Lives on a TrueNAS dataset next to its .env file.
+# See docs/DEPLOY-TRUENAS.md.
+services:
+  backend:
+    image: ghcr.io/pedroserano/trading-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD in .env}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      SCHWAB_APP_KEY: ${SCHWAB_APP_KEY:?set SCHWAB_APP_KEY in .env}
+      SCHWAB_APP_SECRET: ${SCHWAB_APP_SECRET:?set SCHWAB_APP_SECRET in .env}
+      SCHWAB_CALLBACK_URL: ${SCHWAB_CALLBACK_URL:-https://127.0.0.1:8182}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      TZ: America/New_York
+    volumes:
+      - ${DATA_ROOT:?set DATA_ROOT in .env}/config:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trading
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: America/New_York
+    volumes:
+      - ${DATA_ROOT}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d trading"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      NAS_HOST: ${NAS_HOST}
+      SITE_ADDRESS: https://${NAS_HOST:?set NAS_HOST in .env}:${HTTPS_PORT:-8443}
+    ports:
+      - "${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_ROOT}/caddy:/data
+    depends_on:
+      - backend

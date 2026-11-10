@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% macro money(v) %}{% if v is none %}–{% else %}{{ "{:,.2f}".format(v) }}{% endif %}{% endmacro %}
+{% block header %}
+<form class="inline" method="post" action="/logout"><button class="link">Sign out</button></form>
+{% endblock %}
+{% block main %}
+
+{% if error %}<section class="error">{{ error }}</section>{% endif %}
+
+<section>
+  <h2>Status</h2>
+  <p>
+    {% if status.connected %}
+      <span class="dot {{ 'warn' if status.expires_in_days < 2 else 'ok' }}"></span>
+      Schwab connected. Sign-in expires in {{ status.expires_in_days }} days.
+    {% else %}
+      <span class="dot bad"></span>Schwab not connected{% if status.detail %}: {{ status.detail }}{% endif %}.
+    {% endif %}
+  </p>
+  <p>
+    {% if db_error %}<span class="dot bad"></span>Database unreachable: <span class="dim">{{ db_error }}</span>
+    {% else %}<span class="dot ok"></span>Database connected.{% endif %}
+  </p>
+</section>
+
+{% if status.connected and (accounts or not error) %}
+<section>
+  <h2>Accounts visible to this app</h2>
+  {% if accounts %}
+  <div class="scroll">
+  <table>
+    <tr><th>Account</th><th>Type</th><th>Net liq</th><th>Cash</th>
+        <th>Buying power</th><th>Positions</th></tr>
+    {% for a in accounts %}
+    <tr><td>…{{ a.last4 }}</td><td>{{ a.type or "–" }}</td><td>{{ money(a.net_liq) }}</td>
+        <td>{{ money(a.cash) }}</td><td>{{ money(a.buying_power) }}</td><td>{{ a.positions }}</td></tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% if accounts|length > 1 %}
+  <p class="dim">More than one account is visible. To limit the app to one, sign in to Schwab
+     again below and tick only that account on the consent screen.</p>
+  {% endif %}
+  {% elif not error %}
+  <p class="dim">Schwab returned no accounts.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h2>{{ "Renew Schwab sign-in" if status.connected else "Connect to Schwab" }}</h2>
+  <ol>
+    <li><a class="button primary" href="/schwab/authorize" target="_blank" rel="noopener">Open Schwab sign-in</a>
+        <span class="dim">&nbsp;opens in a new tab</span></li>
+    <li>Sign in, tick only the account this app should trade, and approve.</li>
+    <li>Schwab then sends the browser to <code>{{ callback_url }}</code>, which shows a
+        "can't connect" error. That is expected. Copy the whole address from the address bar.</li>
+    <li>Paste it here within about 30 seconds:
+      <form method="post" action="/schwab/complete" style="margin-top:8px">
+        <p><input type="text" name="received_url" placeholder="{{ callback_url }}/?code=…"
+                  autocomplete="off" required></p>
+        <p><button class="primary" type="submit">Finish sign-in</button></p>
+      </form>
+    </li>
+  </ol>
+  {% if status.connected %}
+  <form method="post" action="/schwab/disconnect"
+        onsubmit="return confirm('Delete the stored Schwab token?')">
+    <button class="link">Disconnect and delete the stored token</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

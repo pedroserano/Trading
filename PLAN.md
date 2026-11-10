@@ -86,8 +86,9 @@ the token and the stream.
 Client library recommendation: **schwab-py**, wrapped behind our own `BrokerClient`
 interface so it can be swapped. It is the thinner wrapper, built on httpx with a separate
 async streaming client, which suits an asyncio service. Schwabdev is the fallback and has
-better stream lifecycle handling out of the box. This is a close call; a one-day spike in
-phase 0 should settle it.
+better stream lifecycle handling out of the box. The phase 0 spike confirmed schwab-py 1.5.1 covers what the
+backend needs: sign-in from a pasted redirect address, custom token storage (used for
+encryption at rest), and an async client.
 
 The `BrokerClient` interface gets two implementations: `SchwabBroker` and `SimBroker`.
 `SimBroker` uses live market data and fills simulated orders at mid minus a configurable
