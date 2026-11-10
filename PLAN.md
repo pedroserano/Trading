@@ -25,12 +25,22 @@ These shape the design more than any framework choice.
 | The API has no IV rank field. | Compute IV rank ourselves from a stored daily IV history per underlying (section 6). |
 | The API has no paper trading and no historical option prices. | Build a simulated broker for dry runs. Backtesting is out of scope. |
 | Schwab's order JSON for multi-leg orders is intricate, and library templates cover only singles and verticals. | Write our own strategy-to-order builder with heavy unit tests, and run every order through Schwab's preview endpoint before sending. |
-| Rate limits are not publicly documented. Third-party sources mostly cite about 120 requests per minute, and they disagree. | Central rate limiter in the Schwab client, streaming preferred over polling, and limits kept in config. Confirm the real figures in the developer portal. |
+| Order requests (place, replace, cancel) are throttled per account at a figure set on the app registration, from 0 to 120 a minute. Reading orders is unthrottled. No market data limit is stated. | Central rate limiter in the Schwab client, streaming preferred over polling, limits kept in config. Check the app's order throttle is above zero before phase 4. |
+| Order entry through the API covers only the `EQUITY` and `OPTION` asset types. | Matches the chosen scope. Whether cash-settled index options such as SPX are accepted as `OPTION` is untested and gets checked with a preview call before any index product is added. |
 | The target NAS runs TrueNAS 25.10.7, which runs apps as plain Docker Compose ("Install via YAML") and requires a top-level `services` key. | Ship a standard compose file. No Kubernetes or Helm work. |
 
-Unverified items to confirm in the Schwab developer portal before building: exact rate
-limits, streamer symbol cap, streamer session limit, and whether the app registration
-needs thinkorswim enabled on the account for order placement (Schwabdev's docs say it does).
+Confirmed from Schwab's own portal documentation (OAuth guide, order samples, both API
+specifications, streamer guide): the 30-minute and 7-day token lifetimes, the HTTPS callback
+rule, the limit of one streamer connection per user, the order throttle above, and the
+existence of a preview-order endpoint. The registered app has both products, shows
+"Ready For Use", and uses the callback `https://127.0.0.1:8182`.
+
+Still not documented in what has been reviewed, and to be settled by testing in phase 0:
+the streamer's symbol limit (the guide confirms one exists, error code 19, without a number),
+the streamer field numbering for options and account activity, and the order JSON for
+strangles, iron condors and rolls. The portal's samples stop at a two-leg vertical, sent as
+`NET_DEBIT` or `NET_CREDIT` with an `orderLegCollection`. schwab-py's source covers the field
+numbering, and its order-capture script covers the JSON.
 
 ## 3. What others have built
 
@@ -83,6 +93,15 @@ The `BrokerClient` interface gets two implementations: `SchwabBroker` and `SimBr
 `SimBroker` uses live market data and fills simulated orders at mid minus a configurable
 slippage. It is what the app runs against until live trading is deliberately switched on.
 
+### Account targeting
+
+The Schwab login may hold several accounts; the app trades exactly one. Two layers enforce that:
+
+1. At the Schwab consent screen during sign-in, tick only the account the app should see. Schwab then issues a token that cannot reach the others at all. This is the strong control, and it is repeated at each weekly re-login.
+2. On first run the app lists the accounts the token can see (`GET /accounts/accountNumbers`, which returns each number with the hashed value the API uses in URLs), and the user picks one. That hash is stored, every order and account call goes through one function that uses only it, and the server refuses to start in LIVE mode if the token exposes more accounts than the one selected unless an explicit override is set.
+
+The header shows the last four digits of the active account at all times.
+
 ### Database: PostgreSQL
 
 Postgres rather than SQLite because the IV history and tick-derived snapshots grow, and
@@ -113,6 +132,7 @@ expert will have their own.
 - Strike selection by delta: 16 delta for strangles, 30 delta shorts for defined risk, 20 delta shorts with wings for iron condors. Collect about one third of the width on verticals and condors.
 - Liquidity filter: bid-ask width, open interest, and volume on the chosen strikes.
 - Earnings and ex-dividend dates flagged inside the trade window.
+- Assignment risk: SPY options are American-style and physically settled, so short in-the-money calls are flagged ahead of the quarterly ex-dividend date, and any short option in the money near expiration is flagged. An assignment that arrives as a stock position is recognised and attached to the strategy it came from.
 
 **Management**
 - Profit target: 50% of max profit for strangles, verticals and condors; 25% for straddles. Offer a GTC closing order at the target the moment the opening order fills.
@@ -207,6 +227,7 @@ This app can move real money and holds credentials that can too.
 | 2. Analysis | Chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
 | 3. Simulated trading | Order builder for all listed strategies, preview against Schwab, `SimBroker`, order and roll tickets, journal, roll chains. | Two weeks of simulated trading with builder output checked against orders built by hand in thinkorswim. |
 | 4. Live trading | Guards, audit log, reconciliation, GTC profit-taking orders, cancel and replace. Start with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches. |
+| 4a. SPY-only first year | LIVE mode restricted to SPY by an allowlist setting, one-lot default and a low per-order buying power cap. Other underlyings stay available in SIM. | A year of SPY trading reviewed in the journal before the allowlist is widened. |
 | 5. Refinement | Portfolio screen, performance stats, mobile layout, earnings data, optional one-click "manage at 21 DTE" batch tickets. | Ongoing. |
 
 Automation beyond one-click tickets (for example auto-closing at 50%) is deliberately left
@@ -215,6 +236,9 @@ out. A resting GTC limit order at Schwab does that job without the app needing t
 ## 11. Open questions
 
 Decided:
+
+- First year of live trading is small size in SPY only. The app enforces this with an underlying allowlist rather than relying on discipline. SPY also sidesteps the IV rank wait, since VIX history gives its rank from day one.
+- The app targets one chosen account out of several under the Schwab login (section 4, account targeting).
 
 - TrueNAS 25.10.7.
 - One Schwab brokerage account. The data model still keys everything by account so more can be added.
@@ -225,10 +249,7 @@ Decided:
 - No tastytrade account. IV rank comes from Schwab data only.
 - A Schwab developer app already exists. Reuse it rather than recreating it: the key and secret are shown in the app's details in the portal, and a new app waits for approval again.
 
-Still open:
-
-1. Confirm the existing Schwab app has both products (Accounts and Trading Production, Market Data Production), shows "Ready For Use", and note its exact callback URL. The app must use that string exactly.
-2. From the portal documentation (it is behind the login): the streamer field tables, the place-order JSON examples for multi-leg options, the preview-order response schema, and the stated rate limits.
+Still open: nothing blocks phase 0. The remaining unknowns are listed at the end of section 2 and are resolved by testing against the live API.
 
 ## Sources
 
