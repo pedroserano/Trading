@@ -102,6 +102,16 @@ The Schwab login may hold several accounts; the app trades exactly one. Two laye
 
 The header shows the last four digits of the active account at all times.
 
+### Weekly Schwab sign-in
+
+The 7-day refresh token cannot be extended, so the aim is a 30-second sign-in that never lapses by surprise.
+
+- **One-tap flow.** A second callback URL pointing at the NAS (for example `https://trading.lan/auth/callback`) is added to the Schwab app alongside `https://127.0.0.1:8182`; Schwab accepts several, comma-separated, within 255 characters. Schwab redirects the browser to that address and the backend captures the code, checks the `state` value it issued, and exchanges it for tokens. The address only needs to resolve on the home network.
+- **Fallback.** The paste-the-redirect-URL page stays, using the `127.0.0.1` callback. It is the only flow until the new callback is approved, since editing the app may put it back through Schwab's approval, and until the NAS address has a certificate the browser trusts (Caddy's internal CA installed on the phone and computer, or a real certificate through a DNS challenge on an owned domain).
+- **Scheduled reminder.** A sign-in at any time restarts the 7-day clock. The app sends a notification with a sign-in link at a chosen weekly time (default Sunday 18:00 Eastern), again at 48 and 24 hours before expiry if still not done, and immediately if a refresh fails, which is what a Schwab password change causes.
+- **Lapse behaviour.** If the token expires, the app shows a full-width banner, disables order entry, and keeps the last known positions marked stale. Orders already resting at Schwab, including GTC profit-taking orders, are unaffected.
+- **Not done.** No automated login with stored Schwab credentials.
+
 ### Database: PostgreSQL
 
 Postgres rather than SQLite because the IV history and tick-derived snapshots grow, and
@@ -223,7 +233,7 @@ This app can move real money and holds credentials that can too.
 | Phase | Scope | Exit test |
 |---|---|---|
 | 0. Setup | Register the Schwab developer app (approval takes days and status must read "Ready For Use"), repo scaffold, CI, compose skeleton, library spike. | Container on TrueNAS completes OAuth and prints account balances. |
-| 1. Read-only portfolio | Token lifecycle and re-auth page, accounts and positions, streaming quotes relayed to the browser, strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
+| 1. Read-only portfolio | Token lifecycle, paste-URL and one-tap sign-in with weekly reminder, accounts and positions, streaming quotes relayed to the browser, strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
 | 2. Analysis | Chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
 | 3. Simulated trading | Order builder for all listed strategies, preview against Schwab, `SimBroker`, order and roll tickets, journal, roll chains. | Two weeks of simulated trading with builder output checked against orders built by hand in thinkorswim. |
 | 4. Live trading | Guards, audit log, reconciliation, GTC profit-taking orders, cancel and replace. Start with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches. |
