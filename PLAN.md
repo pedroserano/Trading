@@ -135,16 +135,12 @@ out. That makes it testable and keeps it from ever touching orders directly.
 
 - **IV rank and percentile.** Nightly job stores a 30-day constant-maturity ATM IV for every watchlist and held underlying, interpolated from the two expirations bracketing 30 days. Rank is (current minus 52-week low) over (high minus low). A year of history has to accumulate, so seed it: for index products use the public vol indices (VIX, VXN, RVX, and the CBOE single-stock vol indices where they exist); for others show "building, N days" until enough history exists. The IV source sits behind an `IvProvider` interface so an external source can fill the gap (options below).
 
-  **External IV sources, in order of preference**
+  Schwab is the only IV source in v1. No tastytrade account and no paid feed. How the one-year gap is handled:
 
-  | Source | Cost found | Fit |
-  |---|---|---|
-  | [tastytrade API](https://developer.tastytrade.com/openapi/market-metrics.json) `/market-metrics` | No data fee found; needs a tastytrade account. Whether an unfunded account gets API access is unverified. | Best fit. Returns tastytrade's own IV rank, IV percentile, beta and liquidity rating per underlying, so the numbers match what tastylive quotes. One small REST call per watchlist refresh. No trading through it. |
-  | [IVolatility](https://stockmarketstack.com/tools/ivolatility-api) | From $79 a month | History back to 2005. One month of subscription could backfill a year of IV for the watchlist, then cancel. |
-  | [ORATS](https://orats.com/data-api) | $199 a month listed; which tier includes IV rank history is unclear | Highest quality, history to 2007. More than this app needs. |
-  | [EODHD options add-on](https://eodhd.com/lp/us-stock-options-api) | $29.99 a month | Cheap, but history starts late 2023 and IV would need computing from chains. |
+  - Index and ETF underlyings (SPX, SPY, QQQ, IWM, and others with a CBOE vol index) get a true IV rank from day one, because Schwab serves price history for the vol indices (VIX, VXN, RVX and similar).
+  - Single stocks start collecting on the day they join the watchlist, so the watchlist should be loaded in phase 1, well before trading starts. Until 252 trading days exist the app shows the rank over the history it has, labelled with the day count, alongside two measures available immediately from Schwab data: IV against 30-day historical volatility (from Schwab price history), and the IV percentile within the current chain's term structure.
+  - Optional later shortcut, only if the wait proves annoying: a one-month backfill from a paid source. [IVolatility](https://stockmarketstack.com/tools/ivolatility-api) (from $79 a month, history to 2005) is the candidate; [ORATS](https://orats.com/data-api) ($199 a month listed) is more than needed. The IV store sits behind an `IvProvider` interface so a backfill is an import, not a redesign.
 
-  Recommendation: phase 0 tests whether a free tastytrade account can call `/market-metrics`. If it can, use it as the primary IV rank source and keep our own Schwab-derived history as the fallback and cross-check. If it cannot, run self-computed history and decide on a one-month IVolatility backfill once the watchlist is settled. No paid source is needed to start.
 - **Greeks.** Use Schwab's per-contract Greeks from the chain and the `LEVELONE_OPTIONS` stream. Recompute with our own model (Black-Scholes, with an American approximation for equity options) as a cross-check and for what-if analysis. One researcher found Schwab's reported IV inconsistent with its prices, so the cross-check has real value.
 - **Probability of profit, expected move, breakevens** from the chain.
 - **Beta weighting.** Betas computed from daily price history against SPY, refreshed weekly.
@@ -224,13 +220,15 @@ Decided:
 - One Schwab brokerage account. The data model still keys everything by account so more can be added.
 - Equity and index options only. No futures options.
 - Notifications by Pushover and email. Home-network access only at first.
-- A paid IV source is acceptable if cheap and compatible; none is needed to start (section 6).
+
+- Margin account at the highest options approval level, so undefined-risk strategies (strangles, straddles, ratios, naked puts and calls) are in the builders.
+- No tastytrade account. IV rank comes from Schwab data only.
+- A Schwab developer app already exists. Reuse it rather than recreating it: the key and secret are shown in the app's details in the portal, and a new app waits for approval again.
 
 Still open:
 
-1. Is the brokerage account margin-enabled with the options approval level for naked short options? This decides whether strangles, straddles and ratios appear in the strategy builders or only defined-risk trades.
-2. Do you have, or would you open, a tastytrade account? It may give free IV rank through their API (to be tested in phase 0).
-3. In the Schwab developer portal: has an app been created under "Trader API - Individual" with both the Accounts and Trading and Market Data products, and does it show "Ready For Use"? The callback URL should be `https://127.0.0.1:8182`.
+1. Confirm the existing Schwab app has both products (Accounts and Trading Production, Market Data Production), shows "Ready For Use", and note its exact callback URL. The app must use that string exactly.
+2. From the portal documentation (it is behind the login): the streamer field tables, the place-order JSON examples for multi-leg options, the preview-order response schema, and the stated rate limits.
 
 ## Sources
 
