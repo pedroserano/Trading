@@ -26,7 +26,7 @@ These shape the design more than any framework choice.
 | The API has no paper trading and no historical option prices. | Build a simulated broker for dry runs. Backtesting is out of scope. |
 | Schwab's order JSON for multi-leg orders is intricate, and library templates cover only singles and verticals. | Write our own strategy-to-order builder with heavy unit tests, and run every order through Schwab's preview endpoint before sending. |
 | Rate limits are not publicly documented. Third-party sources mostly cite about 120 requests per minute, and they disagree. | Central rate limiter in the Schwab client, streaming preferred over polling, and limits kept in config. Confirm the real figures in the developer portal. |
-| TrueNAS 25.04 and later run apps as plain Docker Compose ("Install via YAML"). 25.10 and later require a top-level `services` key. | Ship a standard compose file. No Kubernetes or Helm work. |
+| The target NAS runs TrueNAS 25.10.7, which runs apps as plain Docker Compose ("Install via YAML") and requires a top-level `services` key. | Ship a standard compose file. No Kubernetes or Helm work. |
 
 Unverified items to confirm in the Schwab developer portal before building: exact rate
 limits, streamer symbol cap, streamer session limit, and whether the app registration
@@ -133,7 +133,18 @@ out. That makes it testable and keeps it from ever touching orders directly.
 
 ## 6. Derived data we must compute
 
-- **IV rank and percentile.** Nightly job stores a 30-day constant-maturity ATM IV for every watchlist and held underlying, interpolated from the two expirations bracketing 30 days. Rank is (current minus 52-week low) over (high minus low). A year of history has to accumulate, so seed it: for index products use the public vol indices (VIX, VXN, RVX, and the CBOE single-stock vol indices where they exist); for others show "building, N days" until enough history exists. A paid IV history source is an optional later shortcut.
+- **IV rank and percentile.** Nightly job stores a 30-day constant-maturity ATM IV for every watchlist and held underlying, interpolated from the two expirations bracketing 30 days. Rank is (current minus 52-week low) over (high minus low). A year of history has to accumulate, so seed it: for index products use the public vol indices (VIX, VXN, RVX, and the CBOE single-stock vol indices where they exist); for others show "building, N days" until enough history exists. The IV source sits behind an `IvProvider` interface so an external source can fill the gap (options below).
+
+  **External IV sources, in order of preference**
+
+  | Source | Cost found | Fit |
+  |---|---|---|
+  | [tastytrade API](https://developer.tastytrade.com/openapi/market-metrics.json) `/market-metrics` | No data fee found; needs a tastytrade account. Whether an unfunded account gets API access is unverified. | Best fit. Returns tastytrade's own IV rank, IV percentile, beta and liquidity rating per underlying, so the numbers match what tastylive quotes. One small REST call per watchlist refresh. No trading through it. |
+  | [IVolatility](https://stockmarketstack.com/tools/ivolatility-api) | From $79 a month | History back to 2005. One month of subscription could backfill a year of IV for the watchlist, then cancel. |
+  | [ORATS](https://orats.com/data-api) | $199 a month listed; which tier includes IV rank history is unclear | Highest quality, history to 2007. More than this app needs. |
+  | [EODHD options add-on](https://eodhd.com/lp/us-stock-options-api) | $29.99 a month | Cheap, but history starts late 2023 and IV would need computing from chains. |
+
+  Recommendation: phase 0 tests whether a free tastytrade account can call `/market-metrics`. If it can, use it as the primary IV rank source and keep our own Schwab-derived history as the fallback and cross-check. If it cannot, run self-computed history and decide on a one-month IVolatility backfill once the watchlist is settled. No paid source is needed to start.
 - **Greeks.** Use Schwab's per-contract Greeks from the chain and the `LEVELONE_OPTIONS` stream. Recompute with our own model (Black-Scholes, with an American approximation for equity options) as a cross-check and for what-if analysis. One researcher found Schwab's reported IV inconsistent with its prices, so the cross-check has real value.
 - **Probability of profit, expected move, breakevens** from the chain.
 - **Beta weighting.** Betas computed from daily price history against SPY, refreshed weekly.
@@ -178,18 +189,18 @@ This app can move real money and holds credentials that can too.
 **Security**
 - The app has its own login (single user, strong password hashed with argon2, TOTP second factor, short session lifetime). schwab-gateway and edge-trader both ship with no login, which is not acceptable for something that places orders.
 - Schwab app key, secret and tokens are encrypted at rest with a key supplied as a Docker secret, stored on an encrypted ZFS dataset.
-- Never port-forward the app to the internet. Remote access through Tailscale or WireGuard.
+- Never port-forward the app to the internet. v1 is reachable on the home network only. Remote access is a later, optional step: Tailscale is the simplest route (free personal tier, an official TrueNAS app, and a phone app), and adding it needs no change to this app.
 - TLS from Caddy with an internal certificate authority or a DNS-challenge certificate.
 - Secret scanning in pre-commit and CI, and no credentials in the repository.
 
 ## 9. Deployment on TrueNAS
 
-- Target TrueNAS 25.04 or later (Docker-based apps). On older Kubernetes-based SCALE releases, upgrade first.
+- Target: TrueNAS 25.10.7 (Docker-based apps). The compose file uses the top-level `services` key that 25.10 requires.
 - Three containers: `backend`, `postgres`, `caddy`. Images built by GitHub Actions and published to GHCR, so the NAS only pulls.
 - Datasets: `apps/trading/postgres`, `apps/trading/config`, `apps/trading/backups`, with a ZFS snapshot task on each and a nightly `pg_dump` into `backups`.
-- Install through Apps, Discover, Custom App, Install via YAML. On 25.10 and later the compose file can stay on a dataset and be pulled in with `include:`, which keeps it under version control.
+- Install through Apps, Discover, Custom App, Install via YAML. The custom app holds a two-line stub that pulls in the real compose file from a dataset with `include:`, which keeps the real file under version control.
 - Health checks on all three containers, container time zone set to US Eastern, market calendar (including holidays and early closes) from `pandas_market_calendars` or `exchange_calendars`.
-- Notifications through ntfy, Pushover or email: token expiring, rule flags, fills, stream down.
+- Notifications: Pushover as the default (one-time app purchase of about $5, one HTTPS call to send, works away from home with no extra setup), with email over SMTP as a second channel. Events: token expiring, rule flags, fills, stream down. Messages carry symbols and flags but no account numbers or balances, since they pass through a third party. The notifier is an interface, so ntfy or others can be added.
 
 ## 10. Phases
 
@@ -207,11 +218,19 @@ out. A resting GTC limit order at Schwab does that job without the app needing t
 
 ## 11. Open questions
 
-1. Which TrueNAS version is the NAS on? Below 25.04 changes the deployment section.
-2. One Schwab account or several under the login? Any IRAs, where undefined-risk strategies are not permitted and the strategy list should adapt?
-3. Futures options: Schwab's API coverage for futures orders is limited. Is equity and index options scope acceptable?
-4. Is a paid IV history source acceptable to avoid the year-long wait for IV rank on single stocks?
-5. Preferred notification channel, and remote access method (Tailscale already in use)?
+Decided:
+
+- TrueNAS 25.10.7.
+- One Schwab brokerage account. The data model still keys everything by account so more can be added.
+- Equity and index options only. No futures options.
+- Notifications by Pushover and email. Home-network access only at first.
+- A paid IV source is acceptable if cheap and compatible; none is needed to start (section 6).
+
+Still open:
+
+1. Is the brokerage account margin-enabled with the options approval level for naked short options? This decides whether strangles, straddles and ratios appear in the strategy builders or only defined-risk trades.
+2. Do you have, or would you open, a tastytrade account? It may give free IV rank through their API (to be tested in phase 0).
+3. In the Schwab developer portal: has an app been created under "Trader API - Individual" with both the Accounts and Trading and Market Data products, and does it show "Ready For Use"? The callback URL should be `https://127.0.0.1:8182`.
 
 ## Sources
 
