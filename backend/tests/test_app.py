@@ -201,3 +201,15 @@ async def test_service_rejects_wrong_callback_address(tmp_path):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def test_db_password_accepts_postgres_variable_name(monkeypatch):
+    monkeypatch.setenv("POSTGRES_PASSWORD", "from-postgres-name")
+    s = Settings(
+        _env_file=None,
+        app_password=PASSWORD,
+        secret_key=SECRET,
+        schwab_app_key="k",
+        schwab_app_secret="s",
+    )
+    assert s.db_password == "from-postgres-name"

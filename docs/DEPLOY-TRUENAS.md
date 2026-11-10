@@ -4,6 +4,45 @@ The stack is three containers: the app (`backend`), its database (`postgres`), a
 front door (`caddy`). The real compose file and its secrets live on a dataset; the TrueNAS
 custom app is a three-line stub that points at it.
 
+There are two ways to install. **Option A** is a single YAML pasted into TrueNAS that gives
+the app its own LAN address, in the same style as a macvlan Homebridge install. **Option B**
+(the numbered sections below) keeps the compose file on a dataset and serves the app on a
+port of the NAS's own address.
+
+## Option A: one pasted YAML with its own LAN address
+
+1. Create the folders and the settings file (System > Shell):
+
+   ```sh
+   mkdir -p /mnt/apps/trading/config /mnt/apps/trading/postgres /mnt/apps/trading/caddy
+   chown 568:568 /mnt/apps/trading/config
+   nano /mnt/apps/trading/.env      # paste deploy/.env.example and fill it in
+   chmod 600 /mnt/apps/trading/.env
+   ```
+
+   In this option only these `.env` lines are used: `APP_PASSWORD`, `SECRET_KEY`,
+   `POSTGRES_PASSWORD`, `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, `SCHWAB_CALLBACK_URL`.
+
+2. Find the name of the existing macvlan network: `sudo docker network ls | grep macvlan`.
+   Docker permits one macvlan network per parent interface and subnet, so this app joins the
+   existing one. For a TrueNAS app named `homebridge` with a network `homebridge_net`, it is
+   `ix-homebridge_homebridge_net`.
+
+3. Open `deploy/truenas-app.yaml` and adjust the marked values: the network name, and the
+   app's IP address, which appears three times (`192.168.4.102` as shipped). Pick an address
+   that is free and outside the router's DHCP range.
+
+4. Give the NAS access to the image (section 3 below), then Apps > Discover Apps > menu next
+   to Custom App > Install via YAML, name `trading`, paste the file, Save.
+
+5. Open `https://192.168.4.102` from another device and continue at section 5 below.
+
+Limits of this option: the NAS itself cannot reach the app's address (normal for macvlan),
+and the app depends on the Homebridge app's network, so if Homebridge is deleted this app
+must be reinstalled with its own network definition.
+
+## Option B: compose file on a dataset
+
 ## 1. Datasets
 
 Create a dataset for the app, for example `tank/apps/trading`, then these folders inside it

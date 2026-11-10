@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     db_port: int = 5432
     db_name: str = "trading"
     db_user: str = "trading"
-    db_password: str = ""
+    # Postgres and the app can share one env file, so accept the Postgres variable name too.
+    db_password: str = Field("", validation_alias=AliasChoices("DB_PASSWORD", "POSTGRES_PASSWORD"))
 
     # Session cookies are HTTPS-only. Turn off only for local development over plain HTTP.
     cookie_secure: bool = True
