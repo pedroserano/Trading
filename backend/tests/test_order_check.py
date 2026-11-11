@@ -230,3 +230,58 @@ def test_a_real_thinkorswim_roll_to_another_strike_is_a_diagonal():
     }
     entry = oc.check(order)
     assert entry["result"] == "match", entry["diffs"]
+
+
+def test_a_real_thinkorswim_broken_wing_butterfly_close_matches():
+    """Closing a 1230/1250/1300 call butterfly: unequal wings, still BUTTERFLY."""
+
+    def leg(symbol, instruction, n):
+        return {
+            "quantity": n,
+            "instruction": instruction,
+            "orderLegType": "OPTION",
+            "instrument": {
+                "symbol": symbol,
+                "putCall": "CALL",
+                "assetType": "OPTION",
+                "underlyingSymbol": "MU",
+            },
+        }
+
+    order = {
+        "tag": "API_TOS:IPHONE",
+        "price": 0.6,
+        "status": "CANCELED",
+        "orderId": 3,
+        "session": "NORMAL",
+        "duration": "DAY",
+        "quantity": 2,
+        "orderType": "NET_DEBIT",
+        "orderStrategyType": "SINGLE",
+        "complexOrderStrategyType": "BUTTERFLY",
+        "destinationLinkName": "JNST",
+        "requestedDestination": "AUTO",
+        "orderLegCollection": [
+            leg("MU    261120C01230000", "SELL_TO_CLOSE", 2),
+            leg("MU    261120C01250000", "BUY_TO_CLOSE", 4),
+            leg("MU    261120C01300000", "SELL_TO_CLOSE", 2),
+        ],
+    }
+    entry = oc.check(order)
+    assert entry["result"] == "match", entry["diffs"]
+
+
+def test_butterfly_needs_the_one_two_one_shape():
+    from app.orders import complex_type
+
+    def t(*legs):
+        return Ticket(legs=[TicketLeg.parse(*x) for x in legs], limit_net=1.0)
+
+    fly = t((sym("P", 560), 1, "open"), (sym("P", 570), -2, "open"), (sym("P", 580), 1, "open"))
+    assert complex_type(fly) == "BUTTERFLY"
+    short = t((sym("C", 600), -1, "open"), (sym("C", 610), 2, "open"), (sym("C", 640), -1, "open"))
+    assert complex_type(short) == "BUTTERFLY"
+    ratio = t((sym("P", 560), 1, "open"), (sym("P", 570), -3, "open"), (sym("P", 580), 1, "open"))
+    assert complex_type(ratio) != "BUTTERFLY"
+    mixed = t((sym("P", 560), 1, "open"), (sym("C", 570), -2, "open"), (sym("C", 580), 1, "open"))
+    assert complex_type(mixed) != "BUTTERFLY"

@@ -169,9 +169,24 @@ def strategy_name(t: Ticket) -> str:
     return found[0].name if len(found) == 1 else "Custom"
 
 
+def _is_butterfly(t: Ticket) -> bool:
+    """Three options of one type and expiration, quantities 1, -2, 1 (or the reverse) by
+    strike. thinkorswim labels it BUTTERFLY whether or not the wings are equal (checked
+    against a real broken-wing butterfly)."""
+    legs = sorted(t.legs, key=lambda x: x.strike or 0)
+    if len(legs) != 3 or len({(x.put_call, x.expiration) for x in legs}) != 1:
+        return False
+    if len({x.strike for x in legs}) != 3:
+        return False
+    low, mid, high = (x.quantity for x in legs)
+    return low == high and mid == -2 * low
+
+
 def complex_type(t: Ticket) -> str:
     if len(t.legs) == 1:
         return "NONE"
+    if _is_butterfly(t):
+        return "BUTTERFLY"
     if t.intent == "roll":
         # thinkorswim labels a one-option roll by its shape: another expiration at the same
         # strike is a CALENDAR, at another strike a DIAGONAL (both checked against real
