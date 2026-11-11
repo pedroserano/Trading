@@ -142,3 +142,33 @@ cd /mnt/tank/apps/trading/stack
 - **Schwab rejects the sign-in:** the pasted address was older than about 30 seconds, was not
   the complete address, or `SCHWAB_CALLBACK_URL` differs from the app's registered callback.
 - **Image pull fails:** see step 3.
+
+## Optional settings (phase 1)
+
+These go in the same `.env` file. After changing `.env`, stop and start the app in TrueNAS
+so the container picks them up.
+
+| Setting | Purpose |
+|---|---|
+| `APP_URL` | The address you open the app at, e.g. `https://192.168.4.102`. Used as the link in notifications. |
+| `PUSHOVER_USER_KEY`, `PUSHOVER_APP_TOKEN` | Turn on notifications. The user key is on the Pushover dashboard; the token comes from creating an application there. |
+| `REMINDER_WEEKDAY`, `REMINDER_HOUR` | When the weekly Schwab sign-in reminder goes out, US Eastern. Default Sunday 18:00. |
+| `WATCHLIST` | Underlyings whose IV is recorded daily even with no position, e.g. `SPY,QQQ,IWM`. |
+| `DEMO_MODE` | `true` shows a simulated account. Leave `false` for real use. |
+
+## One-tap Schwab sign-in (optional)
+
+Instead of pasting the redirect address, Schwab can send the browser straight back to the
+app. This needs a change to the Schwab app registration, which can put it back through
+Schwab's approval for a few days, during which sign-in may not work. Do it at a quiet time.
+
+1. In the Schwab developer portal, edit the app's callback URLs to
+   `https://127.0.0.1:8182,https://192.168.4.102/schwab/callback` (your app's address).
+   Keep the first one as a fallback.
+2. Wait until the app shows "Ready For Use" again.
+3. In `.env`, set `SCHWAB_CALLBACK_URL=https://192.168.4.102/schwab/callback`, then stop and
+   start the app.
+4. The Settings page now shows a single "Sign in with Schwab" button.
+
+The browser will warn about the certificate on the way back unless Caddy's root
+certificate is trusted on that device (section 5).

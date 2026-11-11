@@ -9,11 +9,24 @@ permissions:
   packages: write
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: trading
+          POSTGRES_USER: trading
+          POSTGRES_PASSWORD: trading
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U trading -d trading"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DB_HOST: 127.0.0.1
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -22,8 +35,23 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest -q
 
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
   image:
-    needs: test
+    needs: [backend, frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +72,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
       - uses: docker/build-push-action@v6
         with:
-          context: backend
+          context: .
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

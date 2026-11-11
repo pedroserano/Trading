@@ -1,3 +1,11 @@
+# Frontend: static files only, no Node at runtime.
+FROM node:22-slim AS frontend
+WORKDIR /src
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 RUN pip install --no-cache-dir uv==0.9.*
@@ -5,10 +13,11 @@ RUN pip install --no-cache-dir uv==0.9.*
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY app ./app
+COPY backend/app ./app
+COPY --from=frontend /src/dist ./app/static
 
 # 568 is the "apps" user on TrueNAS, so files on the dataset get a sensible owner.
 RUN useradd --uid 568 --no-create-home --shell /usr/sbin/nologin apps \

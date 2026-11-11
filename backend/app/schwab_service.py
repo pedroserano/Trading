@@ -9,6 +9,7 @@ import logging
 import time
 from dataclasses import dataclass
 
+from authlib.integrations.httpx_client import OAuthError
 from schwab import auth
 
 from .token_store import TokenStore, TokenStoreError
@@ -26,11 +27,16 @@ class SchwabError(Exception):
     pass
 
 
+class SchwabAuthError(SchwabError):
+    """Schwab no longer accepts the token. Only a new sign-in fixes it."""
+
+
 @dataclass
 class ConnectionStatus:
     connected: bool
     token_age_s: float | None = None
     detail: str | None = None
+    created_at: float | None = None
 
     @property
     def expires_in_s(self) -> float | None:
@@ -79,6 +85,7 @@ class SchwabService:
         self._client = None
         self._auth_context = None
         self._load_error: str | None = None
+        self._auth_failure: str | None = None
 
     def load(self) -> None:
         """Build a client from the stored token, if there is one."""
@@ -101,11 +108,19 @@ class SchwabService:
         if self._client is None:
             return ConnectionStatus(connected=False, detail=self._load_error)
         age = self._client.token_age()
+        created = round(time.time() - age)
         if age >= REFRESH_TOKEN_LIFETIME_S:
             return ConnectionStatus(
-                connected=False, token_age_s=age, detail="Schwab sign-in has expired"
+                connected=False,
+                token_age_s=age,
+                created_at=created,
+                detail="Schwab sign-in has expired",
             )
-        return ConnectionStatus(connected=True, token_age_s=age)
+        if self._auth_failure:
+            return ConnectionStatus(
+                connected=False, token_age_s=age, created_at=created, detail=self._auth_failure
+            )
+        return ConnectionStatus(connected=True, token_age_s=age, created_at=created)
 
     def authorization_url(self) -> str:
         """Start a sign-in. Returns the Schwab URL to open in a browser."""
@@ -141,6 +156,7 @@ class SchwabService:
         old, self._client = self._client, client
         self._auth_context = None
         self._load_error = None
+        self._auth_failure = None
         if old is not None:
             await old.close_async_session()
         log.info("Schwab sign-in completed")
@@ -151,20 +167,36 @@ class SchwabService:
         self._client = None
         self._store.delete()
 
-    async def accounts(self) -> list[AccountSummary]:
+    async def call(self, method: str, *args, **kwargs):
+        """Calls a schwab-py client method and returns the decoded JSON body."""
         if not self.status().connected:
             raise SchwabNotConnected()
         started = time.monotonic()
         try:
-            resp = await self._client.get_accounts(fields=[self._client.Account.Fields.POSITIONS])
+            resp = await getattr(self._client, method)(*args, **kwargs)
+        except OAuthError as e:
+            # Raised when the access token refresh is refused, e.g. after a password change.
+            self._auth_failure = f"Schwab refused to renew the sign-in ({e}). Sign in again."
+            raise SchwabAuthError(self._auth_failure) from e
         except Exception as e:
             raise SchwabError(f"Schwab request failed: {type(e).__name__}: {e}") from e
-        log.info("GET accounts -> %s in %.2fs", resp.status_code, time.monotonic() - started)
+        log.debug("%s -> %s in %.2fs", method, resp.status_code, time.monotonic() - started)
         if resp.status_code == 401:
-            raise SchwabError("Schwab rejected the token (401). Sign in to Schwab again.")
-        if resp.status_code != 200:
+            self._auth_failure = "Schwab rejected the token (401). Sign in to Schwab again."
+            raise SchwabAuthError(self._auth_failure)
+        if resp.status_code == 429:
+            raise SchwabError("Schwab rate limit reached (429). Retrying shortly.")
+        if resp.status_code >= 300:
             raise SchwabError(f"Schwab returned HTTP {resp.status_code}: {resp.text[:300]}")
-        return [summarize_account(a) for a in resp.json()]
+        return resp.json() if resp.content else None
+
+    def client(self):
+        """The underlying schwab-py client, for enum access. None when not signed in."""
+        return self._client
+
+    async def accounts(self) -> list[AccountSummary]:
+        raw = await self.call("get_accounts", fields=[self._client.Account.Fields.POSITIONS])
+        return [summarize_account(a) for a in raw]
 
     async def close(self) -> None:
         if self._client is not None:

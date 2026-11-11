@@ -234,8 +234,8 @@ This app can move real money and holds credentials that can too.
 | Phase | Scope | Exit test |
 |---|---|---|
 | 0. Setup | Register the Schwab developer app (approval takes days and status must read "Ready For Use"), repo scaffold, CI, compose skeleton, library spike. | Container on TrueNAS completes OAuth and prints account balances. |
-| 1. Read-only portfolio | Token lifecycle, paste-URL and one-tap sign-in with weekly reminder, accounts and positions, streaming quotes relayed to the browser, strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
-| 2. Analysis | Chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
+| 1. Read-only portfolio | Token lifecycle, paste-URL and one-tap sign-in with weekly reminder, accounts and positions, quotes refreshed every 5 seconds and pushed to the browser (Schwab streaming deferred to phase 2, once the REST path is proven on real data), strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
+| 2. Analysis | Schwab streaming for quotes and account activity, chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
 | 3. Simulated trading | Order builder for all listed strategies, preview against Schwab, `SimBroker`, order and roll tickets, journal, roll chains. | Two weeks of simulated trading with builder output checked against orders built by hand in thinkorswim. |
 | 4. Live trading | Guards, audit log, reconciliation, GTC profit-taking orders, cancel and replace. Start with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches. |
 | 4a. SPY-only first year | LIVE mode restricted to SPY by an allowlist setting, one-lot default and a low per-order buying power cap. Other underlyings stay available in SIM. | A year of SPY trading reviewed in the journal before the allowlist is widened. |
@@ -260,7 +260,9 @@ Decided:
 - No tastytrade account. IV rank comes from Schwab data only.
 - A Schwab developer app already exists. Reuse it rather than recreating it: the key and secret are shown in the app's details in the portal, and a new app waits for approval again.
 
-Still open: nothing blocks phase 0. The remaining unknowns are listed at the end of section 2 and are resolved by testing against the live API.
+Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 built and awaiting its exit test on real data.
+
+Still open: nothing blocks phase 1. The remaining unknowns are listed at the end of section 2 and are resolved by testing against the live API.
 
 ## Sources
 
