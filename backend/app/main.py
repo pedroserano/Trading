@@ -40,6 +40,8 @@ from .chain_service import REVIEW_KEY, SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .earnings import EarningsService
+from .extremes import PriceHistory
+from .extremes import compute as compute_extreme
 from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
 from .live import LiveBroker
@@ -371,6 +373,16 @@ def create_app(
         demo=demo,
     )
     portfolio.earnings = sim_portfolio.earnings = watchlist.earnings = earnings.info
+    history = PriceHistory(store, source, earnings_symbols, clock=lambda: portfolio.clock())
+
+    async def watch_extreme(sym, price, change, iv30):
+        closes = history.get(sym)
+        if closes is None:
+            return None  # read in the background; shown from the next refresh
+        s = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
+        return compute_extreme(closes, price, change, iv30, s)
+
+    watchlist.extremes = watch_extreme
     health: dict[str, str | None] = {}
     jobs = DailyJobs(source, store, portfolio, settings)
     reminders = ReminderService(notifier, store, connection_status, settings, demo)
@@ -393,6 +405,7 @@ def create_app(
                 "simulated account": sim_portfolio.run,
                 "trade chains": chain_service.run,
                 "earnings dates": earnings.run,
+                "price extremes": history.run,
                 "order check": order_check.run,
                 "live orders": live_broker.run,
                 "price history": prices_service.run,

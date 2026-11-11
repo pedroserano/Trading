@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
 from .automation import LEVELS, Action, _hm
+from .extremes import compute as compute_extreme
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -46,6 +47,13 @@ DEFAULTS = {
     "contracts": 1,
     "scan_time": "10:15",
     "automanage_new": True,
+    # Price extremes: lean the trade against an overextended move.
+    "extreme_tilt": True,
+    "range_band": 0.05,
+    "move_days": 5,
+    "move_sigma": 2.0,
+    "day_ratio": 2.0,
+    "tilt_delta": 0.25,
 }
 # (key, label, low, high, kind, unit) for the Settings page.
 FIELDS = [
@@ -71,6 +79,11 @@ FIELDS = [
     ("max_per_underlying", "Open trades per underlying, at most", 1, 10, "int", "trades"),
     ("max_new_per_day", "New trades per day, at most", 0, 50, "int", "trades"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
+    ("range_band", "Price extreme: near a 52-week high or low, within", 0.5, 25, "percent", "%"),
+    ("move_days", "Price extreme: move over", 2, 30, "int", "sessions"),
+    ("move_sigma", "Price extreme: move vs expected, at least", 0.5, 5, "float", "σ"),
+    ("day_ratio", "Price extreme: today's move, at least", 1, 10, "float", "× average"),
+    ("tilt_delta", "At an extreme, the favoured side's short strike at", 0.1, 0.5, "delta", "Δ"),
 ]
 FUNDS = {"ETF", "ETN", "COLLECTIVE_INVESTMENT", "INDEX", "MUTUAL_FUND"}
 
@@ -103,6 +116,7 @@ def parse_form(form: dict, current: dict | None) -> dict:
     if form.get("_form") == "scanner":
         out["monthly_only"] = form.get("monthly_only") in ("on", "true", "1")
         out["automanage_new"] = form.get("automanage_new") in ("on", "true", "1")
+        out["extreme_tilt"] = form.get("extreme_tilt") in ("on", "true", "1")
     if "scan_time" in form:
         try:
             h, m = _hm(form["scan_time"])
@@ -139,19 +153,28 @@ def _mid(c: dict | None) -> float | None:
     return None
 
 
-def build_trade(rows: list[dict], strangle: bool, s: dict) -> tuple[list[dict] | None, str]:
-    """Legs (symbol, quantity per unit, effect) for one unit, or None and the reason."""
+def build_trade(
+    rows: list[dict], strangle: bool, s: dict, tilt: str | None = None
+) -> tuple[list[dict] | None, str]:
+    """Legs (symbol, quantity per unit, effect) for one unit, or None and the reason.
+
+    tilt "down" (the price has dropped too far) sells the put closer, at the tilt delta, for
+    a bullish lean; "up" does the same with the call.
+    """
+    base = s["short_delta"] if strangle else s["ic_short_delta"]
+    put_d = s["tilt_delta"] if tilt == "down" else base
+    call_d = s["tilt_delta"] if tilt == "up" else base
     if strangle:
-        put = nearest_delta(rows, "put", s["short_delta"])
-        call = nearest_delta(rows, "call", s["short_delta"])
+        put = nearest_delta(rows, "put", put_d)
+        call = nearest_delta(rows, "call", call_d)
         if not put or not call or put["strike"] >= call["strike"]:
             return None, "no strikes near the target delta"
         return [
             {"symbol": put["put"]["symbol"], "quantity": -1, "effect": "open"},
             {"symbol": call["call"]["symbol"], "quantity": -1, "effect": "open"},
         ], f"Strangle {put['strike']:g}/{call['strike']:g}"
-    sp = nearest_delta(rows, "put", s["ic_short_delta"])
-    sc = nearest_delta(rows, "call", s["ic_short_delta"])
+    sp = nearest_delta(rows, "put", put_d)
+    sc = nearest_delta(rows, "call", call_d)
     if not sp or not sc or sp["strike"] >= sc["strike"]:
         return None, "no strikes near the target delta"
     by_strike = {r["strike"]: r for r in rows}
@@ -197,6 +220,7 @@ class Scanner:
         live_broker,
         clock=lambda: datetime.now(ET),
         earnings=None,
+        history=None,
     ):
         self.store = store
         self.source = source
@@ -207,6 +231,7 @@ class Scanner:
         self.live_broker = live_broker
         self.clock = clock
         self.earnings = earnings
+        self.history = history
         self.lock = asyncio.Lock()
 
     async def settings(self) -> dict:
@@ -302,7 +327,9 @@ class Scanner:
                     continue
                 ivr, exp, rows = why
                 strangle = ivr >= s["undefined_ivr"]
-                legs, label = build_trade(rows, strangle, s)
+                ext = await self._extreme(sym, quotes, s)
+                tilt = (ext or {}).get("direction") if s["extreme_tilt"] else None
+                legs, label = build_trade(rows, strangle, s, tilt)
                 if legs is None:
                     skipped.append({"symbol": sym, "reason": label})
                     continue
@@ -348,11 +375,17 @@ class Scanner:
                         "bp": bp,
                         "pop": (pv.get("entry") or {}).get("pop"),
                         "body": body,
+                        "extreme": ext,
+                        "tilt": tilt,
                     }
                 )
+                if tilt:
+                    lean = "bullish" if tilt == "down" else "bearish"
+                    candidates[-1]["label"] = f"{label}, tilted {lean}: {'; '.join(ext['reasons'])}"
             acted = []
             if act and level != "off":
-                for c in sorted(candidates, key=lambda c: -c["ivr"]):
+                # Trades at a price extreme first, then by IV rank.
+                for c in sorted(candidates, key=lambda c: (not c.get("tilt"), -c["ivr"])):
                     if placed_today >= s["max_new_per_day"]:
                         c["note"] = "daily limit of new trades reached"
                         continue
@@ -372,6 +405,24 @@ class Scanner:
             st[account] = result
             await self.store.set_setting(STATE_KEY, st)
             return result
+
+    async def _extreme(self, sym: str, quotes: dict, s: dict) -> dict | None:
+        if self.history is None:
+            return None
+        closes = await self.history.ensure(sym)
+        q = (quotes.get(sym) or {}).get("quote", {})
+        price = next((float(q[k]) for k in ("mark", "lastPrice") if q.get(k)), None)
+        change = q.get("netPercentChange")
+        return compute_extreme(
+            closes or [], price, None if change is None else float(change), await self._iv30(sym), s
+        )
+
+    async def _iv30(self, sym: str) -> float | None:
+        cache = getattr(self.watchlist, "cache", {}) or {}
+        iv = (cache.get(sym) or {}).get("iv30")
+        if iv is None and sym == "SPY":
+            iv = ((self.portfolios["live"].snapshot or {}).get("market") or {}).get("vix")
+        return iv
 
     async def _check(self, account, sym, s, held, quotes):
         """(IV rank, expiration, chain rows) when the underlying qualifies, else the reason."""

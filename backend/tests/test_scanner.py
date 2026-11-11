@@ -281,3 +281,41 @@ async def test_single_stocks_open_when_earnings_are_known_and_far_enough():
     scanner.earnings = Earnings({})
     r = await scanner.scan("sim", act=False)
     assert "no earnings date found" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+
+
+class History:
+    def __init__(self, values):
+        self.values = values
+
+    async def ensure(self, symbol):
+        start = date(2025, 11, 1)
+        from datetime import timedelta
+
+        return [(start + timedelta(days=i), v) for i, v in enumerate(self.values)]
+
+
+class QuoteSource(Source):
+    def __init__(self, kinds, price, change):
+        super().__init__(kinds)
+        self.price, self.change = price, change
+
+    async def quotes(self, symbols):
+        out = await super().quotes(symbols)
+        for s in out.values():
+            s["quote"] = {"mark": self.price, "netPercentChange": self.change}
+        return out
+
+
+@pytest.mark.anyio
+async def test_a_price_extreme_tilts_the_trade_and_ranks_first():
+    scanner, _, _ = harness()
+    year = [600 - i * 0.05 for i in range(250)]  # drifting down to about 588
+    scanner.history = History(year)
+    scanner.source = QuoteSource({"SPY": "ETF", "XLE": "ETF"}, 585.0, -2.5)
+    r = await scanner.scan("sim", act=False)
+    (c,) = r["candidates"]
+    assert c["tilt"] == "down" and "tilted bullish" in c["label"]
+    # Tilting switched off: neutral as before.
+    scanner.store.settings[sc.SETTINGS_KEY] = {"extreme_tilt": False}
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] is None and c["label"] == "Strangle 570/610"

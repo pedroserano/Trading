@@ -443,3 +443,15 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .earn.near .earn-flag { color: var(--warn); }
 td .earn { margin-left: 0; }
 .settings-page .warn-note { margin: 2px 0 8px; font-size: 12px; color: var(--warn); }
+
+/* Price extremes on the Watchlist */
+.extreme { margin-left: 6px; font-size: 11px; cursor: help; }
+.extreme.down { color: var(--neg); }
+.extreme.up { color: var(--pos); }
+.range { display: inline-flex; align-items: center; gap: 6px; }
+.range-track { position: relative; width: 56px; height: 4px; background: var(--line); border-radius: 2px; }
+.range-dot { position: absolute; top: -3px; width: 4px; height: 10px; margin-left: -2px; border-radius: 2px;
+  background: var(--accent); }
+.range-pct { font-size: 12px; color: var(--dim); min-width: 30px; text-align: right; }
+.range.near .range-dot { background: var(--warn); }
+.range.near .range-pct { color: var(--warn); }

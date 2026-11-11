@@ -3,9 +3,9 @@ import { getJson } from "./api";
 import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
-import type { WatchRow } from "./types";
+import type { PriceExtreme, WatchRow } from "./types";
 
-type Key = "symbol" | "ivr" | "iv30" | "change" | "em";
+type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move";
 
 const sorters: Record<Key, (r: WatchRow) => number | string> = {
   symbol: (r) => r.symbol,
@@ -13,7 +13,24 @@ const sorters: Record<Key, (r: WatchRow) => number | string> = {
   iv30: (r) => r.iv30 ?? -1,
   change: (r) => r.change_pct ?? -999,
   em: (r) => (r.expected_move && r.price ? r.expected_move / r.price : -1),
+  range: (r) => r.extreme?.range_pos ?? -1,
+  move: (r) => r.extreme?.move_z ?? -999,
 };
+
+/** Where the price sits in its 52-week range: a bar with a marker, amber near either end. */
+function RangeBar({ x }: { x: PriceExtreme | null | undefined }) {
+  if (!x || x.range_pos === null) return <span className="dim-text">–</span>;
+  const pos = Math.max(0, Math.min(1, x.range_pos));
+  const near = x.reasons.some((r) => r.includes("52-week"));
+  return (
+    <span className={`range ${near ? "near" : ""}`} title={`52-week range ${x.low} to ${x.high} (closes)`}>
+      <span className="range-track">
+        <span className="range-dot" style={{ left: `${pos * 100}%` }} />
+      </span>
+      <span className="range-pct">{Math.round(pos * 100)}%</span>
+    </span>
+  );
+}
 
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchRow[] | null>(null);
@@ -91,6 +108,8 @@ export default function Watchlist() {
               {th("symbol", "Symbol")}
               <th>Last</th>
               {th("change", "Chg")}
+              {th("range", "52w", "Where the price sits in its 52-week range of closes, 0% at the low")}
+              {th("move", "Move", "The last few sessions' move against the move implied volatility expected, in standard deviations")}
               {th("iv30", "IV30", "30-day at-the-money implied volatility")}
               {th("ivr", "IVR", "IV rank over up to a year of recorded history")}
               <th title="IV percentile">IVP</th>
@@ -117,6 +136,14 @@ export default function Watchlist() {
               >
                 <td className="l">
                   <span className="sym-inline">{r.symbol}</span>
+                  {r.extreme?.direction ? (
+                    <span
+                      className={`extreme ${r.extreme.direction}`}
+                      title={`Price extreme: ${r.extreme.reasons.join("; ")}`}
+                    >
+                      {r.extreme.direction === "down" ? "▼" : "▲"}
+                    </span>
+                  ) : null}
                   {r.error ? (
                     <span className="sub" title={r.error}>
                       no options data
@@ -126,6 +153,20 @@ export default function Watchlist() {
                 <td>{num(r.price, 2)}</td>
                 <td className={tone(r.change_pct)}>
                   {r.change_pct === null ? "–" : `${signed(r.change_pct, 2)}%`}
+                  {r.extreme?.day_ratio !== null && r.extreme?.day_ratio !== undefined && r.extreme.reasons.some((x) => x.startsWith("today")) ? (
+                    <span className="sub warn-text"> {r.extreme.day_ratio.toFixed(1)}× avg</span>
+                  ) : null}
+                </td>
+                <td>
+                  <RangeBar x={r.extreme} />
+                </td>
+                <td className={r.extreme?.reasons.some((x) => x.includes("-day move")) ? "warn-text" : ""}>
+                  {r.extreme?.move_z === null || r.extreme?.move_z === undefined
+                    ? "–"
+                    : `${signed(r.extreme.move_z, 1)}σ`}
+                  {r.extreme?.move_z !== null && r.extreme?.move_z !== undefined ? (
+                    <span className="sub"> {r.extreme.move_days}d</span>
+                  ) : null}
                 </td>
                 <td>{num(r.iv30, 1)}</td>
                 <td className={r.ivr?.rank !== null && r.ivr?.rank !== undefined && r.ivr.rank >= 50 ? "hi" : ""}>

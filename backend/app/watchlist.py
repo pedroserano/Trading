@@ -27,6 +27,7 @@ class WatchlistService:
         self.portfolio = portfolio
         self.cache: dict[str, dict] = {}
         self.earnings = None  # symbol -> next earnings report, set by the app
+        self.extremes = None  # async (symbol, price, change %, iv30) -> price extremes
 
     async def run(self) -> None:
         while True:
@@ -107,6 +108,11 @@ class WatchlistService:
                     if ivr["days"] < MIN_IVR_DAYS:
                         ivr["rank"] = ivr["percentile"] = None
             u = held.get(sym)
+            change = _num(q.get("netPercentChange"))
+            iv30 = c.get("iv30")
+            if iv30 is None and sym == BENCH:
+                iv30 = p._price("$VIX")
+            ext = await self.extremes(sym, p._price(sym), change, iv30) if self.extremes else None
             out.append(
                 {
                     "symbol": sym,
@@ -120,6 +126,7 @@ class WatchlistService:
                     "spread_pct": c.get("spread_pct"),
                     "atm_oi": c.get("atm_oi"),
                     "earnings": self.earnings(sym) if self.earnings else None,
+                    "extreme": ext,
                     "error": c.get("error"),
                     "held": u is not None,
                     "position_delta": None if u is None else u["delta"],

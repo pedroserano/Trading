@@ -217,6 +217,9 @@
        Monthly expirations only</label></p>
     <p><label><input type="checkbox" name="automanage_new" {% if scan.automanage_new %}checked{% endif %}>
        Switch automanage on for trades the scanner opens</label></p>
+    <p><label><input type="checkbox" name="extreme_tilt" {% if scan.extreme_tilt %}checked{% endif %}>
+       Lean the trade at price extremes: after a drop sell the put side closer (bullish), after a
+       rise the call side (bearish)</label></p>
     <p><button class="primary" type="submit">Save scanner settings</button></p>
   </form>
 </section>

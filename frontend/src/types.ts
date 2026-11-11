@@ -127,6 +127,7 @@ export interface WatchRow {
   spread_pct: number | null;
   atm_oi: number | null;
   earnings?: EarningsInfo | null;
+  extreme?: PriceExtreme | null;
   error: string | null;
   held: boolean;
   position_delta: number | null;
@@ -396,4 +397,16 @@ export interface EarningsInfo {
   days: number;
   exit_by: string;
   sessions_left: number;
+}
+
+export interface PriceExtreme {
+  range_pos: number | null;
+  high: number | null;
+  low: number | null;
+  move_z: number | null;
+  move_days: number;
+  day_ratio: number | null;
+  direction: "down" | "up" | null;
+  extreme: boolean;
+  reasons: string[];
 }
