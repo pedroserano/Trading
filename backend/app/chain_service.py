@@ -113,28 +113,51 @@ class ChainService:
 
         # The spreadsheet's history: used as is before Schwab's record starts, reconciled
         # against Schwab's fills after.
+        schwab_only, schwab_start = list(groups), start
         rows = await self.store.sheet_rows(SHEET_ACCOUNT)
         if rows:
-            conv = sheet_import.convert(
-                [sheet_import.SheetRow(key=k, account=SHEET_ACCOUNT, data=d) for k, d in rows]
+            try:
+                conv = sheet_import.convert(
+                    [sheet_import.SheetRow(key=k, account=SHEET_ACCOUNT, data=d) for k, d in rows]
+                )
+                window = sheet_import.window_start_from(groups, start) if groups else None
+                decisions = await self.store.get_setting(REVIEW_KEY) or {}
+                rec = sheet_import.reconcile(conv.groups, groups, window or float("inf"), decisions)
+                first_sheet = min((g.time for g in conv.groups), default=None)
+                self.history = {
+                    "rows": len(rows),
+                    "problems": conv.problems,
+                    "review": rec["review"],
+                    "matched": rec["matched"],
+                    "futures": conv.futures,
+                    "realized": conv.realized,
+                    "window_start": window,
+                }
+                groups = sorted(groups + rec["use"], key=lambda g: g.time)
+                if first_sheet is not None:
+                    start = first_sheet - 86400
+            except Exception as e:
+                # Keep Schwab's history usable and say what went wrong with the sheet's.
+                log.exception("Merging the imported spreadsheet failed")
+                self.history = {
+                    **self.history,
+                    "rows": len(rows),
+                    "error": f"Merging the imported spreadsheet failed: {type(e).__name__}: {e}",
+                }
+            else:
+                self.history["error"] = None
+        else:
+            self.history = {**self.history, "rows": 0, "error": None}
+        try:
+            self.result = chains.build(groups, positions, overrides, start)
+        except Exception as e:
+            if len(groups) == len(schwab_only):
+                raise
+            log.exception("Building trades with the imported spreadsheet failed")
+            self.history["error"] = (
+                f"Building trades from the imported spreadsheet failed: {type(e).__name__}: {e}"
             )
-            window = sheet_import.window_start_from(groups, start) if groups else None
-            decisions = await self.store.get_setting(REVIEW_KEY) or {}
-            rec = sheet_import.reconcile(conv.groups, groups, window or float("inf"), decisions)
-            first_sheet = min((g.time for g in conv.groups), default=None)
-            self.history = {
-                "rows": len(rows),
-                "problems": conv.problems,
-                "review": rec["review"],
-                "matched": rec["matched"],
-                "futures": conv.futures,
-                "realized": conv.realized,
-                "window_start": window,
-            }
-            groups = sorted(groups + rec["use"], key=lambda g: g.time)
-            if first_sheet is not None:
-                start = first_sheet - 86400
-        self.result = chains.build(groups, positions, overrides, start)
+            self.result = chains.build(schwab_only, positions, overrides, schwab_start)
         self._by_id = {c["id"]: c for c in self.result["chains"]}
 
     # For the portfolio ---------------------------------------------------------------

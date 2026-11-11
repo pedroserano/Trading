@@ -328,6 +328,7 @@ export interface Activity {
   trades: SimTrade[];
   trade_counts?: Record<string, number>;
   trades_shown_of?: number;
+  sheet?: { rows: number; error: string | null };
   stats: StatRow[];
 }
 

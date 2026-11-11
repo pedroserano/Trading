@@ -439,3 +439,19 @@ def test_import_dashboard_review_and_export_endpoints(client):
     assert bad.status_code == 303 and "Excel" in client.get("/connect").text
     exp = client.get("/api/export/sheet?start=2020-01-01&end=2030-01-01")
     assert exp.status_code == 200 and exp.content[:2] == b"PK"
+
+
+def test_a_failing_sheet_merge_keeps_schwab_trades_and_says_why(client, monkeypatch):
+    from app import sheet_import as si
+
+    client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
+
+    def broken(rows):
+        raise ValueError("bad row")
+
+    monkeypatch.setattr(si, "convert", broken)
+    client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
+    act = client.get("/api/activity").json()
+    assert "bad row" in act["sheet"]["error"] and act["sheet"]["rows"] == 8
+    assert act["trade_counts"].get("sheet", 0) == 0
+    assert "bad row" in client.get("/connect").text

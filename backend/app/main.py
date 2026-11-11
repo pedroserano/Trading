@@ -1073,6 +1073,10 @@ def create_app(
                 )[:limit],
                 "trade_counts": counts,
                 "trades_shown_of": len(shown),
+                "sheet": {
+                    "rows": chain_service.history.get("rows", 0),
+                    "error": chain_service.history.get("error"),
+                },
                 "stats": stats(chs),
                 "proposals": chain_service.result["proposals"],
                 "mismatches": chain_service.result["mismatches"],

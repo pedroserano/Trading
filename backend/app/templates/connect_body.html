@@ -84,6 +84,9 @@
   <p class="dim">Upload the "Options P/L" spreadsheet as an .xlsx file (in Google Sheets: File,
      Download, Microsoft Excel). Rows for the {{ sheet_account }} account are imported; other
      accounts are skipped. Uploading again later only adds new or changed rows.</p>
+  {% if history.error %}
+  <p class="error">{{ history.error }}</p>
+  {% endif %}
   {% if history.rows %}
   <p><span class="dot ok"></span>{{ history.rows }} rows imported. {{ history.matched }} matched
      to Schwab's records, {{ history.problems|length }} need a look, {{ history.review|length }}

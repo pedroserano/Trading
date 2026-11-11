@@ -149,6 +149,13 @@ export default function Activity() {
           </span>
         </div>
       ) : null}
+      {live && data.sheet?.error ? <div className="msg warn">{data.sheet.error}</div> : null}
+      {live && source === "sheet" && data.sheet && !data.sheet.rows ? (
+        <div className="msg">
+          No spreadsheet rows are stored on this server. Import the .xlsx file under{" "}
+          <a href="#/settings/history">Settings, Trading history</a>.
+        </div>
+      ) : null}
       {data.trades.length ? (
         <div className="table-wrap">
           <table className="positions">
