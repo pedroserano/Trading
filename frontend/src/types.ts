@@ -331,13 +331,6 @@ export interface Activity {
 
 export type AutoLevel = "off" | "notify" | "propose" | "auto";
 
-export interface AutoPlanLine {
-  rule: string;
-  label: string;
-  level: AutoLevel;
-  what: string;
-}
-
 export interface AutoProposal {
   id: string;
   trade_id: string;
@@ -361,8 +354,7 @@ export interface AutoLogEntry {
 export interface AutomationView {
   paused: boolean;
   settings: { levels: Record<string, AutoLevel>; window_start: string; window_end: string; daily_cap: number };
-  trades: Record<string, { enabled: boolean; levels: Record<string, AutoLevel> }>;
-  plans: Record<string, AutoPlanLine[]>;
+  trades: Record<string, { enabled: boolean }>;
   proposals: AutoProposal[];
   log: AutoLogEntry[];
   orders_today: number;

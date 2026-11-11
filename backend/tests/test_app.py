@@ -338,8 +338,3 @@ def test_automanage_settings_and_api(settings):
         view = c.post("/api/automation/trade", json={"trade_id": 7, "enabled": True}).json()
         assert view["trades"]["7"]["enabled"] is True
         assert c.post("/api/automation/pause", json={"paused": True}).json()["paused"] is True
-        bad = c.post(
-            "/api/automation/trade",
-            json={"trade_id": 7, "enabled": True, "levels": {"loss": "yolo"}},
-        )
-        assert bad.status_code == 400

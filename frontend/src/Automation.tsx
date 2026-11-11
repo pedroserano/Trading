@@ -3,8 +3,6 @@ import { getJson, postJson } from "./api";
 import { clock } from "./format";
 import type { AutoLevel, AutomationView, StrategyView } from "./types";
 
-const LEVELS: AutoLevel[] = ["off", "notify", "propose", "auto"];
-
 type Ctx = { view: AutomationView | null; update: (v: AutomationView) => void };
 
 /** Automanage state, shared by the Positions toolbar and every position's actions row. */
@@ -118,71 +116,51 @@ export function AutoBadge({ st }: { st: StrategyView }) {
   );
 }
 
-/** Switch and plan for one position, shown in its actions row. */
+const SHORT: Record<string, string> = {
+  profit: "profit target",
+  dte: "DTE",
+  tested: "tested",
+  loss: "loss",
+  expiry: "expiry day",
+};
+
+/** One line: what each level covers, from the defaults in Settings. */
+function summary(levels: Record<string, AutoLevel>): string {
+  const parts = (["auto", "propose", "notify"] as AutoLevel[])
+    .map((lv) => {
+      const rules = Object.keys(SHORT).filter((r) => levels[r] === lv);
+      return rules.length ? `${lv[0].toUpperCase() + lv.slice(1)}: ${rules.map((r) => SHORT[r]).join(", ")}` : null;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Every rule is off in Settings";
+}
+
+/** The Automanage switch for one position; the rules themselves are set in Settings. */
 export function AutoPanel({ st }: { st: StrategyView }) {
   const { view, update } = useContext(AutomationContext);
   const [error, setError] = useState<string | null>(null);
   if (!view || st.trade_id === null) return null;
-  const id = String(st.trade_id);
-  const entry = view.trades[id];
-  const enabled = !!entry?.enabled;
-  const plan = view.plans[id] || [];
-  const save = async (on: boolean, levels?: Record<string, AutoLevel>) => {
+  const enabled = !!view.trades[String(st.trade_id)]?.enabled;
+  const save = async (on: boolean) => {
     setError(null);
     try {
-      update(
-        await postJson<AutomationView>("/api/automation/trade", {
-          trade_id: st.trade_id,
-          enabled: on,
-          levels: levels ?? entry?.levels ?? {},
-        }),
-      );
+      update(await postJson<AutomationView>("/api/automation/trade", { trade_id: st.trade_id, enabled: on }));
     } catch (e) {
       setError(String((e as Error).message));
     }
   };
-  const recent = view.log.filter((l) => String(l.trade_id) === id).slice(0, 6);
   return (
-    <div className="auto-panel" onClick={(e) => e.stopPropagation()}>
+    <span className="auto-panel" onClick={(e) => e.stopPropagation()}>
       <label className="check">
         <input type="checkbox" checked={enabled} onChange={(e) => save(e.target.checked)} />
         Automanage
       </label>
-      {error ? <span className="warn-text"> {error}</span> : null}
       {enabled ? (
-        <table className="auto-plan">
-          <tbody>
-            {plan.map((l) => (
-              <tr key={l.rule}>
-                <td className="l">{l.label}</td>
-                <td className="l">
-                  <select
-                    aria-label={`${l.label} level`}
-                    value={l.level}
-                    onChange={(e) => save(true, { ...(entry?.levels || {}), [l.rule]: e.target.value as AutoLevel })}
-                  >
-                    {LEVELS.map((lv) => (
-                      <option key={lv} value={lv}>
-                        {lv[0].toUpperCase() + lv.slice(1)}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className={`l ${l.level === "off" ? "dim-text" : ""}`}>{l.what}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <a className="sub" href="#/settings/automation" title="Change these in Settings">
+          {summary(view.settings.levels)}
+        </a>
       ) : null}
-      {recent.length ? (
-        <ul className="auto-log">
-          {recent.map((l, i) => (
-            <li key={i}>
-              <span className="dim-text">{clock(l.at)}</span> {l.text}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
+      {error ? <span className="warn-text"> {error}</span> : null}
+    </span>
   );
 }

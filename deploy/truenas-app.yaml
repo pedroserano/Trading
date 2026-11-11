@@ -47,6 +47,8 @@ services:
   backend:
     container_name: trading-backend
     image: ghcr.io/pedroserano/trading-backend:main
+    # Always fetch the newest build when the app starts; the tag never changes.
+    pull_policy: always
     restart: unless-stopped
     env_file: /mnt/apps/trading/.env
     environment:

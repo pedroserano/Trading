@@ -285,10 +285,10 @@ async def test_switched_off_trades_and_a_pause_are_left_alone():
 
 @pytest.mark.anyio
 async def test_dte_roll_is_proposed_once_then_placed_on_accept():
-    h = Harness([], QUOTES)
+    h = Harness([], QUOTES, settings={"levels": {"profit": "off"}})
     tid = await h.open_strangle()
     h.portfolio.snapshot["underlyings"][0]["strategies"] = [strat(tid=tid, dte=20)]
-    await h.svc.set_trade(tid, True, {"profit": "off"})
+    await h.svc.set_trade(tid, True)
     assert await h.svc.tick() == ["propose dte"]
     assert await h.svc.tick() == []
     (p,) = (await h.svc.view())["proposals"]
@@ -303,10 +303,10 @@ async def test_dte_roll_is_proposed_once_then_placed_on_accept():
     assert roll["intent"] == "roll" and roll["limit_net"] == pytest.approx(3.80)
     assert (await h.svc.view())["proposals"] == []
     # A dismissed proposal does not come back.
-    h2 = Harness([], QUOTES)
+    h2 = Harness([], QUOTES, settings={"levels": {"profit": "off"}})
     tid2 = await h2.open_strangle()
     h2.portfolio.snapshot["underlyings"][0]["strategies"] = [strat(tid=tid2, dte=20)]
-    await h2.svc.set_trade(tid2, True, {"profit": "off"})
+    await h2.svc.set_trade(tid2, True)
     await h2.svc.tick()
     await h2.svc.dismiss((await h2.svc.view())["proposals"][0]["id"])
     assert await h2.svc.tick() == []
@@ -316,10 +316,10 @@ async def test_dte_roll_is_proposed_once_then_placed_on_accept():
 async def test_auto_close_steps_toward_natural_then_gives_up():
     # Previews see mid 4.00 debit; fills need 4.10, so the order has to chase.
     fill = {**QUOTES, sym("P", 555): q(2.0, 2.4), sym("C", 610): q(1.8, 2.0)}
-    h = Harness([], QUOTES, fill_quotes=fill)
+    h = Harness([], QUOTES, fill_quotes=fill, settings={"levels": {"loss": "auto"}})
     tid = await h.open_strangle(profit_target=0.5)
     h.portfolio.snapshot["underlyings"][0]["strategies"] = [strat(tid=tid, flags=["loss"])]
-    await h.svc.set_trade(tid, True, {"loss": "auto"})
+    await h.svc.set_trade(tid, True)
     assert "place loss" in await h.svc.tick()
     (order,) = h.working()  # the closing order replaced the profit target
     assert order["limit_net"] == -4.00 and order["duration"] == "DAY"
@@ -340,10 +340,12 @@ async def test_auto_close_steps_toward_natural_then_gives_up():
 
 @pytest.mark.anyio
 async def test_a_roll_without_the_minimum_credit_closes_instead():
-    h = Harness([], QUOTES, settings={"min_roll_credit": 5.0, "levels": {"dte": "auto"}})
+    h = Harness(
+        [], QUOTES, settings={"min_roll_credit": 5.0, "levels": {"dte": "auto", "profit": "off"}}
+    )
     tid = await h.open_strangle()
     h.portfolio.snapshot["underlyings"][0]["strategies"] = [strat(tid=tid, dte=20)]
-    await h.svc.set_trade(tid, True, {"profit": "off"})
+    await h.svc.set_trade(tid, True)
     assert await h.svc.tick() == ["place dte"]
     order = h.broker.state["orders"][-1]
     assert order["intent"] == "close" and len(order["legs"]) == 2
@@ -352,7 +354,7 @@ async def test_a_roll_without_the_minimum_credit_closes_instead():
 
 @pytest.mark.anyio
 async def test_daily_cap_pauses_automation():
-    h = Harness([], QUOTES, settings={"daily_cap": 1})
+    h = Harness([], QUOTES, settings={"daily_cap": 1, "levels": {"loss": "auto", "profit": "off"}})
     tid = await h.open_strangle()
     tid2 = await h.open_strangle()
     h.portfolio.snapshot["underlyings"][0]["strategies"] = [
@@ -360,7 +362,7 @@ async def test_daily_cap_pauses_automation():
         strat(tid=tid2, flags=["loss"]),
     ]
     for t in (tid, tid2):
-        await h.svc.set_trade(t, True, {"loss": "auto", "profit": "off"})
+        await h.svc.set_trade(t, True)
     done = await h.svc.tick()
     assert done.count("place loss") == 1
     assert (await h.svc.view())["paused"] is True

@@ -121,7 +121,7 @@
   <h2>Automanage</h2>
   <p class="dim">Applies the rules above to trades you switch to automanage, on the simulated
      account for now. Notify sends a message; Propose prepares an order for one tap;
-     Auto places it at mid and steps toward natural. Each trade can override these levels.</p>
+     Auto places it at mid and steps toward natural. These levels apply to every trade with Automanage ticked on Positions.</p>
   <form method="post" action="/automation/settings">
     {% for rule, label in auto_rules.items() %}
       <div class="rule">

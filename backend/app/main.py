@@ -123,7 +123,6 @@ class ReviewIn(BaseModel):
 class AutoTradeIn(BaseModel):
     trade_id: int | str
     enabled: bool
-    levels: dict[str, str] | None = None
 
 
 class PauseIn(BaseModel):
@@ -938,9 +937,7 @@ def create_app(
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
     async def api_automation_trade(body: AutoTradeIn):
-        if body.levels and any(r not in RULES or v not in LEVELS for r, v in body.levels.items()):
-            raise HTTPException(status_code=400, detail="Unknown rule or level")
-        await automation.set_trade(body.trade_id, body.enabled, body.levels)
+        await automation.set_trade(body.trade_id, body.enabled)
         return await automation.view()
 
     @app.post("/api/automation/pause", dependencies=[Depends(require_login)])

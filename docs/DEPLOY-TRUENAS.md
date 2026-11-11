@@ -126,11 +126,19 @@ That is the phase 0 exit test.
 
 ## Updating
 
+The backend image is tagged `main` and rebuilt on every push. The app's YAML sets
+`pull_policy: always`, so stopping and starting the app fetches the newest build:
+Apps > trading > Stop, then Start. (Before that line was added, a restart kept the image
+already on the NAS.)
+
+To check which build is running, compare the image ID before and after, in the TrueNAS shell:
+
 ```sh
-cd /mnt/tank/apps/trading/stack
-# replace compose.yaml / Caddyfile if they changed, then in the TrueNAS UI:
-# Apps > trading > Update, or stop and start the app to pull the newer image.
+docker image inspect ghcr.io/pedroserano/trading-backend:main --format '{{.Id}} {{.Created}}'
 ```
+
+If `compose.yaml` or the `Caddyfile` changed, replace them in `/mnt/tank/apps/trading/stack`
+first.
 
 ## Troubleshooting
 

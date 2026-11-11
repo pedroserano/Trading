@@ -3,6 +3,7 @@
 services:
   backend:
     image: ghcr.io/pedroserano/trading-backend:${IMAGE_TAG:-main}
+    pull_policy: always
     restart: unless-stopped
     environment:
       APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD in .env}

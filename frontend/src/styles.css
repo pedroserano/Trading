@@ -404,12 +404,10 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .banner.proposal { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; }
 .banner.proposal .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .proposal-actions { display: flex; gap: 6px; flex-shrink: 0; }
-.auto-panel { margin-top: 6px; }
-.auto-plan { border-collapse: collapse; margin: 4px 0; font-size: 12px; }
-.auto-plan td { padding: 2px 8px 2px 0; border: 0; white-space: normal; }
-.auto-plan select { font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line);
-  border-radius: 4px; padding: 1px 4px; }
-.auto-log { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; }
+.auto-panel { display: inline-flex; align-items: center; gap: 8px; margin-left: 12px; white-space: normal; }
+.auto-panel .check { display: inline-flex; align-items: center; gap: 4px; }
+.auto-panel a.sub { color: var(--dim); text-decoration: none; }
+.auto-panel a.sub:hover { text-decoration: underline; }
 @media (max-width: 700px) {
   .banner.proposal { flex-direction: column; }
 }

@@ -272,14 +272,11 @@ class AutomationService:
         )
         log.info("Automation (%s): trade %s %s: %s", self.account, trade_id, rule, text)
 
-    async def set_trade(self, trade_id, enabled: bool, levels: dict | None = None) -> None:
+    async def set_trade(self, trade_id, enabled: bool) -> None:
+        """Switches automanage on or off for one trade. The rules come from Settings."""
         async with self.lock:
             st = await self.load()
-            entry = st["trades"].setdefault(str(trade_id), {"enabled": False, "levels": {}})
-            entry["enabled"] = enabled
-            if levels is not None:
-                entry["levels"] = {r: lv for r, lv in levels.items() if r in RULES and lv in LEVELS}
-            self._log(trade_id, None, "Automanage switched " + ("on" if enabled else "off"))
+            st["trades"][str(trade_id)] = {"enabled": enabled}
             await self._save()
 
     async def set_paused(self, paused: bool, why: str = "by you") -> None:
@@ -299,26 +296,14 @@ class AutomationService:
                     self._log(p["trade_id"], p["rule"], "Proposal dismissed by you")
             await self._save()
 
-    def levels_for(self, trade_id, settings: dict) -> dict:
-        own = self.state["trades"].get(str(trade_id), {}).get("levels", {})
-        return {**settings["levels"], **own}
-
     async def view(self) -> dict:
         st = await self.load()
         settings = await self.settings()
-        rules = await self.preferences.rules()
-        plans = {}
-        for u in self.portfolio.snapshot.get("underlyings", []):
-            for s in u["strategies"]:
-                tid = s.get("trade_id")
-                if tid is not None:
-                    plans[str(tid)] = plan_lines(s, rules, settings, self.levels_for(tid, settings))
         today = self.clock().date().isoformat()
         return {
             "paused": st["paused"],
             "settings": settings,
             "trades": st["trades"],
-            "plans": plans,
             "proposals": [p for p in st["proposals"] if p["status"] == "pending"],
             "log": st["log"][-150:][::-1],
             "orders_today": st["counts"].get(today, 0),
@@ -371,7 +356,7 @@ class AutomationService:
                     open_ids.add(str(tid))
                     if not st["trades"].get(str(tid), {}).get("enabled"):
                         continue
-                    levels = self.levels_for(tid, settings)
+                    levels = settings["levels"]
                     for action in decide(s, u["price"], rules, settings, levels):
                         await self._handle(s, u, action, levels[action.rule], settings, rules, done)
             # Proposals for trades that have closed no longer apply.
@@ -783,40 +768,3 @@ class AutomationService:
             except Exception as e:
                 log.warning("Automation notification failed: %s", e)
         return True
-
-
-def plan_lines(st: dict, rules, settings: dict, levels: dict) -> list[dict]:
-    """What automanage will do for one position, in plain words, rule by rule."""
-    n = st["numbers"]
-    credit = n["open_value"] > 0
-    pct = profit_target(st, rules)
-    lines = []
-    for rule, label in RULES.items():
-        level = levels.get(rule, "off")
-        if rule == "profit":
-            what = (
-                f"GTC close at {round(pct * 100)}% of the credit so far, resting at the broker"
-                if credit
-                else "Not used: this is a debit trade"
-            )
-        elif rule == "dte":
-            if st["defined_risk"] and settings["dte_defined_action"] == "close":
-                what = f"At {rules.manage_dte} DTE: close"
-            else:
-                what = (
-                    f"At {rules.manage_dte} DTE: roll to the monthly nearest "
-                    f"{settings['roll_target_dte']} DTE at the same strikes for a credit; "
-                    f"close after {settings['max_rolls']} rolls"
-                )
-            if len([x for x in st["legs"] if x["kind"] == "OPTION"]) * 2 > MAX_LEGS:
-                what += " (by side: four legs per order)"
-        elif rule == "tested":
-            what = f"Short strike at {rules.tested_delta:.2f} delta or in the money: " + (
-                "roll the untested side toward that delta" if st["name"] in STRANGLES else "notify"
-            )
-        elif rule == "loss":
-            what = f"Loss at {rules.loss_multiple:g}x the credit: close"
-        else:
-            what = "Expiration day with a short in the money: close before the window ends"
-        lines.append({"rule": rule, "label": label, "level": level, "what": what})
-    return lines
