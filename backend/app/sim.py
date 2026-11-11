@@ -136,7 +136,7 @@ class SimBroker:
                     raise ValueError("That simulated trade is not open")
             order = {
                 "id": self._id(),
-                "created_at": time.time(),
+                "created_at": self.clock().timestamp(),
                 "status": "WORKING",
                 "intent": t.intent,
                 "trade_id": t.trade_id,
@@ -377,7 +377,7 @@ class SimBroker:
         )
         child = {
             "id": self._id(),
-            "created_at": time.time(),
+            "created_at": self.clock().timestamp(),
             "status": "WORKING",
             "intent": "close",
             "trade_id": trade["id"],

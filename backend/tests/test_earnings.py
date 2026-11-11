@@ -59,6 +59,8 @@ async def test_refresh_with_finnhub_and_your_dates_win():
         assert request.url.host == "finnhub.io"
         assert request.headers["X-Finnhub-Token"] == "KEY" and "token" not in request.url.params
         sym = request.url.params["symbol"]
+        if request.url.path.endswith("/profile2"):
+            return httpx.Response(200, json={"finnhubIndustry": "Semiconductors"})
         return httpx.Response(
             200, json={"earningsCalendar": [{"date": "2026-11-19", "hour": "amc", "symbol": sym}]}
         )
@@ -74,6 +76,7 @@ async def test_refresh_with_finnhub_and_your_dates_win():
     assert await fin.refresh() == 1
     assert fin.info("NVDA")["source"] == "Finnhub" and fin.info("SPY") is None
     assert fin.is_fund("SPY") and fin.is_fund("$SPX")
+    assert fin.industries == {"NVDA": "Semiconductors"}  # stocks only, for the Portfolio screen
     # Without a key: only dates entered in Settings.
     manual = er.EarningsService(MemoryStore(), Quotes(), symbols, "", clock, client)
     assert await manual.refresh() == 0 and manual.info("NVDA") is None

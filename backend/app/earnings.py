@@ -134,6 +134,7 @@ class EarningsService:
         self.cache: dict = {}
         self.manual: dict = {}
         self.funds: set[str] = set()
+        self.industries: dict[str, str] = {}  # stock -> Finnhub industry, for the Portfolio screen
         self.refreshed_at: float | None = None
         self.error: str | None = None
         self._wake = asyncio.Event()
@@ -147,6 +148,7 @@ class EarningsService:
         saved = await self.store.get_setting(CACHE_KEY) or {}
         self.cache = saved.get("symbols", {})
         self.funds = set(saved.get("funds", []))
+        self.industries = saved.get("industries", {})
         self.refreshed_at = saved.get("refreshed_at")
         self.manual, _ = parse_manual(await self.store.get_setting(MANUAL_KEY) or "", self.today())
 
@@ -227,6 +229,7 @@ class EarningsService:
             client = self.client or httpx.AsyncClient(timeout=20)
             try:
                 found = await self._finnhub(client, stocks)
+                await self._industries(client, stocks - set(self.industries))
             finally:
                 if own:
                     await client.aclose()
@@ -242,7 +245,12 @@ class EarningsService:
         self.error = None
         await self.store.set_setting(
             CACHE_KEY,
-            {"symbols": self.cache, "funds": sorted(self.funds), "refreshed_at": self.refreshed_at},
+            {
+                "symbols": self.cache,
+                "funds": sorted(self.funds),
+                "industries": self.industries,
+                "refreshed_at": self.refreshed_at,
+            },
         )
         return len(found)
 
@@ -267,6 +275,24 @@ class EarningsService:
             out.update(parse_finnhub(r.json(), today))
             await asyncio.sleep(1.1 * self.pace)  # the free plan allows 60 a minute
         return out
+
+    async def _industries(self, client, stocks: set[str]) -> None:
+        """Each stock's industry from Finnhub's company profile, looked up once and kept."""
+        for sym in sorted(stocks):
+            r = await client.get(
+                "https://finnhub.io/api/v1/stock/profile2",
+                params={"symbol": sym},
+                headers={"X-Finnhub-Token": self.finnhub_key},
+            )
+            if r.status_code == 429:
+                await asyncio.sleep(2 * self.pace)
+                continue
+            if r.status_code != 200:
+                continue
+            industry = (r.json() or {}).get("finnhubIndustry")
+            if industry:
+                self.industries[sym] = industry
+            await asyncio.sleep(1.1 * self.pace)
 
     def _demo(self, stocks: set[str]) -> dict:
         """Demo mode: a report about three weeks out, after the close."""

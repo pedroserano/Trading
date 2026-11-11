@@ -491,3 +491,14 @@ td .earn { margin-left: 0; }
 .mkt-price { color: var(--text); font-weight: 500; }
 .mkt-chg.pos { color: var(--pos); }
 .mkt-chg.neg { color: var(--neg); }
+
+/* Portfolio screen */
+.portfolio section { margin-bottom: 18px; }
+.portfolio h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 14px 0 8px; }
+.portfolio-stats { flex-wrap: wrap; margin: 4px 0 6px; }
+.meter.wide { width: 100%; min-width: 48px; }
+.calendar { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.calendar .week { border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font-size: 13px; min-width: 0; }
+.calendar .week.due { border-color: var(--warn); }
+.calendar .week-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.calendar .week-trade { overflow-wrap: anywhere; }

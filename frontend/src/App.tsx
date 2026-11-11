@@ -6,6 +6,7 @@ import MarketStrip from "./MarketStrip";
 import { AutoBadge, AutoBar, AutomationContext, AutoPanel, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
+import Portfolio from "./Portfolio";
 import Settings from "./Settings";
 import OrderTicket, { actionsFor, closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
@@ -17,6 +18,7 @@ import Watchlist from "./Watchlist";
 type Route =
   | { page: "positions" }
   | { page: "watchlist" }
+  | { page: "portfolio" }
   | { page: "activity" }
   | { page: "dashboard" }
   | { page: "settings"; section: string | null }
@@ -27,6 +29,7 @@ type Route =
 function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "watchlist") return { page: "watchlist" };
+  if (parts[0] === "portfolio") return { page: "portfolio" };
   if (parts[0] === "activity") return { page: "activity" };
   if (parts[0] === "dashboard") return { page: "dashboard" };
   if (parts[0] === "settings") return { page: "settings", section: parts[1] || null };
@@ -109,6 +112,7 @@ export default function App() {
       <main>
         <Banner s={snapshot} />
         {route.page === "watchlist" ? <Watchlist /> : null}
+        {route.page === "portfolio" ? <Portfolio /> : null}
         {route.page === "activity" ? <Activity /> : null}
         {route.page === "dashboard" ? <Dashboard /> : null}
         {route.page === "settings" ? <Settings section={route.section} /> : null}
@@ -194,6 +198,7 @@ function Nav({ route, children }: { route: Route; children?: React.ReactNode }) 
   return (
     <nav className="tabs">
       {tab("positions", "#/", "Positions")}
+      {tab("portfolio", "#/portfolio", "Portfolio")}
       {tab("watchlist", "#/watchlist", "Watchlist")}
       {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
       {tab("activity", "#/activity", "Activity")}

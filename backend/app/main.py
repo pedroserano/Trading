@@ -23,7 +23,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, targets
+from . import guards, portfolio_view, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
@@ -828,6 +828,14 @@ def create_app(
         }
 
     candle_cache: dict[tuple[str, date], list[dict]] = {}
+
+    @app.get("/api/portfolio", dependencies=[Depends(require_login)])
+    async def api_portfolio(account: Literal["live", "sim"] = "live"):
+        snap = portfolios[account].snapshot or {}
+        rules = await preferences.rules()
+        return portfolio_view.build(
+            snap, portfolio.clock().date(), earnings.industries, rules.manage_dte
+        )
 
     @app.get("/api/trade/{symbol:path}/chart", dependencies=[Depends(require_login)])
     async def api_chart(symbol: str, account: Literal["live", "sim"] = "live"):
