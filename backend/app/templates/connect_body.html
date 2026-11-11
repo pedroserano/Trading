@@ -272,6 +272,8 @@
     </div>
     <p><label><input type="checkbox" name="monthly_only" {% if scan.monthly_only %}checked{% endif %}>
        Monthly expirations only</label></p>
+    <p><label><input type="checkbox" name="avoid_through_earnings" {% if scan.avoid_through_earnings %}checked{% endif %}>
+       Single stocks: no trade whose expiration is after the next earnings report</label></p>
     <p><label><input type="checkbox" name="automanage_new" {% if scan.automanage_new %}checked{% endif %}>
        Switch automanage on for trades the scanner opens</label></p>
     <p><label><input type="checkbox" name="band_lean" {% if scan.band_lean %}checked{% endif %}>

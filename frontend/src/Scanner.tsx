@@ -13,6 +13,7 @@ type Candidate = {
   mid: number | null;
   bp: number | null;
   pop: number | null;
+  score?: number;
   note?: string;
 };
 
@@ -102,6 +103,7 @@ export default function Scanner() {
                 <th>Credit</th>
                 <th title="Probability of profit at entry">POP</th>
                 <th>Buying power</th>
+                <th title="Ranking: IV rank, credit per dollar of buying power and probability of profit">Score</th>
                 <th className="l" />
               </tr>
             </thead>
@@ -119,6 +121,7 @@ export default function Scanner() {
                   <td>{c.mid === null ? "–" : Math.abs(c.mid).toFixed(2)}</td>
                   <td>{pct(c.pop)}</td>
                   <td>{money(c.bp)}</td>
+                  <td>{c.score === undefined ? "–" : c.score.toFixed(2)}</td>
                   <td className="l dim-text">
                     {c.note ?? done(last.acted, c.symbol)}
                   </td>

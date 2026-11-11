@@ -57,6 +57,11 @@ DEFAULTS = {
     "tilt_delta": 0.25,
     # Portfolio targets: outside the delta band, lean new trades back toward it.
     "band_lean": True,
+    # A single stock's trade never holds through its next report.
+    "avoid_through_earnings": True,
+    "min_pop": 0.55,  # probability of profit at entry, at least
+    "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
+    "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
 # (key, label, low, high, kind, unit) for the Settings page.
 FIELDS = [
@@ -82,6 +87,9 @@ FIELDS = [
     ("max_per_underlying", "Open trades per underlying, at most", 1, 10, "int", "trades"),
     ("max_new_per_day", "New trades per day, at most", 0, 50, "int", "trades"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
+    ("min_pop", "Probability of profit, at least", 0, 95, "percent", "%"),
+    ("max_bp_day", "Buying power added in one day, at most", 0.5, 100, "percent", "% net liq"),
+    ("scan_every", "Scan again every (0: once a day)", 0, 240, "int", "min"),
     ("range_band", "Price extreme: near a 52-week high or low, within", 0.5, 25, "percent", "%"),
     ("move_days", "Price extreme: move over", 2, 30, "int", "sessions"),
     ("move_sigma", "Price extreme: move vs expected, at least", 0.5, 5, "float", "σ"),
@@ -121,6 +129,7 @@ def parse_form(form: dict, current: dict | None) -> dict:
         out["automanage_new"] = form.get("automanage_new") in ("on", "true", "1")
         out["extreme_tilt"] = form.get("extreme_tilt") in ("on", "true", "1")
         out["band_lean"] = form.get("band_lean") in ("on", "true", "1")
+        out["avoid_through_earnings"] = form.get("avoid_through_earnings") in ("on", "true", "1")
     if "scan_time" in form:
         try:
             h, m = _hm(form["scan_time"])
@@ -128,6 +137,8 @@ def parse_form(form: dict, current: dict | None) -> dict:
         except (ValueError, AssertionError):
             raise ValueError("Scan time: between 09:30 and 16:00") from None
         out["scan_time"] = f"{h:02d}:{m:02d}"
+    if 0 < out["scan_every"] < 5:
+        raise ValueError("Scan again every: 0 (once a day) or at least 5 minutes")
     if out["min_dte"] > out["target_dte"] or out["target_dte"] > out["max_dte"]:
         raise ValueError("Expiration: the DTE range must hold the target")
     return out
@@ -155,6 +166,13 @@ def _mid(c: dict | None) -> float | None:
     if c.get("bid") is not None and c.get("ask") is not None:
         return (c["bid"] + c["ask"]) / 2
     return None
+
+
+def _score(ivr: float, mid: float | None, n: int, bp: float | None, pop: float | None) -> float:
+    """Ranking: IV rank, the credit per dollar of buying power, and the probability of
+    profit, each roughly on a 0 to 1 scale."""
+    ret = (abs(mid or 0) * 100 * n / bp) if bp else 0.0
+    return round(ivr / 100 + min(ret, 1.0) * 2 + (pop or 0), 4)
 
 
 def _theta_full(bands: dict) -> str | None:
@@ -308,8 +326,16 @@ class Scanner:
         for account in ("sim", "live"):
             if self.level(s, account) == "off":
                 continue
-            if (st.get(account) or {}).get("day") == today:
-                continue
+            last = st.get(account) or {}
+            if last.get("day") == today:
+                every = s.get("scan_every") or 0
+                # Rescans during the day stop with automanage's window.
+                if not every or time.time() - (last.get("at") or 0) < every * 60:
+                    continue
+                if (now.hour, now.minute) >= _hm(
+                    (await self.automations[account].settings())["window_end"]
+                ):
+                    continue
             if (self.portfolios[account].snapshot or {}).get("session") != "open":
                 continue
             await self.scan(account, act=True)
@@ -325,6 +351,7 @@ class Scanner:
             st = await self._state()
             prev = st.get(account) or {}
             placed_today = prev.get("new_today", 0) if prev.get("day") == today else 0
+            bp_today = prev.get("bp_today", 0.0) if prev.get("day") == today else 0.0
             level = self.level(s, account)
             auto = self.automations[account]
             snap = self.portfolios[account].snapshot or {}
@@ -334,6 +361,11 @@ class Scanner:
             held = {
                 u["symbol"]: sum(1 for x in u["strategies"] if x.get("trade_id") is not None)
                 for u in snap.get("underlyings", [])
+            }
+            held_exps = {
+                (u["symbol"], x["numbers"].get("expiration"))
+                for u in snap.get("underlyings", [])
+                for x in u["strategies"]
             }
             rules = await self.preferences.rules()
             bands = snap.get("bands") or {}
@@ -355,6 +387,11 @@ class Scanner:
                     skipped.append({"symbol": sym, "reason": why})
                     continue
                 ivr, exp, rows = why
+                if (sym, exp["date"]) in held_exps:
+                    skipped.append(
+                        {"symbol": sym, "reason": f"already a trade here in {exp['date']}"}
+                    )
+                    continue
                 strangle = ivr >= s["undefined_ivr"]
                 ext = await self._extreme(sym, quotes, s)
                 tilt = (ext or {}).get("direction") if s["extreme_tilt"] else None
@@ -404,6 +441,15 @@ class Scanner:
                 if problems:
                     skipped.append({"symbol": sym, "reason": "; ".join(problems)})
                     continue
+                pop = (pv.get("entry") or {}).get("pop")
+                if pop is not None and pop < s["min_pop"]:
+                    skipped.append(
+                        {
+                            "symbol": sym,
+                            "reason": f"probability of profit {pop:.0%}, under {s['min_pop']:.0%}",
+                        }
+                    )
+                    continue
                 push = _delta_push(pv)
                 candidates.append(
                     {
@@ -421,6 +467,7 @@ class Scanner:
                         "tilt": tilt,
                         "band_lean": leaned,
                         "delta_push": push,
+                        "score": _score(ivr, pv["prices"]["mid"], n, bp, pop),
                     }
                 )
                 if tilt:
@@ -442,20 +489,28 @@ class Scanner:
                 # band or against a price extreme), then by IV rank.
                 order = sorted(
                     candidates,
-                    key=lambda c: (bool(c.get("delta_push")), not c.get("tilt"), -c["ivr"]),
+                    key=lambda c: (bool(c.get("delta_push")), not c.get("tilt"), -c["score"]),
                 )
                 for c in order:
                     if placed_today >= s["max_new_per_day"]:
                         c["note"] = "daily limit of new trades reached"
                         continue
+                    if net_liq and c["bp"] and bp_today + c["bp"] > s["max_bp_day"] * net_liq:
+                        c["note"] = (
+                            f"would take buying power added today over {s['max_bp_day']:.0%} "
+                            "of net liq"
+                        )
+                        continue
                     what = await self._act(account, level, c, s, today)
                     if what:
                         acted.append(what)
                         placed_today += 1
+                        bp_today += c["bp"] or 0
             result = {
                 "at": time.time(),
                 "day": today if act else prev.get("day"),
                 "new_today": placed_today,
+                "bp_today": bp_today,
                 "level": level,
                 "candidates": candidates,
                 "skipped": skipped,
@@ -511,6 +566,9 @@ class Scanner:
                     f"earnings {info['date']} {info['label']}: within the "
                     f"{s['earnings_days']}-session buffer"
                 )
+            report = info["date"]
+        else:
+            report = None
         today = self.clock().astimezone(ET).date()
         exps = chain_mod.expirations(await self.source.expirations(sym), today)
         exp = pick_expiration(exps, s)
@@ -519,6 +577,8 @@ class Scanner:
                 f"no {'monthly ' if s['monthly_only'] else ''}expiration in "
                 f"{s['min_dte']}-{s['max_dte']} DTE"
             )
+        if report and s.get("avoid_through_earnings", True) and report <= exp["date"]:
+            return f"earnings {report} fall before the {exp['date']} expiration"
         d = date.fromisoformat(exp["date"])
         chain = chain_mod.chain_rows(
             await self.source.option_chain(sym, d, d, strike_count=None) or {}
