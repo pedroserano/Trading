@@ -98,10 +98,7 @@ export default function ChainHistory({ account, chainId, onClose }: { account: "
 
   const load = async () => {
     try {
-      const r = await getJson<{ chains: SimTrade[] }>(`/api/chains?account=${account}`);
-      const c = r.chains.find((x) => String(x.id) === String(chainId));
-      if (c) setChain(c);
-      else setError("This trade's history is not available yet.");
+      setChain(await getJson<SimTrade>(`/api/chains/${encodeURIComponent(String(chainId))}?account=${account}`));
     } catch (e) {
       setError((e as Error).message);
     }

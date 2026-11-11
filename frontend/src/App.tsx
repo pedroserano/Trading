@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo, useState } from "react";
 import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
 import ChainHistory from "./ChainHistory";
+import Dashboard from "./Dashboard";
 import OrderTicket, { closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Snapshot, StrategyView, UnderlyingView } from "./types";
@@ -13,6 +14,7 @@ type Route =
   | { page: "positions" }
   | { page: "watchlist" }
   | { page: "activity" }
+  | { page: "dashboard" }
   | { page: "trade"; symbol: string };
 
 
@@ -21,6 +23,7 @@ function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "watchlist") return { page: "watchlist" };
   if (parts[0] === "activity") return { page: "activity" };
+  if (parts[0] === "dashboard") return { page: "dashboard" };
   if (parts[0] === "trade") return { page: "trade", symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase() };
   return { page: "positions" };
 }
@@ -99,6 +102,7 @@ export default function App() {
         <Banner s={snapshot} />
         {route.page === "watchlist" ? <Watchlist /> : null}
         {route.page === "activity" ? <Activity /> : null}
+        {route.page === "dashboard" ? <Dashboard /> : null}
         {route.page === "trade" ? <Trade symbol={route.symbol} /> : null}
         {route.page === "positions" ? (
           <>
@@ -181,6 +185,7 @@ function Nav({ route }: { route: Route }) {
       {tab("watchlist", "#/watchlist", "Watchlist")}
       {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
       {tab("activity", "#/activity", "Activity")}
+      {tab("dashboard", "#/dashboard", "Dashboard")}
       <a href="/connect">Settings</a>
     </nav>
   );

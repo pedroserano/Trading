@@ -99,7 +99,9 @@ class SimBroker:
 
     # Orders --------------------------------------------------------------------------
 
-    async def place(self, t: Ticket, quotes: dict, parent_id: int | None = None) -> dict:
+    async def place(
+        self, t: Ticket, quotes: dict, parent_id: int | None = None, entry: dict | None = None
+    ) -> dict:
         """Records a working order and tries to fill it at once."""
         async with self.lock:
             st = await self.load()
@@ -135,6 +137,8 @@ class SimBroker:
                 "fill_net": None,
                 "filled_at": None,
                 "reason": None,
+                # Conditions when the order was placed, for the dashboard.
+                "entry": entry,
             }
             st["orders"].append(order)
             self._audit("place", order_id=order["id"], order=order["schwab_json"])
@@ -236,6 +240,7 @@ class SimBroker:
                 "status": "open",
                 "events": [],
                 "realized_pl": None,
+                "entry": order.get("entry"),
             }
             st["trades"].append(trade)
             order["trade_id"] = trade["id"]

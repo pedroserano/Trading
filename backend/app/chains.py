@@ -53,6 +53,8 @@ class Group:
     fills: list[Fill]
     fees: float  # positive = paid
     description: str = ""
+    # Extra facts carried onto the chain's events, e.g. {"source": "sheet", "spot": 159.24}.
+    meta: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -198,8 +200,23 @@ def build(
     def new_chain(cid, underlying, strategy, t, carried=False) -> Chain:
         c = Chain(id=cid, underlying=underlying, strategy=strategy, opened_at=t, carried_in=carried)
         chains[cid] = c
+        rank[cid] = len(order)
         order.append(cid)
         return c
+
+    # Which chains hold each symbol, so a fill only looks at those (thousands of chains).
+    rank: dict[str, int] = {}
+    by_symbol: dict[str, set[str]] = defaultdict(set)
+
+    def hold(c: Chain, symbol: str, qty: float) -> None:
+        c.holdings[symbol] = c.holdings.get(symbol, 0.0) + qty
+        if abs(c.holdings[symbol]) > 1e-9:
+            by_symbol[symbol].add(c.id)
+        else:
+            by_symbol[symbol].discard(c.id)
+
+    def holders_of(symbol: str) -> list[str]:
+        return sorted(by_symbol.get(symbol, ()), key=rank.__getitem__)
 
     # Holdings before the history begins: what is held now, less what the history adds.
     # This covers positions still held and positions the history shows being closed.
@@ -254,7 +271,7 @@ def build(
             c = new_chain(f"c-{under}-{i}", under, st.name, start, carried=True)
             ev_fills = [f for f in fills if any(x.symbol == f.symbol for x in st.legs)]
             for leg in st.legs:
-                c.holdings[leg.symbol] = c.holdings.get(leg.symbol, 0.0) + leg.quantity
+                hold(c, leg.symbol, leg.quantity)
             c.events.append(
                 _event(
                     "carried",
@@ -282,7 +299,9 @@ def build(
         closes, opens = [], []
         for f in g.fills:
             holders = [
-                cid for cid in order if chains[cid].holdings.get(f.symbol, 0) * f.quantity < 0
+                cid
+                for cid in holders_of(f.symbol)
+                if chains[cid].holdings.get(f.symbol, 0) * f.quantity < 0
             ]
             is_close = (
                 f.effect == "close"
@@ -297,12 +316,12 @@ def build(
         touched: dict[str, list[tuple[Fill, float]]] = defaultdict(list)
         for f in closes:
             left = f.quantity
-            for cid in order:
+            for cid in holders_of(f.symbol):
                 held = chains[cid].holdings.get(f.symbol, 0.0)
                 if held * left >= 0 or abs(left) < 1e-9:
                     continue
                 take = -held if abs(held) <= abs(left) else left
-                chains[cid].holdings[f.symbol] = held + take
+                hold(chains[cid], f.symbol, take)
                 touched[cid].append((f, take))
                 left -= take
             if abs(left) > 1e-9:
@@ -356,7 +375,7 @@ def build(
             if cid == target:
                 legs += [(f, f.quantity) for f in opens]
                 for f in opens:
-                    c.holdings[f.symbol] = c.holdings.get(f.symbol, 0.0) + f.quantity
+                    hold(c, f.symbol, f.quantity)
             n = sum(abs(q) for _, q in legs)
             fee = round(fee_total * n / contracts, 2)
             if g.kind != "trade":
@@ -383,6 +402,7 @@ def build(
                     fee,
                     note=note,
                     auto_linked=auto_linked and cid == target,
+                    meta=g.meta,
                 )
             )
             if not c.open:
@@ -410,7 +430,7 @@ def build(
     }
 
 
-def _event(kind, t, key, legs, fee, note=None, auto_linked=False) -> dict:
+def _event(kind, t, key, legs, fee, note=None, auto_linked=False, meta=None) -> dict:
     net = round(sum(-q * f.price * f.multiplier for f, q in legs), 2)
     return {
         "at": t,
@@ -422,6 +442,7 @@ def _event(kind, t, key, legs, fee, note=None, auto_linked=False) -> dict:
         "legs": [{"symbol": f.symbol, "quantity": q, "price": f.price} for f, q in legs],
         "note": note,
         "auto_linked": auto_linked,
+        "meta": meta or {},
     }
 
 
@@ -430,8 +451,10 @@ def _chain_json(c: Chain) -> dict:
     realized = None
     if status == "closed":
         realized = round(sum(e["net"] - e["commission"] for e in c.events), 2)
+    first_meta = c.events[0].get("meta") if c.events else None
     return {
         "id": c.id,
+        "source": (first_meta or {}).get("source") or "schwab",
         "underlying": c.underlying,
         "strategy": c.strategy,
         "opened_at": c.opened_at,
@@ -456,3 +479,39 @@ def trade_info(chains: list[dict]) -> dict:
         for c in chains
         if c["status"] == "open"
     }
+
+
+def realized_by_leg(chain: dict) -> list[tuple[float, float]]:
+    """P/L realized as each leg closes, the way a per-leg journal counts it.
+
+    Replays the chain's events with first-in, first-out lots per contract. A closing fill
+    realizes (close - open) on the quantity it closes, less the opening fees carried by
+    those lots and the closing fees. Returns [(time, amount, source of the closing event)].
+    """
+    lots: dict[str, list[list[float]]] = {}  # symbol -> [[qty, price, fee per unit]]
+    out = []
+    for e in chain["events"]:
+        legs = e["legs"]
+        units = sum(abs(x["quantity"]) for x in legs) or 1
+        fee_unit = e["commission"] / units
+        realized, closed_any = 0.0, False
+        for leg in legs:
+            sym, q, px = leg["symbol"], leg["quantity"], leg["price"]
+            mult = 100 if parse_option_symbol(sym) else 1
+            book = lots.setdefault(sym, [])
+            left = q
+            while book and abs(left) > 1e-9 and book[0][0] * left < 0:
+                lot = book[0]
+                take = min(abs(left), abs(lot[0]))
+                side = 1 if lot[0] > 0 else -1  # +1 long lot, -1 short lot
+                realized += side * (px - lot[1]) * take * mult - lot[2] * take - fee_unit * take
+                closed_any = True
+                lot[0] -= side * take
+                left += side * take
+                if abs(lot[0]) <= 1e-9:
+                    book.pop(0)
+            if abs(left) > 1e-9:
+                book.append([left, px, fee_unit])
+        if closed_any:
+            out.append((e["at"], round(realized, 2), (e.get("meta") or {}).get("source")))
+    return out

@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
-from . import chains
+from . import chains, sheet_import
 from .schwab_service import SchwabError, SchwabNotConnected
 
 log = logging.getLogger(__name__)
@@ -17,6 +17,8 @@ SYNC_INTERVAL_S = 300
 BACKFILL_DAYS = 365
 CHUNK_DAYS = 60
 OVERRIDES_KEY = "chain_overrides"
+REVIEW_KEY = "sheet_review"
+SHEET_ACCOUNT = "Joint"
 CURSOR_KEY = "transactions_synced_to"
 
 
@@ -31,6 +33,16 @@ class ChainService:
         self.error: str | None = None
         self._wake = asyncio.Event()
         self._by_id: dict[str, dict] = {}
+        # The imported spreadsheet: conversion problems, review list, history-only records.
+        self.history: dict = {
+            "rows": 0,
+            "problems": [],
+            "review": [],
+            "matched": 0,
+            "futures": [],
+            "realized": [],
+            "window_start": None,
+        }
 
     def refresh_soon(self) -> None:
         self._wake.set()
@@ -98,6 +110,30 @@ class ChainService:
             }
         overrides = await self.store.get_setting(OVERRIDES_KEY) or {}
         start = await self.store.get_setting("transactions_history_start")
+
+        # The spreadsheet's history: used as is before Schwab's record starts, reconciled
+        # against Schwab's fills after.
+        rows = await self.store.sheet_rows(SHEET_ACCOUNT)
+        if rows:
+            conv = sheet_import.convert(
+                [sheet_import.SheetRow(key=k, account=SHEET_ACCOUNT, data=d) for k, d in rows]
+            )
+            window = sheet_import.window_start_from(groups, start) if groups else None
+            decisions = await self.store.get_setting(REVIEW_KEY) or {}
+            rec = sheet_import.reconcile(conv.groups, groups, window or float("inf"), decisions)
+            first_sheet = min((g.time for g in conv.groups), default=None)
+            self.history = {
+                "rows": len(rows),
+                "problems": conv.problems,
+                "review": rec["review"],
+                "matched": rec["matched"],
+                "futures": conv.futures,
+                "realized": conv.realized,
+                "window_start": window,
+            }
+            groups = sorted(groups + rec["use"], key=lambda g: g.time)
+            if first_sheet is not None:
+                start = first_sheet - 86400
         self.result = chains.build(groups, positions, overrides, start)
         self._by_id = {c["id"]: c for c in self.result["chains"]}
 

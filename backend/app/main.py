@@ -22,12 +22,14 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
-from . import guards
+from . import dashboard as dash
+from . import guards, sheet_import
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
-from .chain_service import ChainService
+from .chain_service import REVIEW_KEY, SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
+from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
 from .notify import PushoverNotifier, ReminderService
 from .orders import (
@@ -100,6 +102,11 @@ class LinkIn(BaseModel):
 
 class SplitIn(BaseModel):
     group: str = Field(max_length=64)
+
+
+class ReviewIn(BaseModel):
+    id: str = Field(max_length=200)
+    decision: Literal["accept", "ignore"] | None = None
 
 
 class ResetIn(BaseModel):
@@ -329,6 +336,7 @@ def create_app(
                 "watchlist": watchlist.run,
                 "simulated account": sim_portfolio.run,
                 "trade chains": chain_service.run,
+                "price history": prices_service.run,
                 "simulated publisher": sim_portfolio.publisher,
             }
             if stream is not None:
@@ -445,6 +453,8 @@ def create_app(
                 "rules": await preferences.rules(),
                 "rule_fields": RULE_FIELDS,
                 "stream": None if stream is None else (stream.status, stream.detail),
+                "history": chain_service.history,
+                "sheet_account": SHEET_ACCOUNT,
                 "health": health,
             },
         )
@@ -720,11 +730,30 @@ def create_app(
             if uq.get(k):
                 spot = float(uq[k])
                 break
-        bp, defined = None, True
+        bp, defined, a = None, True, None
         if spot and t.intent in ("open", "adjust") and all(x.mark is not None for x in t.legs):
             tl = [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs]
             a = analyze(tl, spot, today)
             bp, defined = a["bp_estimate"], not a["unlimited_loss"]
+        # Conditions at the time, kept with the trade for the dashboard's analysis.
+        market = (portfolio.snapshot or {}).get("market") or {}
+        ivr = None
+        if t.underlying in ("SPY", "SPX", "XSP"):
+            ivr = ((portfolio.snapshot or {}).get("ivr") or {}).get("SPY")
+        else:
+            row = next((r for r in await watchlist.rows() if r["symbol"] == t.underlying), None)
+            ivr = (row or {}).get("ivr")
+        entry = {
+            "spot": spot,
+            "vix": market.get("vix"),
+            "ivr": (ivr or {}).get("rank"),
+            "pop": a["pop"] if a else None,
+            "delta": a["delta"] if a else None,
+            "iv": a["vol"] if a else None,
+            "bp": bp,
+            "bp_share": (bp / acct["net_liq"]) if (bp and acct.get("net_liq")) else None,
+            "earnings_days": None,
+        }
         nl, maint = acct.get("net_liq"), acct.get("maintenance")
         after = (maint + bp) / nl if (bp is not None and nl and maint is not None) else None
         errors, warnings = guards.check(
@@ -782,6 +811,7 @@ def create_app(
                 for x in t.legs
             ],
             "bp_effect": bp,
+            "entry": entry,
             "defined_risk": defined,
             "bp_used_after": after,
             "commission": round(contracts * broker.commission, 2),
@@ -807,7 +837,7 @@ def create_app(
         if result["errors"]:
             raise HTTPException(status_code=400, detail="; ".join(result["errors"]))
         try:
-            order = await broker.place(t, quotes)
+            order = await broker.place(t, quotes, entry=result["entry"])
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         sim_portfolio.refresh_soon()
@@ -826,9 +856,27 @@ def create_app(
         held: dict[int, dict[str, int]] = {}
         for p in st["positions"]:
             held.setdefault(p["trade_id"], {})[p["symbol"]] = p["quantity"]
-        return [
-            {**tr, "carried_in": False, "holdings": held.get(tr["id"], {})} for tr in st["trades"]
-        ]
+        out = []
+        for tr in st["trades"]:
+            events = [dict(e) for e in tr["events"]]
+            if events:
+                entry = tr.get("entry") or {}
+                events[0]["meta"] = {
+                    "source": "sim",
+                    "entry": entry,
+                    "spot": entry.get("spot"),
+                    "bpr": entry.get("bp"),
+                }
+            out.append(
+                {
+                    **tr,
+                    "events": events,
+                    "source": "sim",
+                    "carried_in": False,
+                    "holdings": held.get(tr["id"], {}),
+                }
+            )
+        return out
 
     @app.get("/api/chains", dependencies=[Depends(require_login)])
     async def api_chains(account: Literal["live", "sim"] = "live"):
@@ -846,6 +894,18 @@ def create_app(
             "synced_at": chain_service.synced_at,
             "error": chain_service.error,
         }
+
+    @app.get("/api/chains/{chain_id}", dependencies=[Depends(require_login)])
+    async def api_trade_chain(chain_id: str, account: Literal["live", "sim"] = "live"):
+        pool = (
+            sim_chains(await broker.snapshot())
+            if account == "sim"
+            else chain_service.result["chains"]
+        )
+        found = next((c for c in pool if str(c["id"]) == chain_id), None)
+        if found is None:
+            raise HTTPException(status_code=404, detail="That trade's history is not available")
+        return found
 
     @app.post("/api/chains/link", dependencies=[Depends(require_login)])
     async def api_chain_link(body: LinkIn):
@@ -873,7 +933,7 @@ def create_app(
                     chs,
                     # Open chains first, then the most recently closed.
                     key=lambda c: (c["status"] != "open", -(c["closed_at"] or c["opened_at"] or 0)),
-                ),
+                )[:300],
                 "stats": stats(chs),
                 "proposals": chain_service.result["proposals"],
                 "mismatches": chain_service.result["mismatches"],
@@ -891,6 +951,103 @@ def create_app(
             "trades": sorted(sim_chains(st), key=lambda tr: -tr["id"])[:300],
             "stats": stats(st["trades"]),
         }
+
+    # Trading history and dashboard ------------------------------------------------------
+
+    prices_service = PriceHistoryService(
+        source,
+        store,
+        chain_service,
+        sim_trades=lambda: sim_chains(broker.state) if broker.state else [],
+    )
+
+    @app.post("/history/import", dependencies=[Depends(require_login)])
+    async def history_import(request: Request, file: UploadFile = File(...)):
+        data = await file.read(25 * 1024 * 1024 + 1)
+        if len(data) > 25 * 1024 * 1024:
+            request.session["flash"] = "That file is larger than 25 MB."
+            return RedirectResponse("/connect#history", status_code=303)
+        try:
+            rows, counts = sheet_import.read_workbook(data, SHEET_ACCOUNT)
+        except sheet_import.SheetError as e:
+            request.session["flash"] = str(e)
+            return RedirectResponse("/connect#history", status_code=303)
+        result = await store.upsert_sheet_rows(rows)
+        await chain_service.rebuild()
+        portfolio.refresh_soon()
+        h = chain_service.history
+        request.session["notice"] = (
+            f"Imported {counts['account_rows']} {SHEET_ACCOUNT} rows: {result['new']} new, "
+            f"{result['updated']} updated, {result['unchanged']} unchanged "
+            f"({counts['other_accounts']} rows for other accounts skipped). "
+            f"{len(h['problems'])} rows need a look and {len(h['review'])} differences "
+            "with Schwab are listed on the Dashboard's Review tab."
+        )
+        return RedirectResponse("/connect#history", status_code=303)
+
+    @app.get("/api/history", dependencies=[Depends(require_login)])
+    async def api_history():
+        h = chain_service.history
+        return {
+            "rows": h["rows"],
+            "matched": h["matched"],
+            "window_start": h["window_start"],
+            "problems": h["problems"],
+            "review": h["review"],
+            "futures": len(h["futures"]),
+            "prices": prices_service.status,
+        }
+
+    @app.post("/api/history/review", dependencies=[Depends(require_login)])
+    async def api_history_review(body: ReviewIn):
+        decisions = await store.get_setting(REVIEW_KEY) or {}
+        if body.decision is None:
+            decisions.pop(body.id, None)
+        else:
+            decisions[body.id] = body.decision
+        await store.set_setting(REVIEW_KEY, decisions)
+        await chain_service.rebuild()
+        portfolio.refresh_soon()
+        return {"ok": True}
+
+    @app.get("/api/dashboard", dependencies=[Depends(require_login)])
+    async def api_dashboard(
+        account: Literal["live", "sim"] = "live",
+        source: Literal["all", "sheet", "schwab"] = "all",
+        futures: bool = False,
+    ):
+        if account == "sim":
+            chs = sim_chains(await broker.snapshot())
+            realized, fut, window = [], [], None
+        else:
+            h = chain_service.history
+            chs = chain_service.result["chains"]
+            realized, fut, window = h["realized"], h["futures"], h["window_start"]
+        symbols = {dash.price_symbol(c["underlying"]) for c in chs} | {"$VIX"}
+        prices = await store.prices(symbols)
+        out = dash.build(
+            chs,
+            realized,
+            window,
+            fut,
+            prices,
+            source=source if account == "live" else "all",
+            include_futures=futures,
+        )
+        out["prices_pending"] = prices_service.status.get("pending")
+        out["account"] = account
+        return out
+
+    @app.get("/api/export/sheet", dependencies=[Depends(require_login)])
+    async def api_export_sheet(start: date, end: date):
+        rows = export_rows(chain_service.result["chains"], start, end, SHEET_ACCOUNT)
+        content = export_xlsx(rows)
+        name = f"trades-{start.isoformat()}-to-{end.isoformat()}.xlsx"
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
 
     @app.post("/api/sim/reset", dependencies=[Depends(require_login)])
     async def api_sim_reset(body: ResetIn):

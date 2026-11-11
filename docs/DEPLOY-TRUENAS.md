@@ -175,3 +175,14 @@ Schwab's approval for a few days, during which sign-in may not work. Do it at a 
 
 The browser will warn about the certificate on the way back unless Caddy's root
 certificate is trusted on that device (section 5).
+
+## Importing the trading-history spreadsheet
+
+1. In Google Sheets: File, Download, Microsoft Excel (.xlsx).
+2. In the app: Settings, Trading history, choose the file, Import.
+3. Open Dashboard, Import review, to see rows that could not be used and any differences with
+   Schwab's records.
+
+Only Joint rows are imported. Uploading a newer copy later adds new and changed rows only.
+The file is read by the app on the NAS and stored in its database; it is never sent anywhere
+else.

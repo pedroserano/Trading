@@ -18,6 +18,25 @@ class MemoryStore:
         self.iv: dict[str, dict[date, float]] = {}
         self.betas: dict[str, tuple[float, date]] = {}
         self.transactions_raw: dict[str, dict] = {}
+        self.sheet: dict[str, tuple[str, dict]] = {}
+        self.daily: dict[str, dict[date, float]] = {}
+
+    async def upsert_sheet_rows(self, rows) -> dict:
+        out = {"new": 0, "updated": 0, "unchanged": 0}
+        for r in rows:
+            old = self.sheet.get(r.key)
+            out["new" if old is None else "unchanged" if old[1] == r.data else "updated"] += 1
+            self.sheet[r.key] = (r.account, r.data)
+        return out
+
+    async def sheet_rows(self, account: str) -> list[tuple[str, dict]]:
+        return [(k, d) for k, (a, d) in self.sheet.items() if a == account]
+
+    async def upsert_prices(self, symbol: str, closes: list[tuple[date, float]]) -> None:
+        self.daily.setdefault(symbol, {}).update(dict(closes))
+
+    async def prices(self, symbols) -> dict[str, dict[date, float]]:
+        return {s: dict(self.daily.get(s, {})) for s in symbols}
 
     async def upsert_transactions(self, items: list[dict]) -> int:
         new = 0
@@ -177,6 +196,55 @@ class PgStore:
                 row = await cur.fetchone()
                 new += bool(row and row[0])
         return new
+
+    async def upsert_sheet_rows(self, rows) -> dict:
+        out = {"new": 0, "updated": 0, "unchanged": 0}
+        async with self._pool.connection() as conn:
+            cur = await conn.execute("SELECT row_key, data FROM sheet_rows")
+            existing = {k: d for k, d in await cur.fetchall()}
+            async with conn.transaction():
+                for r in rows:
+                    old = existing.get(r.key)
+                    if old == r.data:
+                        out["unchanged"] += 1
+                        continue
+                    out["new" if old is None else "updated"] += 1
+                    await conn.execute(
+                        "INSERT INTO sheet_rows (row_key, account, data) VALUES (%s, %s, %s::jsonb)"
+                        " ON CONFLICT (row_key) DO UPDATE SET data = EXCLUDED.data,"
+                        " account = EXCLUDED.account, imported_at = now()",
+                        (r.key, r.account, json.dumps(r.data)),
+                    )
+        return out
+
+    async def sheet_rows(self, account: str) -> list[tuple[str, dict]]:
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT row_key, data FROM sheet_rows WHERE account = %s", (account,)
+            )
+            return [(k, d) for k, d in await cur.fetchall()]
+
+    async def upsert_prices(self, symbol: str, closes: list[tuple[date, float]]) -> None:
+        async with self._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    "INSERT INTO daily_prices (symbol, day, close) VALUES (%s, %s, %s)"
+                    " ON CONFLICT (symbol, day) DO UPDATE SET close = EXCLUDED.close",
+                    [(symbol, d, c) for d, c in closes],
+                )
+
+    async def prices(self, symbols) -> dict[str, dict[date, float]]:
+        symbols = list(symbols)
+        out: dict[str, dict[date, float]] = {s: {} for s in symbols}
+        if not symbols:
+            return out
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT symbol, day, close FROM daily_prices WHERE symbol = ANY(%s)", (symbols,)
+            )
+            for s, d, c in await cur.fetchall():
+                out[s][d] = c
+        return out
 
     async def transactions(self) -> list[dict]:
         async with self._pool.connection() as conn:
