@@ -24,6 +24,7 @@ export interface StrategyNumbers {
   credit: boolean;
   value: number | null;
   pl: number | null;
+  day_pl?: number | null;
   pct_max_profit: number | null;
   max_profit: number | null;
   max_loss: number | null;
@@ -65,6 +66,7 @@ export interface UnderlyingView {
   ivr: IvRank | null;
   earnings?: EarningsInfo | null;
   pl: number | null;
+  day_pl?: number | null;
   delta: number | null;
   delta_bw: number | null;
   theta: number | null;
@@ -104,6 +106,7 @@ export interface Snapshot {
   underlyings: UnderlyingView[];
   totals: {
     pl: number | null;
+    day_pl?: number | null;
     theta: number | null;
     theta_pct_nl: number | null;
     delta_bw: number | null;

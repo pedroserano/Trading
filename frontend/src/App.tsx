@@ -259,6 +259,9 @@ function Header(props: {
         <Stat label="P/L open">
           <span className={tone(s.totals.pl)}>{signed(s.totals.pl, 0)}</span>
         </Stat>
+        <Stat label="P/L day" title="Today's P/L on open positions">
+          <span className={tone(s.totals.day_pl ?? null)}>{signed(s.totals.day_pl ?? null, 0)}</span>
+        </Stat>
         <Stat label="VIX">{num(s.market.vix, 2)}</Stat>
         <Stat
           label="SPY IVR"
@@ -357,6 +360,7 @@ function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedO
               <th className="l">Strategy</th>
               <th>DTE</th>
               <th>P/L</th>
+              <th title="Today's P/L">Day</th>
               <th>% max</th>
             </tr>
           ) : (
@@ -368,6 +372,7 @@ function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedO
               <th title="Opening price per unit; credit or debit">Open</th>
               <th title="Current price per unit">Mark</th>
               <th>P/L</th>
+              <th title="Today's P/L: held overnight from yesterday's close, opened today from the fill">Day</th>
               <th title="P/L as a share of max profit">% max</th>
               <th title="Delta in shares">Δ</th>
               <th title="Theta, dollars per day">Θ</th>
@@ -447,6 +452,7 @@ function UnderGroup(props: {
           <EarningsFlag e={u.earnings} />
         </td>
         <td className={tone(u.pl)}>{signed(u.pl)}</td>
+        <td className={tone(u.day_pl)}>{signed(u.day_pl)}</td>
         <td />
         {compact ? null : (
           <>
@@ -544,6 +550,7 @@ function StrategyRows(props: {
           <>
             <td>{n.dte ?? "–"}</td>
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
+            <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
             <td>{pct(n.pct_max_profit)}</td>
           </>
         ) : (
@@ -557,6 +564,7 @@ function StrategyRows(props: {
             </td>
             <td>{markPx === null ? money(n.value === null ? null : Math.abs(n.value)) : num(markPx, 2)}</td>
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
+            <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
             <td>{pct(n.pct_max_profit)}</td>
             <td className={tone(n.delta)}>{signed(n.delta, 0)}</td>
             <td className={tone(n.theta)}>{signed(n.theta, 0)}</td>
@@ -587,6 +595,7 @@ function StrategyRows(props: {
                 <>
                   <td>{l.dte ?? ""}</td>
                   <td>{num(l.mark, 2)}</td>
+                  <td />
                   <td title="Per-share delta">{num(l.delta, 2)}</td>
                 </>
               ) : (
@@ -596,7 +605,7 @@ function StrategyRows(props: {
                   <td />
                   <td>{num(l.avg_price, 2)}</td>
                   <td>{num(l.mark, 2)}</td>
-                  <td colSpan={2} className="sub">
+                  <td colSpan={3} className="sub">
                     {l.iv === null ? "" : `IV ${l.iv.toFixed(1)}`}
                   </td>
                   <td title="Per-share delta">{num(l.delta, 2)}</td>
@@ -607,7 +616,7 @@ function StrategyRows(props: {
             </tr>
           ))
         : null}
-      {expanded && st.legs.some((l) => l.kind === "OPTION") ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={compact ? 4 : 13} /> : null}
+      {expanded && st.legs.some((l) => l.kind === "OPTION") ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={compact ? 5 : 14} /> : null}
     </>
   );
 }

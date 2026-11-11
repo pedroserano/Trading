@@ -114,7 +114,31 @@ def leg_from_schwab_position(pos: dict) -> Leg | None:
     mv = pos.get("marketValue")
     if mv is not None:
         leg.mark = abs(float(mv)) / abs(qty * leg.multiplier)
+    # What was held at the end of the previous session, for the day's P/L.
+    if "previousSessionLongQuantity" in pos or "previousSessionShortQuantity" in pos:
+        leg.extra["prev_qty"] = float(pos.get("previousSessionLongQuantity") or 0) - float(
+            pos.get("previousSessionShortQuantity") or 0
+        )
     return leg
+
+
+def day_pl(leg: Leg) -> float | None:
+    """Today's P/L on an open leg: what was held overnight from yesterday's close, what was
+    added today from its price. None when a needed price is missing."""
+    if leg.mark is None:
+        return None
+    prev = leg.extra.get("prev_qty", leg.quantity)
+    # Only what is still held, on the same side, counts as held overnight.
+    if prev * leg.quantity <= 0:
+        prev = 0.0
+    elif abs(prev) > abs(leg.quantity):
+        prev = leg.quantity
+    new = leg.quantity - prev
+    close = leg.extra.get("close")
+    if prev and close is None:
+        return None
+    pl = prev * (leg.mark - (close or 0)) + new * (leg.mark - leg.avg_price)
+    return pl * leg.multiplier
 
 
 # Black-Scholes, used for demo prices and as a cross-check. Volatility as a fraction.

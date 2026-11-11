@@ -622,3 +622,16 @@ def test_preview_warns_which_order_a_close_replaces(client):
     }
     warn = client.post("/api/orders/preview", json=close).json()["warnings"]
     assert any(w.startswith("Replaces working order #") and "GTC" in w for w in warn)
+
+
+@pytest.mark.anyio
+async def test_sim_account_reports_what_was_held_overnight():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock(11, 11))
+    t = ticket([(sym("P", 555), -1, "open")], limit_net=3.10)
+    await b.place(t, QUOTES)
+    (pos,) = b.account(QUOTES)["securitiesAccount"]["positions"]
+    assert pos["shortQuantity"] == 1 and pos["previousSessionShortQuantity"] == 0
+    for e in b.state["trades"][0]["events"]:
+        e["at"] -= 3 * 86400  # filled days ago: held overnight now
+    (pos,) = b.account(QUOTES)["securitiesAccount"]["positions"]
+    assert pos["previousSessionShortQuantity"] == 1

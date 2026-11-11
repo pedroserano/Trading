@@ -27,6 +27,7 @@ OPTION_FIELDS = {
     "VEGA": "vega",
     "VOLATILITY": "volatility",
     "UNDERLYING_PRICE": "underlyingPrice",
+    "CLOSE_PRICE": "closePrice",
     "NET_PERCENT_CHANGE": "netPercentChange",
     "OPEN_INTEREST": "openInterest",
 }

@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
-from .options import Leg
+from .options import Leg, day_pl
 
 
 @dataclass
@@ -234,6 +234,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "credit": open_value > 0,
         "value": None if value is None else round(value, 2),
         "pl": None if pl is None else round(pl, 2),
+        "day_pl": _day_pl(legs),
         "pct_max_profit": None if pct is None else round(pct, 4),
         "max_profit": None if max_profit is None else round(max_profit, 2),
         "max_loss": None if max_loss is None else round(max_loss, 2),
@@ -297,6 +298,11 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     if any(leg.mark is None or (leg.is_option and leg.delta is None) for leg in legs):
         flags.append({"kind": "data", "label": "No quote", "detail": "Missing live quote"})
     st.flags = flags
+
+
+def _day_pl(legs: list[Leg]) -> float | None:
+    parts = [day_pl(leg) for leg in legs]
+    return None if any(p is None for p in parts) else round(sum(parts), 2)
 
 
 def _round(v, n=2):

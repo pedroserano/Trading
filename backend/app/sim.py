@@ -446,8 +446,18 @@ class SimBroker:
         positions = []
         value = 0.0
         by_trade: dict[int, list] = {}
+        # Contracts filled today, per trade and symbol: the rest was held overnight.
+        start = datetime.combine(self.clock().astimezone(ET).date(), datetime.min.time(), ET)
+        today: dict[tuple, float] = {}
+        for tr in st["trades"]:
+            for e in tr["events"]:
+                if e["at"] >= start.timestamp():
+                    for leg in e["legs"]:
+                        k = (tr["id"], leg["symbol"])
+                        today[k] = today.get(k, 0.0) + leg["quantity"]
         for p in st["positions"]:
             occ = parse_option_symbol(p["symbol"])
+            prev = p["quantity"] - today.get((p["trade_id"], p["symbol"]), 0.0)
             mark = _price(quotes, p["symbol"])
             mv = None if mark is None else round(p["quantity"] * mark * 100, 2)
             value += mv or 0.0
@@ -457,6 +467,8 @@ class SimBroker:
                     "shortQuantity": max(-p["quantity"], 0),
                     "averagePrice": p["avg_price"],
                     "marketValue": mv,
+                    "previousSessionLongQuantity": max(prev, 0),
+                    "previousSessionShortQuantity": max(-prev, 0),
                     "tradeId": p["trade_id"],
                     "instrument": {
                         "assetType": "OPTION",

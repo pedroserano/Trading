@@ -299,3 +299,27 @@ def test_expiry_and_lost_reminders():
     assert [k for k, *_ in due_reminders(monday, status(6.2), 6, 18)] == ["exp24:1000"]
     assert [k for k, *_ in due_reminders(monday, status(7.1, False), 6, 18)] == ["lost:1000"]
     assert due_reminders(monday, ConnectionStatus(connected=False), 6, 18) == []
+
+
+def test_day_pl_from_yesterdays_close_and_todays_fills():
+    from app.options import Leg, day_pl
+
+    def short_put(qty, avg, mark, close=None, prev=None):
+        leg = Leg("SPY   261218P00555000", "SPY", "OPTION", qty, avg, "P", 555.0, None, 100)
+        leg.mark = mark
+        if close is not None:
+            leg.extra["close"] = close
+        if prev is not None:
+            leg.extra["prev_qty"] = prev
+        return leg
+
+    # Held since before today: from yesterday's close (3.00) to now (2.60) on one short.
+    assert day_pl(short_put(-1, 4.00, 2.60, close=3.00, prev=-1)) == pytest.approx(40)
+    # Opened today at 4.00: from the fill price.
+    assert day_pl(short_put(-1, 4.00, 3.80, close=3.00, prev=0)) == pytest.approx(20)
+    # One held, one added today (average 3.50 for both; the new one counts from it).
+    assert day_pl(short_put(-2, 3.50, 3.20, close=3.00, prev=-1)) == pytest.approx(-20 + 30)
+    # Held overnight but no close known: unknown, not wrong.
+    assert day_pl(short_put(-1, 4.00, 2.60, prev=-1)) is None
+    # Schwab did not say what was held: treated as all held overnight.
+    assert day_pl(short_put(-1, 4.00, 2.60, close=3.00)) == pytest.approx(40)

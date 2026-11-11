@@ -277,6 +277,9 @@ class PortfolioService:
             q = self._quote(leg.symbol)
             if not q:
                 continue
+            close = _num(q.get("closePrice"))
+            if close:
+                leg.extra["close"] = close
             if leg.is_option:
                 leg.mark = _num(q.get("mark"), leg.mark)
                 leg.delta = _num(q.get("delta"))
@@ -436,8 +439,8 @@ class PortfolioService:
 
         groups = self._group_by_trade() if self.trade_info else group_all(self.legs)
         underlyings = []
-        tot = {"pl": 0.0, "theta": 0.0, "delta_bw": 0.0}
-        missing = {"pl": False, "theta": False, "delta_bw": False}
+        tot = {"pl": 0.0, "day_pl": 0.0, "theta": 0.0, "delta_bw": 0.0}
+        missing = {"pl": False, "day_pl": False, "theta": False, "delta_bw": False}
         for u, strategies in groups.items():
             price = self._price(u)
             q = self._quote(u)
@@ -453,13 +456,18 @@ class PortfolioService:
                     if ivr["days"] < MIN_IVR_DAYS:
                         # A rank over a few days is noise; show only how much history exists.
                         ivr["rank"] = ivr["percentile"] = None
-            u_tot = {"pl": 0.0, "delta": 0.0, "theta": 0.0}
+            u_tot = {"pl": 0.0, "day_pl": 0.0, "delta": 0.0, "theta": 0.0}
             u_missing = {k: False for k in u_tot}
             out_strats = []
             for st in strategies:
                 evaluate(st, today, price, self.rules)
                 n = st.numbers
-                for k, nk in (("pl", "pl"), ("delta", "delta"), ("theta", "theta")):
+                for k, nk in (
+                    ("pl", "pl"),
+                    ("day_pl", "day_pl"),
+                    ("delta", "delta"),
+                    ("theta", "theta"),
+                ):
                     if n[nk] is None:
                         u_missing[k] = True
                     else:
@@ -468,7 +476,12 @@ class PortfolioService:
             delta_bw = None
             if not u_missing["delta"] and beta is not None and price and spy:
                 delta_bw = u_tot["delta"] * beta * price / spy
-            for k, v in (("pl", u_tot["pl"]), ("theta", u_tot["theta"]), ("delta_bw", delta_bw)):
+            for k, v in (
+                ("pl", u_tot["pl"]),
+                ("day_pl", u_tot["day_pl"]),
+                ("theta", u_tot["theta"]),
+                ("delta_bw", delta_bw),
+            ):
                 if v is None or (k != "delta_bw" and u_missing[k]):
                     missing[k] = True
                 else:
@@ -483,6 +496,7 @@ class PortfolioService:
                     "ivr": ivr,
                     "earnings": self.earnings(u) if self.earnings else None,
                     "pl": None if u_missing["pl"] else round(u_tot["pl"], 2),
+                    "day_pl": None if u_missing["day_pl"] else round(u_tot["day_pl"], 2),
                     "delta": None if u_missing["delta"] else round(u_tot["delta"], 1),
                     "delta_bw": None if delta_bw is None else round(delta_bw, 1),
                     "theta": None if u_missing["theta"] else round(u_tot["theta"], 2),
@@ -493,6 +507,7 @@ class PortfolioService:
         nl = (snap["account"] or {}).get("net_liq")
         snap["totals"] = {
             "pl": None if missing["pl"] else round(tot["pl"], 2),
+            "day_pl": None if missing["day_pl"] else round(tot["day_pl"], 2),
             "theta": None if missing["theta"] else round(tot["theta"], 2),
             "theta_pct_nl": (tot["theta"] / nl) if (nl and not missing["theta"]) else None,
             "delta_bw": None if missing["delta_bw"] else round(tot["delta_bw"], 1),

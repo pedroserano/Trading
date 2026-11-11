@@ -192,10 +192,12 @@ class DemoDataSource:
         vol = self._vol(occ.underlying, occ.strike, occ.put_call)
         g = bs(occ.put_call, s, occ.strike, t, vol)
         spread = max(0.01, round(g["price"] * 0.02, 2))
+        prev = bs(occ.put_call, self.prev_close[occ.underlying], occ.strike, t + 1 / 365, vol)
         return {
             "assetMainType": "OPTION",
             "quote": {
                 "mark": round(g["price"], 2),
+                "closePrice": round(prev["price"], 2),
                 "bidPrice": round(max(g["price"] - spread / 2, 0), 2),
                 "askPrice": round(g["price"] + spread / 2, 2),
                 "delta": round(g["delta"], 4),
