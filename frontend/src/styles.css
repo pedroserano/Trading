@@ -34,7 +34,10 @@ header.top {
 .acct { color: var(--dim); font-size: 13px; }
 .badge { font-size: 11px; font-weight: 600; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; }
 .badge.demo { background: var(--warn); color: #000; }
-.stats { display: flex; gap: 8px 16px; flex-wrap: wrap; flex: 1; }
+.stats { display: flex; gap: 8px 16px; flex-wrap: nowrap; flex: 1; }
+/* Too narrow for the stats beside the menu bar: they take a line of their own below it. */
+header.top.stacked .stats { order: 3; flex-basis: 100%; flex-wrap: wrap; }
+header.top.stacked .right { margin-left: auto; }
 .stat-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
 .stat-value { font-size: 15px; font-weight: 500; white-space: nowrap; }
 .sub { color: var(--dim); font-weight: 400; font-size: 12px; }
@@ -102,8 +105,7 @@ tr.leg td.l { padding-left: 34px; }
 
 @media (max-width: 700px) {
   header.top { gap: 10px; padding: 8px 12px; }
-  .stats { gap: 12px 16px; order: 3; flex-basis: 100%; }
-  .right { margin-left: auto; }
+  .stats { gap: 12px 16px; }
   main { padding: 10px 12px 32px; }
 }
 

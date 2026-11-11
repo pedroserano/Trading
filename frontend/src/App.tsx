@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
@@ -201,6 +201,36 @@ function Nav({ route }: { route: Route }) {
   );
 }
 
+/** Whether the portfolio stats fit on the menu bar's line in one row. When they do not, the
+ * header puts them on a line of their own below it. */
+function useStackedStats() {
+  const header = useRef<HTMLElement>(null);
+  const stats = useRef<HTMLDivElement>(null);
+  const [on, setOn] = useState(false);
+  useLayoutEffect(() => {
+    const h = header.current;
+    const st = stats.current;
+    if (!h || !st) return;
+    const measure = () => {
+      const gap = (el: Element) => parseFloat(getComputedStyle(el).columnGap) || 0;
+      const kids = Array.from(st.children) as HTMLElement[];
+      // The stats' width on one line, whatever their layout is now.
+      const statsWidth = kids.reduce((w, k) => w + k.offsetWidth, 0) + gap(st) * Math.max(0, kids.length - 1);
+      const others = (Array.from(h.children) as HTMLElement[]).filter((k) => k !== st);
+      const cs = getComputedStyle(h);
+      const room = h.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const need = others.reduce((w, k) => w + k.offsetWidth, 0) + statsWidth + gap(h) * others.length;
+      setOn(need > room);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(h);
+    for (const k of [...Array.from(h.children), ...Array.from(st.children)]) ro.observe(k);
+    return () => ro.disconnect();
+  }, []);
+  return { header, stats, on };
+}
+
 function Header(props: {
   s: Snapshot;
   link: Link;
@@ -209,6 +239,7 @@ function Header(props: {
   setAccount: (a: Account) => void;
 }) {
   const { s, link, route } = props;
+  const stacked = useStackedStats();
   const a = s.account;
   const bp = a?.bp_used_pct ?? null;
   const ceiling = a?.bp_ceiling_pct ?? null;
@@ -218,7 +249,7 @@ function Header(props: {
   const spyIvr = s.ivr.SPY;
   const exp = s.connection.expires_in_days;
   return (
-    <header className="top">
+    <header className={`top ${stacked.on ? "stacked" : ""}`} ref={stacked.header}>
       <div className="brand">
         <strong>Trading</strong>
         {s.mode === "demo" ? <span className="badge demo">DEMO</span> : null}
@@ -237,7 +268,7 @@ function Header(props: {
         ) : null}
         <Nav route={route} />
       </div>
-      <div className="stats">
+      <div className="stats" ref={stacked.stats}>
         <Stat label="Net liq">{money(a?.net_liq)}</Stat>
         <Stat
           label="BP used"
