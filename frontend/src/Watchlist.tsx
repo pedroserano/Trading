@@ -18,7 +18,7 @@ const sorters: Record<Key, (r: WatchRow) => number | string> = {
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "ivr", desc: true });
+  const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "symbol", desc: false });
 
   useEffect(() => {
     let stop = false;
