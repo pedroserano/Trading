@@ -26,6 +26,15 @@ from . import dashboard as dash
 from . import guards, sheet_import
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
+from .automation import (
+    LEVELS,
+    RULES,
+    SETTING_FIELDS,
+    SETTINGS_KEY,
+    AutomationService,
+    merged_settings,
+    parse_settings,
+)
 from .chain_service import REVIEW_KEY, SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
@@ -108,6 +117,16 @@ class SplitIn(BaseModel):
 class ReviewIn(BaseModel):
     id: str = Field(max_length=200)
     decision: Literal["accept", "ignore"] | None = None
+
+
+class AutoTradeIn(BaseModel):
+    trade_id: int | str
+    enabled: bool
+    levels: dict[str, str] | None = None
+
+
+class PauseIn(BaseModel):
+    paused: bool
 
 
 class ResetIn(BaseModel):
@@ -339,6 +358,7 @@ def create_app(
                 "trade chains": chain_service.run,
                 "price history": prices_service.run,
                 "simulated publisher": sim_portfolio.publisher,
+                "automation": automation.run,
             }
             if stream is not None:
                 services["streaming"] = stream.run
@@ -463,6 +483,10 @@ def create_app(
                 "watchlist": await preferences.watchlist(),
                 "rules": await preferences.rules(),
                 "rule_fields": RULE_FIELDS,
+                "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
+                "auto_rules": RULES,
+                "auto_levels": LEVELS,
+                "auto_fields": SETTING_FIELDS,
                 "stream": None if stream is None else (stream.status, stream.detail),
                 "history": chain_service.history,
                 "sheet_account": SHEET_ACCOUNT,
@@ -564,6 +588,17 @@ def create_app(
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
         return RedirectResponse(settings_url("watchlist"), status_code=303)
+
+    @app.post("/automation/settings", dependencies=[Depends(require_login)])
+    async def automation_settings_save(request: Request):
+        form = dict(await request.form())
+        try:
+            new = parse_settings(form, await store.get_setting(SETTINGS_KEY))
+            await store.set_setting(SETTINGS_KEY, new)
+            request.session["notice"] = "Automanage settings saved."
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("automation"), status_code=303)
 
     @app.post("/rules", dependencies=[Depends(require_login)])
     async def rules_save(request: Request):
@@ -844,8 +879,7 @@ def create_app(
         t, p, quotes = await build_ticket(body)
         return await assess(body, t, p, quotes)
 
-    @app.post("/api/orders", dependencies=[Depends(require_login)])
-    async def api_order_place(body: OrderIn):
+    async def place_order(body: OrderIn) -> dict:
         if body.account != "sim":
             raise HTTPException(status_code=403, detail="Live orders arrive in phase 4")
         if body.limit_net is None:
@@ -860,6 +894,67 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e)) from e
         sim_portfolio.refresh_soon()
         return order
+
+    @app.post("/api/orders", dependencies=[Depends(require_login)])
+    async def api_order_place(body: OrderIn):
+        return await place_order(body)
+
+    async def auto_submit(raw: dict, place: bool) -> dict:
+        """Automanage's way in: the same ticket, guards and checks as a manual order.
+        Previews when place is false. Raises ValueError when refused."""
+        try:
+            body = OrderIn(**raw)
+            if place:
+                return await place_order(body)
+            t, p, quotes = await build_ticket(body)
+            return await assess(body, t, p, quotes)
+        except HTTPException as e:
+            raise ValueError(str(e.detail)) from e
+        except ValueError as e:
+            raise ValueError(str(e)) from e
+
+    automation = AutomationService(
+        store,
+        sim_portfolio,
+        broker,
+        source,
+        preferences,
+        notifier,
+        auto_submit,
+        app_url=settings.app_url,
+        clock=lambda: sim_portfolio.clock(),
+    )
+    app.state.automation = automation
+
+    @app.get("/api/automation", dependencies=[Depends(require_login)])
+    async def api_automation():
+        return await automation.view()
+
+    @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
+    async def api_automation_trade(body: AutoTradeIn):
+        if body.levels and any(r not in RULES or v not in LEVELS for r, v in body.levels.items()):
+            raise HTTPException(status_code=400, detail="Unknown rule or level")
+        await automation.set_trade(body.trade_id, body.enabled, body.levels)
+        return await automation.view()
+
+    @app.post("/api/automation/pause", dependencies=[Depends(require_login)])
+    async def api_automation_pause(body: PauseIn):
+        await automation.set_paused(body.paused)
+        return await automation.view()
+
+    @app.post("/api/automation/proposal/{pid}/dismiss", dependencies=[Depends(require_login)])
+    async def api_automation_dismiss(pid: str):
+        await automation.dismiss(pid)
+        return await automation.view()
+
+    @app.post("/api/automation/proposal/{pid}/accept", dependencies=[Depends(require_login)])
+    async def api_automation_accept(pid: str):
+        try:
+            await automation.accept(pid)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        sim_portfolio.refresh_soon()
+        return await automation.view()
 
     @app.post("/api/orders/{order_id}/cancel", dependencies=[Depends(require_login)])
     async def api_order_cancel(order_id: int):

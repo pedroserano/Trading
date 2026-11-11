@@ -117,6 +117,56 @@
   </form>
 </section>
 
+<section id="automation">
+  <h2>Automanage</h2>
+  <p class="dim">Applies the rules above to trades you switch to automanage, on the simulated
+     account for now. Notify sends a message; Propose prepares an order for one tap;
+     Auto places it at mid and steps toward natural. Each trade can override these levels.</p>
+  <form method="post" action="/automation/settings">
+    {% for rule, label in auto_rules.items() %}
+      <div class="rule">
+        <label for="a-{{ rule }}">{{ label }}</label>
+        <span class="rule-input">
+          <select id="a-{{ rule }}" name="level_{{ rule }}">
+            {% for lv in auto_levels %}<option value="{{ lv }}" {% if auto.levels[rule] == lv %}selected{% endif %}>{{ lv|capitalize }}</option>{% endfor %}
+          </select>
+        </span>
+      </div>
+    {% endfor %}
+    <div class="rule">
+      <label for="a-dda">Defined-risk trades at the DTE mark</label>
+      <span class="rule-input">
+        <select id="a-dda" name="dte_defined_action">
+          <option value="close" {% if auto.dte_defined_action == "close" %}selected{% endif %}>Close</option>
+          <option value="roll" {% if auto.dte_defined_action == "roll" %}selected{% endif %}>Roll</option>
+        </select>
+      </span>
+    </div>
+    {% for key, label, lo, hi, kind, unit in auto_fields %}
+      {% set v = auto[key] %}
+      <div class="rule">
+        <label for="a-{{ key }}">{{ label }}</label>
+        <span class="rule-input">
+          <input id="a-{{ key }}" type="number" name="{{ key }}" required min="{{ lo }}" max="{{ hi }}"
+            {% if kind == "percent" %}value="{{ (v * 100)|round(0)|int }}" step="1"
+            {% elif kind == "int" %}value="{{ v }}" step="1"
+            {% else %}value="{{ v }}" step="0.01"{% endif %}>
+          <span class="dim unit">{{ unit }}</span>
+        </span>
+      </div>
+    {% endfor %}
+    <div class="rule">
+      <label for="a-ws">Act only between (ET)</label>
+      <span class="rule-input">
+        <input id="a-ws" type="time" name="window_start" value="{{ auto.window_start }}" required>
+        <span class="dim unit">and</span>
+        <input type="time" name="window_end" value="{{ auto.window_end }}" required aria-label="Window end">
+      </span>
+    </div>
+    <p><button class="primary" type="submit">Save automanage settings</button></p>
+  </form>
+</section>
+
 {% if not demo and status.connected %}
 <section>
   <h2>Account</h2>

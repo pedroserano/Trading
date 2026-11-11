@@ -390,4 +390,26 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
   padding: 6px 0; border-bottom: 1px solid var(--line); }
 .settings-page .rule-input { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .settings-page .rule-input input { width: 90px; }
-.settings-page .rule-input .unit { width: 28px; }
+.settings-page .rule-input .unit { width: 44px; font-size: 12px; }
+.settings-page .rule-input select, .settings-page .rule-input input[type=time] { padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; color-scheme: dark; }
+.settings-page .rule-input select { width: 136px; }
+.settings-page .rule-input input[type=time] { width: 120px; }
+.settings-page .rule-input input[type=time] + .unit { width: auto; }
+
+/* Automanage */
+.auto-bar { flex-wrap: wrap; }
+.auto-badge { margin-left: 6px; font-size: 10px; color: var(--accent); border: 1px solid currentColor;
+  border-radius: 3px; padding: 0 3px; vertical-align: 1px; }
+.banner.proposal { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.banner.proposal .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.proposal-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.auto-panel { margin-top: 6px; }
+.auto-plan { border-collapse: collapse; margin: 4px 0; font-size: 12px; }
+.auto-plan td { padding: 2px 8px 2px 0; border: 0; white-space: normal; }
+.auto-plan select { font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 4px; }
+.auto-log { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; }
+@media (max-width: 700px) {
+  .banner.proposal { flex-direction: column; }
+}

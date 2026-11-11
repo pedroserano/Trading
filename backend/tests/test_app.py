@@ -322,3 +322,24 @@ def test_settings_live_inside_the_app_when_it_is_built(settings, tmp_path):
         r = c.post("/rules", data={"manage_dte": "999"})
         assert r.headers["location"] == "/#/settings/rules"
         assert "must be between" in c.get("/connect?fragment=1").text
+
+
+def test_automanage_settings_and_api(settings):
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        r = c.post("/automation/settings", data={"level_loss": "auto", "daily_cap": "4"})
+        assert r.status_code == 303
+        saved = store.settings["automation_settings"]
+        assert saved["levels"]["loss"] == "auto" and saved["daily_cap"] == 4
+        c.post("/automation/settings", data={"daily_cap": "0"})
+        assert "must be between" in c.get("/connect").text
+        assert store.settings["automation_settings"]["daily_cap"] == 4
+        view = c.post("/api/automation/trade", json={"trade_id": 7, "enabled": True}).json()
+        assert view["trades"]["7"]["enabled"] is True
+        assert c.post("/api/automation/pause", json={"paused": True}).json()["paused"] is True
+        bad = c.post(
+            "/api/automation/trade",
+            json={"trade_id": 7, "enabled": True, "levels": {"loss": "yolo"}},
+        )
+        assert bad.status_code == 400

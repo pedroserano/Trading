@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
+import { AutoBadge, AutoBar, AutomationContext, AutoPanel, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
 import Settings from "./Settings";
@@ -89,6 +90,7 @@ export default function App() {
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
   const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
+  const automation = useAutomation(account === "sim");
 
   if (!snapshot) {
     return (
@@ -100,6 +102,7 @@ export default function App() {
   return (
     <TicketContext.Provider value={setTicket}>
       <AccountContext.Provider value={account}>
+      <AutomationContext.Provider value={automation}>
       <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} />
       <main>
         <Banner s={snapshot} />
@@ -128,6 +131,7 @@ export default function App() {
             Flagged only ({snapshot.totals.flags})
           </label>
         </div>
+        {account === "sim" ? <AutoBar /> : null}
         <Positions s={snapshot} view={view} flaggedOnly={flaggedOnly === "1"} />
         <p className="footnote">
           Positions are grouped by their trade history, including trades placed in thinkorswim;
@@ -137,6 +141,7 @@ export default function App() {
         ) : null}
       </main>
       {ticket ? <OrderTicket spec={ticket} onClose={() => setTicket(null)} /> : null}
+      </AutomationContext.Provider>
       </AccountContext.Provider>
     </TicketContext.Provider>
   );
@@ -527,6 +532,7 @@ function StrategyRows(props: {
               U
             </span>
           ) : null}
+          <AutoBadge st={st} />
           {compact && st.flags.length ? <Flags st={st} /> : null}
         </td>
         {compact ? (
@@ -632,6 +638,7 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
         ) : null}
         {history && st.trade_id !== null ? <ChainHistory account={account} chainId={st.trade_id} onClose={() => setHistory(false)} /> : null}
         {account === "live" ? <span className="sub"> Preview against Schwab; live orders arrive in phase 4.</span> : null}
+        {account === "sim" ? <AutoPanel st={st} /> : null}
       </td>
     </tr>
   );

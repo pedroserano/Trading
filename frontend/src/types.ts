@@ -328,3 +328,43 @@ export interface Activity {
   trades: SimTrade[];
   stats: StatRow[];
 }
+
+export type AutoLevel = "off" | "notify" | "propose" | "auto";
+
+export interface AutoPlanLine {
+  rule: string;
+  label: string;
+  level: AutoLevel;
+  what: string;
+}
+
+export interface AutoProposal {
+  id: string;
+  trade_id: string;
+  rule: string;
+  underlying: string;
+  strategy: string;
+  reason: string;
+  created_at: number;
+  due_at: number | null;
+  bodies: { intent: string; legs: { symbol: string; quantity: number; effect: string }[] }[];
+}
+
+export interface AutoLogEntry {
+  at: number;
+  trade_id: string | number | null;
+  rule: string | null;
+  text: string;
+  order_id?: number;
+}
+
+export interface AutomationView {
+  paused: boolean;
+  settings: { levels: Record<string, AutoLevel>; window_start: string; window_end: string; daily_cap: number };
+  trades: Record<string, { enabled: boolean; levels: Record<string, AutoLevel> }>;
+  plans: Record<string, AutoPlanLine[]>;
+  proposals: AutoProposal[];
+  log: AutoLogEntry[];
+  orders_today: number;
+  in_window: boolean;
+}
