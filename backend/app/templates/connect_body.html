@@ -217,6 +217,7 @@
           <span class="dim unit">{{ unit }}</span>
         </span>
       </div>
+      {% if key == "max_bp_share" %}<p class="warn-note">⚠ Set by the margin type ({{ "portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%" }}) when it is switched; adjustable here.</p>{% endif %}
     {% endfor %}
     <div class="rule">
       <label for="s-time">Scan at (ET)</label>
@@ -281,6 +282,7 @@
       <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
         step="0.5" value="{{ '%g'|format(live.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
     </div>
+    <p class="warn-note">⚠ Set by the margin type ({{ "portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%" }}) when it is switched; adjustable here.</p>
     <p><button class="primary" type="submit">Save live trading</button></p>
   </form>
 </section>

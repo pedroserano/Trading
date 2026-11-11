@@ -378,3 +378,13 @@ def test_portfolio_margin_halves_the_sizing_defaults(settings):
         bad = c.post("/rules", data={"margin_type": "cash"})
         assert bad.status_code == 303
     assert bp_ceiling(18) == 0.30 and bp_ceiling(18, 0.5) == 0.15
+
+
+def test_settings_page_shows_portfolio_margin_values_everywhere(settings):
+    with make_client(settings, FakeSchwab(connected=True), store=MemoryStore()) as c:
+        login(c)
+        c.post("/rules", data={"margin_type": "pm"})
+        page = c.get("/connect").text
+        assert 'id="r-max_underlying_bp"' in page and 'value="7.5"' in page
+        assert 'id="s-max_bp_share"' in page and 'value="2.5"' in page
+        assert "portfolio margin: 2.5%" in page and "saves at once" in page
