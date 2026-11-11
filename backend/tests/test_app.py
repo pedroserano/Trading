@@ -388,3 +388,30 @@ def test_settings_page_shows_portfolio_margin_values_everywhere(settings):
         assert 'id="r-max_underlying_bp"' in page and 'value="7.5"' in page
         assert 'id="s-max_bp_share"' in page and 'value="2.5"' in page
         assert "portfolio margin: 2.5%" in page and "saves at once" in page
+
+
+def test_delta_bias_from_the_full_settings_form(settings):
+    """The bias select saves the whole rules form at once, with the old band in it."""
+    import re
+
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        page = c.get("/connect").text
+        assert 'id="r-bias"' in page and "Portfolio targets" in page
+        form = dict(
+            re.findall(
+                r'<input id="r-[^"]+" type="number" name="([^"]+)"[^>]*?value="([^"]*)"', page, re.S
+            )
+        )
+        assert form["delta_min"] == "-5" and form["delta_max"] == "5"
+        for bias, band in (
+            ("bullish", (0.0, 0.15)),
+            ("bearish", (-0.15, 0.0)),
+            ("neutral", (-0.05, 0.05)),
+        ):
+            c.post("/rules", data={**form, "margin_type": "reg_t", "delta_bias": bias})
+            r = store.settings["rules"]
+            assert r["delta_bias"] == bias and (r["delta_min"], r["delta_max"]) == band
+        page = c.get("/connect").text
+        assert 'id="r-delta_min"' in page and "0.1% to 0.3% of net liq" in page

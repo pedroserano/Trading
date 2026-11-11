@@ -128,7 +128,45 @@
        Refuse opening trades above the buying-power ceiling for the current VIX</label></p>
     <p class="warn-note">⚠ {{ rule_notes.block_over_ceiling }}</p>
     <p><label><input type="checkbox" name="notify_flags" {% if rules.notify_flags %}checked{% endif %}>
-       Send a notification the first time each flag appears on a position</label></p>
+       Send a notification the first time each flag appears on a position, and once a day while
+       delta or theta is outside its portfolio target</label></p>
+
+    <h3 id="targets">Portfolio targets</h3>
+    <p class="dim">tastytrade mechanics: trade small, trade often, and manage the portfolio as a
+       whole. Delta is beta-weighted to SPY and shown as a share of net liq (SPY deltas times
+       SPY's price, over net liq): +10% means the account gains about 1% of net liq on a 10% SPY
+       rally. A short strangle opens near delta neutral and turns short delta as the market
+       rises and long delta as it falls; tastytrade keeps the book near neutral and leans it only
+       by choice. Daily theta of 0.1% to 0.3% of net liq is tastytrade's published
+       guide: less leaves buying power idle, more usually means too much risk for the account.</p>
+    <div class="rule">
+      <label for="r-bias">Delta bias</label>
+      <span class="rule-input">
+        <select id="r-bias" name="delta_bias">
+          {% for k, label in biases.items() %}<option value="{{ k }}" {% if rules.delta_bias == k %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </span>
+    </div>
+    <p class="warn-note">⚠ {{ rule_notes.delta_bias }}</p>
+    {% for name, label, lo, hi, kind in band_fields %}
+      {% set v = rules[name] %}
+      <div class="rule">
+        <label for="r-{{ name }}">{{ label }}</label>
+        <span class="rule-input">
+          <input id="r-{{ name }}" type="number" name="{{ name }}" required
+            value="{{ '%g'|format((v * 100)|round(2)) }}"
+            step="{{ '0.5' if name.startswith('delta') else '0.01' }}" min="{{ '%g'|format(lo * 100) }}" max="{{ '%g'|format(hi * 100) }}">
+          <span class="dim unit">%</span>
+        </span>
+      </div>
+    {% endfor %}
+    <p class="dim">Outside a band the app corrects by what it opens, never by a hedge trade of its
+       own: the header turns amber, a notification goes out once a day, the order ticket warns
+       about a trade that moves delta or theta further out, and the scanner leans new strangles
+       and iron condors back toward the delta band (puts closer when too short, calls closer when
+       too long), proposes rather than places a trade that would push delta further out, and opens
+       nothing while theta is at its maximum. The bias bands are this app's defaults, not
+       tastytrade figures; widen them for a small account, where one trade moves delta a lot.</p>
     <p><button class="primary" type="submit">Save rules</button></p>
   </form>
 </section>
@@ -165,7 +203,7 @@
         <label for="a-{{ key }}">{{ label }}</label>
         <span class="rule-input">
           <input id="a-{{ key }}" type="number" name="{{ key }}" required min="{{ lo }}" max="{{ hi }}"
-            {% if kind == "percent" %}value="{{ (v * 100)|round(0)|int }}" step="1"
+            {% if kind == "percent" %}value="{{ '%g'|format((v * 100)|round(1)) }}" step="0.1"
             {% elif kind == "int" %}value="{{ v }}" step="1"
             {% else %}value="{{ v }}" step="0.01"{% endif %}>
           <span class="dim unit">{{ unit }}</span>
@@ -190,8 +228,16 @@
     <p><label><input type="checkbox" name="guts_to_wings" {% if auto.guts_to_wings %}checked{% endif %}>
        An inverted strangle: buy the guts, sell the wings (close it and sell a new strangle at the
        wings delta, same expiration) to re-centre it</label></p>
-    <p class="dim">The inverted strangle can never be worth less than its inversion width, so this
-       pays up to that width plus your allowance; the new strangle keeps collecting theta.</p>
+    <p><label><input type="checkbox" name="guts_near" {% if auto.guts_near %}checked{% endif %}>
+       A straddle, or a strangle with its strikes within the narrow-strangle gap: buy the guts,
+       sell the wings once a short reaches the delta above</label></p>
+    <p class="dim">tastytrade mechanics: the guts can never be worth less than their in-the-money
+       value (an inverted strangle, at least its inversion width), so the repair pays up to that
+       plus your allowance and locks in no new loss beyond it; the new 16-delta strangle keeps
+       collecting theta with the breakevens re-centred. A straddle has no untested side to roll
+       closer, so until a short is this deep it is left to the profit target (25% for straddles)
+       and the 21 DTE rule. tastytrade sets no fixed delta for this repair; 0.70 is this app's
+       default, a short strike roughly half a standard deviation in the money.</p>
     <p><label><input type="checkbox" name="allow_inverted" {% if auto.allow_inverted %}checked{% endif %}>
        Let a tested strangle go inverted (roll the untested side past the tested strike)</label></p>
     <div class="rule">
@@ -247,6 +293,9 @@
        Monthly expirations only</label></p>
     <p><label><input type="checkbox" name="automanage_new" {% if scan.automanage_new %}checked{% endif %}>
        Switch automanage on for trades the scanner opens</label></p>
+    <p><label><input type="checkbox" name="band_lean" {% if scan.band_lean %}checked{% endif %}>
+       Outside the portfolio delta band, lean new trades back toward it (this comes before the
+       price-extreme lean)</label></p>
     <p><label><input type="checkbox" name="extreme_tilt" {% if scan.extreme_tilt %}checked{% endif %}>
        Lean the trade at price extremes: after a drop sell the put side closer (bullish), after a
        rise the call side (bearish)</label></p>

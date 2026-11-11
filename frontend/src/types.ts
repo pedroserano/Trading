@@ -114,6 +114,21 @@ export interface Snapshot {
     flags: number;
   };
   ivr: { SPY: IvRank | null };
+  bands?: Bands;
+}
+
+export interface Band {
+  value: number | null;
+  min: number;
+  max: number;
+  state: "below" | "inside" | "above" | null;
+}
+
+/** Portfolio targets as shares of net liq: beta-weighted delta and daily theta. */
+export interface Bands {
+  bias: "neutral" | "bullish" | "bearish";
+  delta: Band;
+  theta: Band;
 }
 
 export interface WatchRow {

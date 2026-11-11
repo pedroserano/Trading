@@ -19,6 +19,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
+from . import targets
 from .automation import LEVELS, Action, _hm
 from .extremes import compute as compute_extreme
 
@@ -54,6 +55,8 @@ DEFAULTS = {
     "move_sigma": 2.0,
     "day_ratio": 2.0,
     "tilt_delta": 0.25,
+    # Portfolio targets: outside the delta band, lean new trades back toward it.
+    "band_lean": True,
 }
 # (key, label, low, high, kind, unit) for the Settings page.
 FIELDS = [
@@ -117,6 +120,7 @@ def parse_form(form: dict, current: dict | None) -> dict:
         out["monthly_only"] = form.get("monthly_only") in ("on", "true", "1")
         out["automanage_new"] = form.get("automanage_new") in ("on", "true", "1")
         out["extreme_tilt"] = form.get("extreme_tilt") in ("on", "true", "1")
+        out["band_lean"] = form.get("band_lean") in ("on", "true", "1")
     if "scan_time" in form:
         try:
             h, m = _hm(form["scan_time"])
@@ -151,6 +155,25 @@ def _mid(c: dict | None) -> float | None:
     if c.get("bid") is not None and c.get("ask") is not None:
         return (c["bid"] + c["ask"]) / 2
     return None
+
+
+def _theta_full(bands: dict) -> str | None:
+    """Why no trade opens: the portfolio's theta is at or over the top of its band."""
+    t = (bands or {}).get("theta") or {}
+    if t.get("value") is None or t.get("max") is None or t["value"] < t["max"] - 1e-12:
+        return None
+    return (
+        f"portfolio theta {t['value']:.2%} of net liq is at the {t['max']:.2%} maximum; "
+        "no new trades until it is back inside the band"
+    )
+
+
+def _delta_push(preview: dict) -> str | None:
+    """The warning when a trade would move beta-weighted delta further outside its band."""
+    ba = preview.get("band_after") or {}
+    if not ba.get("delta_push"):
+        return None
+    return next((w for w in ba.get("warnings", []) if w.startswith("Beta-weighted")), None)
 
 
 def build_trade(
@@ -313,6 +336,9 @@ class Scanner:
                 for u in snap.get("underlyings", [])
             }
             rules = await self.preferences.rules()
+            bands = snap.get("bands") or {}
+            full = _theta_full(bands)
+            band_tilt = targets.lean(bands)
             candidates, skipped = [], []
             symbols = await self.symbols(account)
             try:
@@ -321,6 +347,9 @@ class Scanner:
                 quotes = {}
                 log.warning("Scanner quotes failed: %s", e)
             for sym in symbols:
+                if full:
+                    skipped.append({"symbol": sym, "reason": full})
+                    continue
                 why = await self._check(account, sym, s, held, quotes)
                 if isinstance(why, str):
                     skipped.append({"symbol": sym, "reason": why})
@@ -329,6 +358,10 @@ class Scanner:
                 strangle = ivr >= s["undefined_ivr"]
                 ext = await self._extreme(sym, quotes, s)
                 tilt = (ext or {}).get("direction") if s["extreme_tilt"] else None
+                # Outside the delta band the portfolio comes first: lean back toward it.
+                leaned = bool(band_tilt) and s.get("band_lean", True)
+                if leaned:
+                    tilt = band_tilt
                 legs, label = build_trade(rows, strangle, s, tilt)
                 if legs is None:
                     skipped.append({"symbol": sym, "reason": label})
@@ -360,9 +393,18 @@ class Scanner:
                         f"buying power in use would be {after:.0%}, over the {ceiling:.0%} "
                         "ceiling for this VIX"
                     )
+                ba = pv.get("band_after") or {}
+                tb = bands.get("theta") or {}
+                if ba.get("theta") is not None and tb.get("max") is not None:
+                    if ba["theta"] > tb["max"] + 1e-12:
+                        problems.append(
+                            f"daily theta would be {ba['theta']:.2%} of net liq, over the "
+                            f"{tb['max']:.2%} maximum"
+                        )
                 if problems:
                     skipped.append({"symbol": sym, "reason": "; ".join(problems)})
                     continue
+                push = _delta_push(pv)
                 candidates.append(
                     {
                         "symbol": sym,
@@ -377,15 +419,32 @@ class Scanner:
                         "body": body,
                         "extreme": ext,
                         "tilt": tilt,
+                        "band_lean": leaned,
+                        "delta_push": push,
                     }
                 )
                 if tilt:
                     lean = "bullish" if tilt == "down" else "bearish"
-                    candidates[-1]["label"] = f"{label}, tilted {lean}: {'; '.join(ext['reasons'])}"
+                    if leaned:
+                        d = bands["delta"]
+                        why_lean = (
+                            f"portfolio delta {d['value']:+.1%} of net liq, {d['state']} the "
+                            f"{d['min']:+.0%} to {d['max']:+.0%} band"
+                        )
+                    else:
+                        why_lean = "; ".join(ext["reasons"])
+                    candidates[-1]["label"] = f"{label}, tilted {lean}: {why_lean}"
+                if push:
+                    candidates[-1]["label"] += f". Warning: {push}"
             acted = []
             if act and level != "off":
-                # Trades at a price extreme first, then by IV rank.
-                for c in sorted(candidates, key=lambda c: (not c.get("tilt"), -c["ivr"])):
+                # Trades that keep delta in its band first, then those leaning (back toward the
+                # band or against a price extreme), then by IV rank.
+                order = sorted(
+                    candidates,
+                    key=lambda c: (bool(c.get("delta_push")), not c.get("tilt"), -c["ivr"]),
+                )
+                for c in order:
                     if placed_today >= s["max_new_per_day"]:
                         c["note"] = "daily limit of new trades reached"
                         continue
@@ -486,6 +545,9 @@ class Scanner:
             st = await auto.load()
             if key in st["acted"] or any(p["key"] == key for p in st["proposals"]):
                 return None
+            if level == "auto" and c.get("delta_push"):
+                # Against the portfolio's delta band: never opened without your tap.
+                level = "propose"
             title = f"{c['symbol']} {c['strategy']}"
             reason = (
                 f"IV rank {c['ivr']:.0f}: {c['label']}, {c['expiration']} ({c['dte']} DTE), "

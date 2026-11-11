@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, fields
 
 from .strategies import Rules
+from .targets import BIAS_BANDS, BIASES
 
 MAX_WATCHLIST = 200
 # Stocks, ETFs and indexes as Schwab spells them: SPY, BRK.B, BF/B, $SPX.
@@ -20,6 +21,13 @@ RULE_FIELDS = [
     ("loss_multiple", "Loss flag at multiple of credit", 0.5, 10.0, "multiple"),
     ("max_underlying_bp", "Buying power in one underlying, at most", 0.01, 1.0, "percent"),
     ("max_index_bp", "Buying power in one index underlying, at most", 0.01, 1.0, "percent"),
+]
+# Portfolio targets, on the Settings page under Portfolio targets. Same shape as RULE_FIELDS.
+BAND_FIELDS = [
+    ("delta_min", "Beta-weighted delta, at least (share of net liq)", -1.0, 1.0, "percent"),
+    ("delta_max", "Beta-weighted delta, at most (share of net liq)", -1.0, 1.0, "percent"),
+    ("theta_min", "Daily theta, at least (share of net liq a day)", 0.0, 0.02, "percent"),
+    ("theta_max", "Daily theta, at most (share of net liq a day)", 0.0, 0.02, "percent"),
 ]
 # Portfolio margin asks roughly half Reg T's margin for short premium, so the same share of
 # net liq carries about twice the exposure. tastytrade's guidance is to size smaller under
@@ -41,6 +49,9 @@ RULE_NOTES = {
     "underlying 7.5%, an index 25%, one scanner or live trade 2.5%, the VIX ceiling and the "
     "ticket's size guides halved), because the same buying power carries about twice the "
     "exposure. You can adjust them after.",
+    "delta_bias": "Choosing a bias saves at once and sets the delta band to its default: "
+    "neutral -5% to +5% of net liq, bullish 0 to +15%, bearish -15% to 0. You can adjust the "
+    "band after.",
     "block_over_ceiling": "Hard limit: an opening order that would take total buying power in "
     "use above the ceiling for the current VIX is refused. Unticked, it is only a warning.",
 }
@@ -101,7 +112,10 @@ class Preferences:
     async def set_rules(self, form: dict) -> Rules:
         """Validates form values (strings from the Settings page) and saves them."""
         current = asdict(await self.rules())
-        for name, label, lo, hi, kind in RULE_FIELDS:
+        # The bias as stored before this update: a new bias resets the band below, after the
+        # band fields (sent with the old band by the same form) have been read.
+        old_bias = current.get("delta_bias", "neutral")
+        for name, label, lo, hi, kind in RULE_FIELDS + BAND_FIELDS:
             if name not in form:
                 continue
             try:
@@ -122,5 +136,15 @@ class Preferences:
         if new_type != current.get("margin_type", "reg_t"):
             current.update(MARGIN_DEFAULTS[new_type])
         current["margin_type"] = new_type
+        bias = form.get("delta_bias", old_bias)
+        if bias not in BIASES:
+            raise ValueError("Delta bias: neutral, bullish or bearish")
+        if bias != old_bias:
+            current["delta_min"], current["delta_max"] = BIAS_BANDS[bias]
+        current["delta_bias"] = bias
+        if current["delta_min"] > current["delta_max"]:
+            raise ValueError("Beta-weighted delta: the least must not be above the most")
+        if current["theta_min"] > current["theta_max"]:
+            raise ValueError("Daily theta: the least must not be above the most")
         await self.store.set_setting("rules", current)
         return Rules(**current)

@@ -23,7 +23,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, sheet_import
+from . import guards, sheet_import, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
@@ -61,6 +61,7 @@ from .orders import strategy_name as ticket_strategy
 from .portfolio import BENCH, PortfolioService
 from .preferences import (
     _SYMBOL,
+    BAND_FIELDS,
     MARGIN_SCALE,
     MARGIN_TYPES,
     RULE_FIELDS,
@@ -561,6 +562,8 @@ def create_app(
                 "rule_fields": RULE_FIELDS,
                 "rule_notes": RULE_NOTES,
                 "margin_types": MARGIN_TYPES,
+                "band_fields": BAND_FIELDS,
+                "biases": targets.BIASES,
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
@@ -734,11 +737,17 @@ def create_app(
     async def rules_save(request: Request):
         form = dict(await request.form())
         try:
-            before = (await preferences.rules()).margin_type
+            prior = await preferences.rules()
+            before = prior.margin_type
             rules = await preferences.set_rules(form)
             portfolio.refresh_soon()
             sim_portfolio.refresh_soon()
             request.session["notice"] = "Rules saved."
+            if rules.delta_bias != prior.delta_bias:
+                request.session["notice"] = (
+                    f"Delta bias set to {rules.delta_bias}: the band is now "
+                    f"{rules.delta_min:+.0%} to {rules.delta_max:+.0%} of net liq."
+                )
             if rules.margin_type != before:
                 # One trade's buying power: the scanner's and live trading's limits follow.
                 share = 0.05 * MARGIN_SCALE[rules.margin_type]
@@ -1040,6 +1049,21 @@ def create_app(
             underlying_bp_after=under_after,
             underlying_cap=under_cap,
         )
+        # Portfolio targets: warn when the trade moves delta or theta further outside its band.
+        band_after = None
+        if a is not None and nl:
+            beta = 1.0 if t.underlying == BENCH else None
+            if beta is None:
+                b = await store.get_beta(t.underlying)
+                beta = b[0] if b else None
+            d_delta = (
+                a["delta"] * beta * spot / nl
+                if a.get("delta") is not None and beta is not None
+                else None
+            )
+            d_theta = a["theta"] / nl if a.get("theta") is not None else None
+            band_after = targets.after((pf.snapshot or {}).get("bands"), d_delta, d_theta)
+            warnings.extend(band_after["warnings"])
         if body.account == "sim" and t.intent in ("close", "roll") and t.trade_id is not None:
             for o in await broker.replaceable(t.trade_id, {x.symbol for x in t.legs}):
                 price = f"{abs(o['limit_net']):.2f} {'credit' if o['limit_net'] > 0 else 'debit'}"
@@ -1108,6 +1132,7 @@ def create_app(
             "entry": entry,
             "defined_risk": defined,
             "bp_used_after": after,
+            "band_after": band_after,
             "commission": round(contracts * broker.commission, 2),
             "errors": errors,
             "warnings": warnings,

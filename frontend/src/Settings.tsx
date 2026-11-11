@@ -31,7 +31,7 @@ export default function Settings({ section }: { section: string | null }) {
     if (html && section) document.getElementById(section)?.scrollIntoView();
   }, [html, section]);
 
-  // The margin type resets other settings, so choosing one saves it at once. A plain DOM
+  // The margin type and the delta bias reset other settings, so choosing one saves it at once. A plain DOM
   // listener: the form is server-rendered HTML, outside React's own event handling.
   const page = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -39,7 +39,7 @@ export default function Settings({ section }: { section: string | null }) {
     if (!el) return;
     const onChange = (e: Event) => {
       const t = e.target as HTMLSelectElement;
-      if (t.id === "r-margin") t.form?.requestSubmit();
+      if (t.id === "r-margin" || t.id === "r-bias") t.form?.requestSubmit();
     };
     el.addEventListener("change", onChange);
     return () => el.removeEventListener("change", onChange);

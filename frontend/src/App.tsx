@@ -247,8 +247,26 @@ function Header(props: {
   const bp = a?.bp_used_pct ?? null;
   const ceiling = a?.bp_ceiling_pct ?? null;
   const thetaPct = s.totals.theta_pct_nl;
-  const thetaTone =
-    thetaPct === null ? "" : thetaPct < 0.001 || thetaPct > 0.003 ? "warn-text" : "";
+  const db = s.bands?.delta;
+  const tb = s.bands?.theta;
+  const out = (b?: { state: string | null }) =>
+    b?.state === "below" || b?.state === "above" ? "warn-text" : "";
+  const thetaTone = tb
+    ? out(tb)
+    : thetaPct === null
+      ? ""
+      : thetaPct < 0.001 || thetaPct > 0.003
+        ? "warn-text"
+        : "";
+  const deltaTitle = db
+    ? `Beta-weighted delta in SPY shares; ${pct(db.value, 1)} of net liq. ` +
+      `Target (${s.bands?.bias}): ${pct(db.min, 0)} to ${pct(db.max, 0)}` +
+      (out(db) ? `, now ${db.state} it` : "")
+    : "Beta-weighted delta in SPY shares";
+  const thetaTitle = tb
+    ? `Target band ${pct(tb.min, 2)}–${pct(tb.max, 2)} of net liq` +
+      (out(tb) ? `, now ${tb.state} it` : "")
+    : "Target band 0.1%–0.3% of net liq";
   const spyIvr = s.ivr.SPY;
   const exp = s.connection.expires_in_days;
   return (
@@ -299,10 +317,13 @@ function Header(props: {
           <span className="sub"> / {pct(ceiling)}</span>
           <Meter value={bp} max={ceiling} />
         </Stat>
-        <Stat label="β-Δ SPY" title="Beta-weighted delta in SPY shares">
-          <span className={tone(s.totals.delta_bw)}>{signed(s.totals.delta_bw, 0)}</span>
+        <Stat label="β-Δ SPY" title={deltaTitle}>
+          <span className={out(db) || tone(s.totals.delta_bw)}>{signed(s.totals.delta_bw, 0)}</span>
+          {db && db.value !== null ? (
+            <span className={`sub ${out(db)}`}> {pct(db.value, 1)}</span>
+          ) : null}
         </Stat>
-        <Stat label="Θ / day" title="Target band 0.1%–0.3% of net liq">
+        <Stat label="Θ / day" title={thetaTitle}>
           <span className={tone(s.totals.theta)}>{signed(s.totals.theta, 0)}</span>
           <span className={`sub ${thetaTone}`}> {pct(thetaPct, 2)}</span>
         </Stat>

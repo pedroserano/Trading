@@ -24,6 +24,13 @@ class Rules:
     max_index_bp: float = 0.50  # SPY and other broad index ETFs and indexes
     block_over_ceiling: bool = True  # refuse, not just warn, above the VIX-based ceiling
     margin_type: str = "reg_t"  # or "pm" (portfolio margin): sizing limits halve
+    # Portfolio targets, as shares of net liq. Delta is beta-weighted to SPY in dollars
+    # (SPY deltas times SPY's price); theta is the portfolio's daily theta.
+    delta_bias: str = "neutral"  # "bullish" or "bearish" move the band (BIAS_BANDS)
+    delta_min: float = -0.05
+    delta_max: float = 0.05
+    theta_min: float = 0.001  # tastytrade: 0.1% to 0.3% of net liq a day
+    theta_max: float = 0.003
 
 
 @dataclass

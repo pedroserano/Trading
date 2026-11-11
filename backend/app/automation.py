@@ -55,6 +55,11 @@ DEFAULT_SETTINGS = {
     "guts_to_wings": True,
     "wings_delta": 0.16,
     "guts_extra_debit": 0.25,  # per unit, on top of the inversion width
+    # A straddle, or a strangle whose strikes are close together, cannot roll its untested
+    # side much closer; once a short is deeply tested it gets the same guts-to-wings repair.
+    "guts_near": True,
+    "guts_near_gap": 0.01,  # strangle strikes at most this share of the price apart
+    "guts_near_delta": 0.70,  # a short this deep acts; below it the usual tested rules
     # Close single-stock trades this many sessions before the last one before the report
     # (0: on that last session itself).
     "earnings_close_sessions": 1,
@@ -73,10 +78,26 @@ SETTING_FIELDS = [
     ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
     ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
     ("max_untested_rolls", "Untested-side rolls per expiration, at most", 0, 10, "int", "rolls"),
-    ("wings_delta", "Inverted strangle: sell the new wings at", 0.05, 0.5, "delta", "Δ"),
+    ("wings_delta", "Guts to wings: sell the new wings at", 0.05, 0.5, "delta", "Δ"),
+    (
+        "guts_near_gap",
+        "Narrow strangle: strikes at most this far apart, share of the price",
+        0,
+        10,
+        "percent",
+        "%",
+    ),
+    (
+        "guts_near_delta",
+        "Straddle or narrow strangle: buy the guts once a short reaches",
+        0.4,
+        0.95,
+        "delta",
+        "Δ",
+    ),
     (
         "guts_extra_debit",
-        "Inverted strangle: pay at most the inversion width plus",
+        "Guts to wings: pay at most the in-the-money value plus",
         0.0,
         10.0,
         "float",
@@ -127,6 +148,7 @@ def parse_settings(form: dict, current: dict) -> dict:
         out["roll_ic_untested"] = form.get("roll_ic_untested") in ("on", "true", "1")
         out["roll_single_itm"] = form.get("roll_single_itm") in ("on", "true", "1")
         out["guts_to_wings"] = form.get("guts_to_wings") in ("on", "true", "1")
+        out["guts_near"] = form.get("guts_near") in ("on", "true", "1")
     if form.get("untested_target") in ("match", "fixed"):
         out["untested_target"] = form["untested_target"]
     for key, label, lo, hi, kind, _unit in SETTING_FIELDS:
@@ -254,6 +276,15 @@ def decide(
                     "wings to re-centre the trade",
                 )
             )
+        elif (near := guts_near(st, spot, put, call, settings)) is not None:
+            out.append(
+                Action(
+                    "tested",
+                    "guts_to_wings",
+                    f"{name} deeply tested (short delta {near:.2f}): buy the guts, sell the "
+                    "wings to re-centre the trade",
+                )
+            )
         elif name in STRANGLES:
             out.append(
                 Action(
@@ -286,6 +317,31 @@ def decide(
         elif "profit" in flags:
             out.append(Action("profit", "close", "Profit target reached"))
     return out
+
+
+def guts_near(st: dict, spot, put, call, settings: dict) -> float | None:
+    """The deepest short delta when a straddle, or a strangle with its strikes within the set
+    share of the price, is tested past the guts-near delta; else None."""
+    if not (settings.get("guts_near", True) and put and call and spot):
+        return None
+    if st["name"] == "Strangle":
+        if call["strike"] - put["strike"] > settings.get("guts_near_gap", 0.01) * spot + 1e-9:
+            return None
+    elif st["name"] != "Straddle":
+        return None
+    deltas = [abs(x["delta"]) for x in (put, call) if x.get("delta") is not None]
+    if not deltas or max(deltas) < settings.get("guts_near_delta", 0.70):
+        return None
+    return max(deltas)
+
+
+def intrinsic(spot: float | None, put: dict, call: dict) -> float:
+    """What the short put and call are worth at expiration at this price, per unit: an
+    inverted strangle never less than its inversion width."""
+    width = max(0.0, put["strike"] - call["strike"])
+    if spot is None:
+        return width
+    return max(width, max(0.0, put["strike"] - spot) + max(0.0, spot - call["strike"]))
 
 
 def _exp(st: dict) -> date:
@@ -653,7 +709,8 @@ class AutomationService:
                 mid = preview["prices"]["mid"]
                 natural = preview["prices"]["natural"]
                 if body.get("_max_debit") is not None:
-                    # Buying the guts costs a debit; only up to the inversion width plus a little.
+                    # Buying the guts costs a debit; only up to their in-the-money value plus a
+                    # little.
                     if mid is None or -mid > body["_max_debit"] + 1e-9:
                         cost = "unknown" if mid is None else f"{-mid:.2f}"
                         self._log(
@@ -666,7 +723,7 @@ class AutomationService:
                             f"guts-cost:{tid}:{today}",
                             "Guts to wings too dear",
                             f"It would cost {cost} a unit, over the {body['_max_debit']:.2f} "
-                            "limit (the inversion width plus your allowance).",
+                            "limit (the in-the-money value plus your allowance).",
                         )
                         return
                 elif (
@@ -918,9 +975,11 @@ class AutomationService:
         return []
 
     async def _guts_bodies(self, s, u, settings: dict, base: dict) -> list:
-        """Closes an inverted strangle (the guts) and sells a new strangle at the wings delta in
-        the same expiration, as one four-leg order. The guts can never be worth less than the
-        inversion width, so the order may pay up to that width plus the set allowance."""
+        """Closes the guts (an inverted strangle, a straddle, or a narrow strangle deeply
+        tested) and sells a new strangle at the wings delta in the same expiration, as one
+        four-leg order. The guts can never be worth less than their in-the-money value (for an
+        inverted strangle, at least the inversion width), so the order may pay up to that
+        value plus the set allowance."""
         shorts = [x for x in s["legs"] if x["kind"] == "OPTION" and x["quantity"] < 0]
         put = next((x for x in shorts if x["put_call"] == "P"), None)
         call = next((x for x in shorts if x["put_call"] == "C"), None)
@@ -942,7 +1001,7 @@ class AutomationService:
         if {new_put["put"]["symbol"], new_call["call"]["symbol"]} & {put["symbol"], call["symbol"]}:
             return []
         n = int(put["quantity"])
-        width = put["strike"] - call["strike"]
+        worth = intrinsic(u.get("price"), put, call)
         return [
             {
                 **base,
@@ -953,7 +1012,7 @@ class AutomationService:
                     {"symbol": new_put["put"]["symbol"], "quantity": n, "effect": "open"},
                     {"symbol": new_call["call"]["symbol"], "quantity": n, "effect": "open"},
                 ],
-                "_max_debit": round(width + settings.get("guts_extra_debit", 0.25), 2),
+                "_max_debit": round(worth + settings.get("guts_extra_debit", 0.25), 2),
             }
         ]
 

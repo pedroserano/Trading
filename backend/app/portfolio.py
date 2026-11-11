@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import analytics
+from . import analytics, targets
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
@@ -303,6 +303,7 @@ class PortfolioService:
         self._extras = extras
         self._build_and_publish(extras)
         await self._notify_flags()
+        await self._band_notices()
 
     async def _notify_flags(self) -> None:
         """One push notification per flag per strategy, the first time it appears."""
@@ -329,6 +330,38 @@ class PortfolioService:
                         )
                     except Exception as e:
                         log.warning("Flag notification failed: %s", e)
+
+    async def _band_notices(self) -> None:
+        """A notification when delta or theta is outside its portfolio band, at most once a day
+        for each band and side. The correction is left to you and the scanner's lean."""
+        if not self.rules.notify_flags or self.notifier is None or not self.notifier.enabled:
+            return
+        if self._session() != "open":
+            return
+        bands = self.snapshot.get("bands") or {}
+        today = self.clock().date().isoformat()
+        for key, what, fmt in (("delta", "Beta-weighted delta", "+.1%"), ("theta", "Theta", ".2%")):
+            b = bands.get(key) or {}
+            if b.get("state") not in ("below", "above"):
+                continue
+            if not await self.store.mark_notified(f"band:{self.mode}:{key}:{b['state']}:{today}"):
+                continue
+            hint = ""
+            if key == "delta":
+                hint = " The scanner leans new trades " + (
+                    "bullish (puts closer)." if b["state"] == "below" else "bearish (calls closer)."
+                )
+            elif b["state"] == "above":
+                hint = " The scanner opens no new trades until it is back inside."
+            try:
+                await self.notifier.send(
+                    f"{what} {b['state']} its band",
+                    f"{what} is {b['value']:{fmt}} of net liq, outside "
+                    f"{b['min']:{fmt}} to {b['max']:{fmt}}.{hint}",
+                    self.settings.app_url,
+                )
+            except Exception as e:
+                log.warning("Band notification failed: %s", e)
 
     def _tagged_legs(self) -> list[Leg]:
         """Legs labelled with the chain they belong to.
@@ -518,6 +551,7 @@ class PortfolioService:
             "flags": sum(len(s["flags"]) for u in underlyings for s in u["strategies"]),
         }
         snap["ivr"] = {"SPY": spy_ivr}
+        snap["bands"] = targets.bands(snap["totals"], snap["account"], spy, self.rules)
         self.snapshot = snap
         self._publish()
 
