@@ -113,7 +113,11 @@
           <span class="dim unit">{{ "%" if kind == "percent" else ("×" if kind == "multiple" else ("DTE" if kind == "int" else "Δ")) }}</span>
         </span>
       </div>
+      {% if rule_notes[name] %}<p class="warn-note">⚠ {{ rule_notes[name] }}</p>{% endif %}
     {% endfor %}
+    <p><label><input type="checkbox" name="block_over_ceiling" {% if rules.block_over_ceiling %}checked{% endif %}>
+       Refuse opening trades above the buying-power ceiling for the current VIX</label></p>
+    <p class="warn-note">⚠ {{ rule_notes.block_over_ceiling }}</p>
     <p><label><input type="checkbox" name="notify_flags" {% if rules.notify_flags %}checked{% endif %}>
        Send a notification the first time each flag appears on a position</label></p>
     <p><button class="primary" type="submit">Save rules</button></p>

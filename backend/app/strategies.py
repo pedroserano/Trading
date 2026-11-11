@@ -19,6 +19,10 @@ class Rules:
     tested_delta: float = 0.30
     loss_multiple: float = 2.0
     notify_flags: bool = True
+    # Hard limits on opening trades, as shares of net liq.
+    max_underlying_bp: float = 0.15
+    max_index_bp: float = 0.50  # SPY and other broad index ETFs and indexes
+    block_over_ceiling: bool = True  # refuse, not just warn, above the VIX-based ceiling
 
 
 @dataclass

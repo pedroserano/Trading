@@ -635,3 +635,39 @@ async def test_sim_account_reports_what_was_held_overnight():
         e["at"] -= 3 * 86400  # filled days ago: held overnight now
     (pos,) = b.account(QUOTES)["securitiesAccount"]["positions"]
     assert pos["previousSessionShortQuantity"] == 1
+
+
+def test_hard_limits_per_underlying_and_over_the_ceiling():
+    t = ticket([(sym("P", 555), -1, "open")], limit_net=3.10)
+    apply_quotes(t, QUOTES)
+    p = prices(t)
+    lim = guards.Limits()
+    common = dict(limits=lim, net_liq=100_000, bp_effect=4000, defined_risk=False)
+    # Over the VIX ceiling: an error when blocking, a warning otherwise.
+    e, w = guards.check(
+        t, p, TODAY, **common, bp_used_after=0.35, bp_ceiling=0.30, block_over_ceiling=True
+    )
+    assert any("ceiling" in x for x in e)
+    e, w = guards.check(t, p, TODAY, **common, bp_used_after=0.35, bp_ceiling=0.30)
+    assert not any("ceiling" in x for x in e) and any("ceiling" in x for x in w)
+    # One underlying's buying power over its cap.
+    e, _ = guards.check(t, p, TODAY, **common, underlying_bp_after=16_000, underlying_cap=0.15)
+    assert any("SPY would use 16%" in x for x in e)
+    e, _ = guards.check(t, p, TODAY, **common, underlying_bp_after=14_000, underlying_cap=0.15)
+    assert not any("would use" in x for x in e)
+    # Closing orders are never held back by these.
+    c = ticket([(sym("P", 555), 1, "close")], intent="close", limit_net=-3.10)
+    apply_quotes(c, QUOTES)
+    e, _ = guards.check(
+        c,
+        prices(c),
+        TODAY,
+        limits=lim,
+        net_liq=100_000,
+        bp_used_after=0.5,
+        bp_ceiling=0.3,
+        block_over_ceiling=True,
+        underlying_bp_after=90_000,
+        underlying_cap=0.15,
+    )
+    assert not any("ceiling" in x or "would use" in x for x in e)

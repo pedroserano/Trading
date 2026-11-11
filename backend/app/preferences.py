@@ -18,7 +18,17 @@ RULE_FIELDS = [
     ("manage_dte", "Manage at DTE", 0, 60, "int"),
     ("tested_delta", "Tested at short delta", 0.05, 0.95, "delta"),
     ("loss_multiple", "Loss flag at multiple of credit", 0.5, 10.0, "multiple"),
+    ("max_underlying_bp", "Buying power in one underlying, at most", 0.01, 1.0, "percent"),
+    ("max_index_bp", "Buying power in one index underlying, at most", 0.01, 1.0, "percent"),
 ]
+# Shown by the fields that refuse orders, so their effect is plain.
+RULE_NOTES = {
+    "max_underlying_bp": "Hard limit: an opening order that would take one underlying's buying "
+    "power above this share of net liq is refused, for you, automanage and the scanner.",
+    "max_index_bp": "The same limit for SPY, QQQ, IWM, DIA and the SPX, XSP, NDX and RUT indexes.",
+    "block_over_ceiling": "Hard limit: an opening order that would take total buying power in "
+    "use above the ceiling for the current VIX is refused. Unticked, it is only a warning.",
+}
 
 
 def parse_symbols(text: str) -> tuple[list[str], list[str]]:
@@ -90,5 +100,6 @@ class Preferences:
                 raise ValueError(f"{label}: must be between {shown[0]:g} and {shown[1]:g}")
             current[name] = int(v) if kind == "int" else v
         current["notify_flags"] = form.get("notify_flags") in ("on", "true", "1", True)
+        current["block_over_ceiling"] = form.get("block_over_ceiling") in ("on", "true", "1", True)
         await self.store.set_setting("rules", current)
         return Rules(**current)

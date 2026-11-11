@@ -8,6 +8,22 @@ from datetime import date
 
 from .orders import Ticket
 
+# Broad index ETFs and indexes: they get their own, higher per-underlying limit.
+INDEX_UNDERLYINGS = {
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "SPX",
+    "XSP",
+    "NDX",
+    "RUT",
+    "$SPX",
+    "$XSP",
+    "$NDX",
+    "$RUT",
+}
+
 
 @dataclass
 class Limits:
@@ -31,6 +47,9 @@ def check(
     defined_risk: bool = True,
     bp_used_after: float | None = None,
     bp_ceiling: float | None = None,
+    block_over_ceiling: bool = False,
+    underlying_bp_after: float | None = None,
+    underlying_cap: float | None = None,
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -90,10 +109,23 @@ def check(
                     f"{guide:.0%} for {'defined' if defined_risk else 'undefined'} "
                     "risk"
                 )
+    opening = t.intent in ("open", "adjust")
     if bp_used_after is not None and bp_ceiling is not None and bp_used_after > bp_ceiling:
-        warnings.append(
+        text = (
             f"Buying power used would be {bp_used_after:.0%}, above the "
             f"{bp_ceiling:.0%} ceiling for the current VIX"
+        )
+        (errors if block_over_ceiling and opening else warnings).append(text)
+    if (
+        opening
+        and net_liq
+        and underlying_bp_after is not None
+        and underlying_cap is not None
+        and underlying_bp_after > underlying_cap * net_liq
+    ):
+        errors.append(
+            f"{t.underlying} would use {underlying_bp_after / net_liq:.0%} of net liq in buying "
+            f"power, above the {underlying_cap:.0%} limit for one underlying"
         )
     if t.intent == "open":
         for leg in t.legs:

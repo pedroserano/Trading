@@ -338,3 +338,17 @@ def test_automanage_settings_and_api(settings):
         view = c.post("/api/automation/trade", json={"trade_id": 7, "enabled": True}).json()
         assert view["trades"]["7"]["enabled"] is True
         assert c.post("/api/automation/pause", json={"paused": True}).json()["paused"] is True
+
+
+def test_buying_power_limits_are_settings_with_warnings(settings):
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        page = c.get("/connect").text
+        assert "Buying power in one underlying" in page and "Hard limit" in page
+        c.post("/rules", data={"max_underlying_bp": "20", "max_index_bp": "60"})
+        saved = store.settings["rules"]
+        assert saved["max_underlying_bp"] == 0.20 and saved["max_index_bp"] == 0.60
+        assert saved["block_over_ceiling"] is False  # unticked on that form
+        c.post("/rules", data={"block_over_ceiling": "on"})
+        assert store.settings["rules"]["block_over_ceiling"] is True

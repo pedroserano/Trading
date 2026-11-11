@@ -56,7 +56,7 @@ from .orders import (
 )
 from .orders import strategy_name as ticket_strategy
 from .portfolio import BENCH, PortfolioService
-from .preferences import _SYMBOL, RULE_FIELDS, Preferences, parse_symbols
+from .preferences import _SYMBOL, RULE_FIELDS, RULE_NOTES, Preferences, parse_symbols
 from .schwab_service import (
     ConnectionStatus,
     SchwabError,
@@ -524,6 +524,7 @@ def create_app(
                 "watchlist": await preferences.watchlist(),
                 "rules": await preferences.rules(),
                 "rule_fields": RULE_FIELDS,
+                "rule_notes": RULE_NOTES,
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
@@ -895,6 +896,30 @@ def create_app(
         }
         nl, maint = acct.get("net_liq"), acct.get("maintenance")
         after = (maint + bp) / nl if (bp is not None and nl and maint is not None) else None
+        rules = await preferences.rules()
+        # Buying power already in this underlying, estimated like a new trade's, plus this one.
+        under_after = None
+        if bp is not None and spot and t.intent in ("open", "adjust"):
+            mine = [x for x in pf.legs if x.underlying == t.underlying]
+            existing = 0.0
+            if mine:
+                try:
+                    existing = analyze(
+                        [
+                            TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark or 0)
+                            for x in mine
+                        ],
+                        spot,
+                        today,
+                    )["bp_estimate"]
+                except (ValueError, ZeroDivisionError):
+                    existing = None
+            under_after = None if existing is None else existing + bp
+        under_cap = (
+            rules.max_index_bp
+            if t.underlying in guards.INDEX_UNDERLYINGS
+            else rules.max_underlying_bp
+        )
         errors, warnings = guards.check(
             t,
             p,
@@ -906,6 +931,9 @@ def create_app(
             defined_risk=defined,
             bp_used_after=after,
             bp_ceiling=acct.get("bp_ceiling_pct"),
+            block_over_ceiling=rules.block_over_ceiling,
+            underlying_bp_after=under_after,
+            underlying_cap=under_cap,
         )
         if body.account == "sim" and t.intent in ("close", "roll") and t.trade_id is not None:
             for o in await broker.replaceable(t.trade_id, {x.symbol for x in t.legs}):
