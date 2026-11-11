@@ -41,6 +41,7 @@ from .datasource import DemoDataSource, SchwabDataSource
 from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
 from .notify import PushoverNotifier, ReminderService
+from .order_check import OrderCheckService
 from .orders import (
     Ticket,
     TicketError,
@@ -294,6 +295,9 @@ def create_app(
         )
         portfolio.stream = stream
     chain_service = ChainService(source, store, portfolio, selector)
+    order_check = OrderCheckService(
+        source, store, selector, enabled=lambda: connection_status().connected
+    )
     portfolio.trade_info = chain_service.trade_info
     portfolio.chain_holdings = chain_service.holdings
     if stream is not None:
@@ -301,6 +305,7 @@ def create_app(
         def on_activity():
             portfolio.refresh_soon()
             chain_service.refresh_soon()
+            order_check.refresh_soon()
 
         stream.on_account_activity = on_activity
     broker = SimBroker(
@@ -356,6 +361,7 @@ def create_app(
                 "watchlist": watchlist.run,
                 "simulated account": sim_portfolio.run,
                 "trade chains": chain_service.run,
+                "order check": order_check.run,
                 "price history": prices_service.run,
                 "simulated publisher": sim_portfolio.publisher,
                 "automation": automation.run,
@@ -1019,6 +1025,18 @@ def create_app(
         if found is None:
             raise HTTPException(status_code=404, detail="That trade's history is not available")
         return found
+
+    @app.get("/api/order-check", dependencies=[Depends(require_login)])
+    async def api_order_check():
+        return await order_check.view()
+
+    @app.post("/api/order-check/refresh", dependencies=[Depends(require_login)])
+    async def api_order_check_refresh():
+        try:
+            await order_check.sync()
+        except SchwabError as e:
+            raise _schwab_errors(e) from e
+        return await order_check.view()
 
     @app.post("/api/chains/link", dependencies=[Depends(require_login)])
     async def api_chain_link(body: LinkIn):

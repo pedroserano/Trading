@@ -22,6 +22,7 @@ class DataSource(Protocol):
     async def expirations(self, symbol: str) -> dict: ...
     async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list: ...
     async def market_open(self, day: date) -> bool | None: ...
+    async def orders(self, account_hash: str, start: datetime, end: datetime) -> list: ...
 
 
 class SchwabDataSource:
@@ -83,6 +84,18 @@ class SchwabDataSource:
                 start_date=start,
                 end_date=end,
                 transaction_types=types,
+            )
+            or []
+        )
+
+    async def orders(self, account_hash: str, start: datetime, end: datetime) -> list:
+        return (
+            await self.schwab.call(
+                "get_orders_for_account",
+                account_hash,
+                from_entered_datetime=start,
+                to_entered_datetime=end,
+                max_results=500,
             )
             or []
         )
@@ -341,12 +354,97 @@ class DemoDataSource:
     async def market_open(self, day: date) -> bool | None:
         return day.weekday() < 5
 
+    async def orders(self, account_hash: str, start: datetime, end: datetime) -> list:
+        return _demo_orders(self)
+
     async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list:
         return [
             x
             for x in _demo_history(self)
             if start.timestamp() <= datetime.fromisoformat(x["time"]).timestamp() <= end.timestamp()
         ]
+
+
+def _demo_orders(src: "DemoDataSource") -> list[dict]:
+    """Orders as Schwab returns them, standing in for ones placed in thinkorswim."""
+
+    def leg(under, days, pc, strike, instruction, qty):
+        return {
+            "orderLegType": "OPTION",
+            "instruction": instruction,
+            "quantity": qty,
+            "positionEffect": "OPENING" if instruction.endswith("OPEN") else "CLOSING",
+            "instrument": {
+                "assetType": "OPTION",
+                "symbol": option_symbol(under, src._exp(days), pc, strike),
+                "underlyingSymbol": under,
+                "putCall": "PUT" if pc == "P" else "CALL",
+            },
+        }
+
+    def order(oid, days_ago, status, **kw):
+        when = datetime.combine(src.today - timedelta(days=days_ago), datetime.min.time())
+        return {
+            "orderId": oid,
+            "session": "NORMAL",
+            "duration": "DAY",
+            "orderStrategyType": "SINGLE",
+            "status": status,
+            "enteredTime": when.replace(hour=15).isoformat() + "+0000",
+            "accountNumber": DemoDataSource.HASH,
+            **kw,
+        }
+
+    return [
+        order(
+            9001,
+            0,
+            "CANCELED",
+            orderType="NET_CREDIT",
+            complexOrderStrategyType="VERTICAL",
+            price=1.05,
+            quantity=2,
+            orderLegCollection=[
+                leg("SPY", 45, "P", 570, "SELL_TO_OPEN", 2),
+                leg("SPY", 45, "P", 565, "BUY_TO_OPEN", 2),
+            ],
+        ),
+        order(
+            9002,
+            0,
+            "CANCELED",
+            orderType="LIMIT",
+            complexOrderStrategyType="NONE",
+            price=0.05,
+            quantity=2,
+            duration="GOOD_TILL_CANCEL",
+            orderLegCollection=[leg("IWM", 25, "P", 224, "BUY_TO_CLOSE", 2)],
+        ),
+        order(
+            9003,
+            1,
+            "CANCELED",
+            orderType="NET_CREDIT",
+            complexOrderStrategyType="CALENDAR",
+            price=0.85,
+            quantity=1,
+            orderLegCollection=[
+                leg("IWM", 25, "P", 224, "BUY_TO_CLOSE", 1),
+                leg("IWM", 60, "P", 224, "SELL_TO_OPEN", 1),
+            ],
+        ),
+        order(
+            9004,
+            2,
+            "CANCELED",
+            orderType="LIMIT",
+            complexOrderStrategyType="NONE",
+            orderStrategyType="OCO",
+            price=0.50,
+            quantity=1,
+            orderLegCollection=[leg("SPY", 38, "C", 610, "BUY_TO_CLOSE", 1)],
+        ),
+    ]
 
 
 def _demo_txn(aid: int, when: datetime, legs: list, kind: str = "TRADE", desc: str = "") -> dict:

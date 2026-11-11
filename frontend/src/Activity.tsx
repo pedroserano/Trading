@@ -1,3 +1,4 @@
+import OrderCheck from "./OrderCheck";
 import { useCallback, useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
 import { ChainTimeline, chainSummary, legText, when } from "./ChainHistory";
@@ -216,6 +217,8 @@ export default function Activity() {
       ) : (
         <p className="dim-text">Statistics appear once trades are closed.</p>
       )}
+
+      {live ? <OrderCheck /> : null}
 
       {!live ? (
         <>

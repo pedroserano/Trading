@@ -413,3 +413,16 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 @media (max-width: 700px) {
   .banner.proposal { flex-direction: column; }
 }
+
+/* Order check */
+.mono-small { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: normal; }
+.check-result { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; }
+.check-result.match { color: var(--ok); }
+.check-result.differs { color: var(--warn); }
+.check-result.not-comparable { color: var(--dim); }
+.check-diffs { border-collapse: collapse; font-size: 12px; margin: 4px 0 8px; }
+.check-diffs td, .check-diffs th { padding: 2px 12px 2px 0; border: 0; white-space: normal; text-align: left; }
+.json-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.json-pair pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 11px;
+  overflow-x: auto; max-height: 360px; margin: 4px 0 0; }
+@media (max-width: 700px) { .json-pair { grid-template-columns: 1fr; } }
