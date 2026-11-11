@@ -427,7 +427,7 @@ Decided:
 - No tastytrade account. IV rank comes from Schwab data only.
 - A Schwab developer app already exists. Reuse it rather than recreating it: the key and secret are shown in the app's details in the portal, and a new app waits for approval again.
 
-Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 complete: running on real Schwab data and checked against thinkorswim. Phase 2 built and deployed; its market-hours check against thinkorswim is pending. Phase 3 built: order tickets (open, close, roll) with Schwab preview, server-side guards, a simulated broker with fills against live quotes, GTC profit targets, expiry settlement, and a trade journal with statistics. Its exit test is two weeks of simulated trading with the order JSON checked against orders built in thinkorswim.
+Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 complete: running on real Schwab data and checked against thinkorswim. Phase 2 built and deployed; its market-hours check against thinkorswim is pending. Phase 3 built: order tickets (open, close, roll) with Schwab preview, server-side guards, a simulated broker with fills against live quotes, GTC profit targets, expiry settlement, and a trade journal with statistics. Its exit test is two weeks of simulated trading with the order JSON checked against orders built in thinkorswim. Phase 4 step 1 built: trade chains for the Schwab account from its transaction history (a year back-filled, then every five minutes and on account activity), roll linking with Link and Split corrections, positions grouped by chain with credit including rolls, and a History panel on every position.
 
 Still open:
 

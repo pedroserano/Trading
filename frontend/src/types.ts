@@ -38,7 +38,7 @@ export interface StrategyNumbers {
 }
 
 export interface StrategyView {
-  trade_id: number | null;
+  trade_id: number | string | null;
   rolls: number;
   name: string;
   defined_risk: boolean;
@@ -270,15 +270,20 @@ export interface SimOrder {
 
 export interface TradeEvent {
   at: number;
-  kind: "open" | "close" | "roll" | "adjust" | "expire" | "settle";
-  order_id: number | null;
+  kind: "open" | "close" | "roll" | "adjust" | "expire" | "settle" | "assign" | "exercise" | "carried";
+  order_id: number | string | null;
+  group?: string | null;
+  note?: string | null;
+  auto_linked?: boolean;
   net: number;
   commission: number;
   legs: { symbol: string; quantity: number; price: number }[];
 }
 
 export interface SimTrade {
-  id: number;
+  id: number | string;
+  carried_in?: boolean;
+  holdings?: Record<string, number>;
   underlying: string;
   strategy: string;
   opened_at: number;
@@ -298,10 +303,27 @@ export interface StatRow {
   pl_per_day: number;
 }
 
+export interface Proposal {
+  group: string;
+  chain: string;
+  reason: string;
+}
+
+export interface Mismatch {
+  symbol: string;
+  chains: number;
+  schwab: number;
+}
+
 export interface Activity {
-  cash: number;
-  start_cash: number;
-  net_liq: number | null;
+  account: "live" | "sim";
+  cash?: number;
+  start_cash?: number;
+  net_liq?: number | null;
+  proposals?: Proposal[];
+  mismatches?: Mismatch[];
+  synced_at?: number | null;
+  error?: string | null;
   orders: SimOrder[];
   trades: SimTrade[];
   stats: StatRow[];

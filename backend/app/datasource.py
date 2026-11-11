@@ -20,6 +20,7 @@ class DataSource(Protocol):
         self, symbol: str, from_date: date, to_date: date, strike_count: int | None = 6
     ) -> dict: ...
     async def expirations(self, symbol: str) -> dict: ...
+    async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list: ...
     async def market_open(self, day: date) -> bool | None: ...
 
 
@@ -68,6 +69,23 @@ class SchwabDataSource:
 
     async def expirations(self, symbol: str) -> dict:
         return await self.schwab.call("get_option_expiration_chain", symbol)
+
+    async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list:
+        c = self.schwab.client()
+        types = [
+            c.Transactions.TransactionType.TRADE,
+            c.Transactions.TransactionType.RECEIVE_AND_DELIVER,
+        ]
+        return (
+            await self.schwab.call(
+                "get_transactions",
+                account_hash,
+                start_date=start,
+                end_date=end,
+                transaction_types=types,
+            )
+            or []
+        )
 
     async def market_open(self, day: date) -> bool | None:
         c = self.schwab.client()
@@ -322,3 +340,111 @@ class DemoDataSource:
 
     async def market_open(self, day: date) -> bool | None:
         return day.weekday() < 5
+
+    async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list:
+        return [
+            x
+            for x in _demo_history(self)
+            if start.timestamp() <= datetime.fromisoformat(x["time"]).timestamp() <= end.timestamp()
+        ]
+
+
+def _demo_txn(aid: int, when: datetime, legs: list, kind: str = "TRADE", desc: str = "") -> dict:
+    """One transaction in Schwab's shape. legs: (symbol, signed qty, price, effect)."""
+    items, cash, contracts = [], 0.0, 0
+    for sym, qty, price, effect in legs:
+        occ = parse_option_symbol(sym)
+        cost = round(-qty * price * 100, 2)
+        cash += cost
+        contracts += abs(qty)
+        items.append(
+            {
+                "instrument": {
+                    "assetType": "OPTION",
+                    "symbol": sym,
+                    "underlyingSymbol": occ.underlying,
+                    "putCall": "PUT" if occ.put_call == "P" else "CALL",
+                },
+                "amount": abs(qty),
+                "cost": cost,
+                "price": price,
+                "positionEffect": "OPENING" if effect == "open" else "CLOSING",
+            }
+        )
+    fee = round(0.65 * contracts, 2) if kind == "TRADE" else 0.0
+    if fee:
+        items.append(
+            {
+                "instrument": {"assetType": "CURRENCY", "symbol": "CURRENCY_USD"},
+                "amount": 0,
+                "cost": -fee,
+                "feeType": "COMMISSION",
+            }
+        )
+    return {
+        "activityId": aid,
+        "orderId": aid * 10 if kind == "TRADE" else None,
+        "time": when.isoformat(),
+        "type": kind,
+        "description": desc,
+        "netAmount": round(cash - fee, 2),
+        "transferItems": items,
+    }
+
+
+def _demo_history(src: "DemoDataSource") -> list[dict]:
+    t = src.today
+
+    def at(days: int, h: int = 15) -> datetime:
+        return datetime(t.year, t.month, t.day, h, tzinfo=UTC) - timedelta(days=days)
+
+    near = _friday_after(t - timedelta(days=5))
+    old = _friday_after(t - timedelta(days=40))
+    spy_p, spy_c = (p["instrument"]["symbol"] for p in src.positions[:2])
+    vert_s, vert_l = (p["instrument"]["symbol"] for p in src.positions[2:4])
+    iwm = src.positions[8]["instrument"]["symbol"]
+    return [
+        # A closed SPY iron condor, for the journal.
+        _demo_txn(
+            1,
+            at(62),
+            [
+                (option_symbol("SPY", old, "P", 540), 1, 1.20, "open"),
+                (option_symbol("SPY", old, "P", 545), -1, 1.70, "open"),
+                (option_symbol("SPY", old, "C", 615), -1, 1.60, "open"),
+                (option_symbol("SPY", old, "C", 620), 1, 1.05, "open"),
+            ],
+        ),
+        _demo_txn(
+            2,
+            at(44),
+            [
+                (option_symbol("SPY", old, "P", 540), -1, 0.30, "close"),
+                (option_symbol("SPY", old, "P", 545), 1, 0.45, "close"),
+                (option_symbol("SPY", old, "C", 615), 1, 0.40, "close"),
+                (option_symbol("SPY", old, "C", 620), -1, 0.20, "close"),
+            ],
+        ),
+        # The SPY strangle: opened in the near cycle, rolled out when the call was tested.
+        _demo_txn(
+            3,
+            at(33),
+            [
+                (option_symbol("SPY", near, "P", 545), -1, 3.10, "open"),
+                (option_symbol("SPY", near, "C", 600), -1, 2.80, "open"),
+            ],
+        ),
+        _demo_txn(
+            4,
+            at(12),
+            [
+                (option_symbol("SPY", near, "P", 545), 1, 1.20, "close"),
+                (option_symbol("SPY", near, "C", 600), 1, 3.60, "close"),
+                (spy_p, -1, 4.85, "open"),
+                (spy_c, -1, 3.95, "open"),
+            ],
+        ),
+        # SPY put vertical and IWM short put, opened normally. The rest are carried in.
+        _demo_txn(5, at(9), [(vert_s, -2, 3.40, "open"), (vert_l, 2, 2.35, "open")]),
+        _demo_txn(6, at(20), [(iwm, -2, 3.10, "open")]),
+    ]

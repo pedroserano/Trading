@@ -1,20 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
-import { money, pct, shortDate, signed, strike, tone } from "./format";
+import { ChainTimeline, chainSummary, legText, when } from "./ChainHistory";
+import { AccountContext } from "./context";
+import { money, pct, signed, tone } from "./format";
 import type { Activity as ActivityData, SimOrder, SimTrade } from "./types";
-
-function when(ts: number | null): string {
-  if (!ts) return "–";
-  return new Date(ts * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-function legText(symbol: string, quantity: number): string {
-  // "SPY   261218P00555000" -> "-1 Dec 18 555 P"
-  const m = symbol.match(/^(.{1,6}?)\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/);
-  if (!m) return `${signed(quantity)} ${symbol}`;
-  const exp = `20${m[2]}-${m[3]}-${m[4]}`;
-  return `${signed(quantity)} ${shortDate(exp)} ${strike(Number(m[6]) / 1000)} ${m[5]}`;
-}
 
 function net(v: number | null): string {
   if (v === null) return "–";
@@ -22,20 +11,22 @@ function net(v: number | null): string {
 }
 
 export default function Activity() {
+  const account = useContext(AccountContext);
   const [data, setData] = useState<ActivityData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
-      setData(await getJson<ActivityData>("/api/activity"));
+      setData(await getJson<ActivityData>(`/api/activity?account=${account}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [account]);
 
   useEffect(() => {
+    setData(null);
     load();
     const t = window.setInterval(load, 5000);
     return () => window.clearInterval(t);
@@ -44,6 +35,15 @@ export default function Activity() {
   const cancel = async (o: SimOrder) => {
     try {
       await postJson(`/api/orders/${o.id}/cancel`, {});
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const link = async (group: string, chain: string) => {
+    try {
+      await postJson("/api/chains/link", { group, chain });
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -64,41 +64,83 @@ export default function Activity() {
   };
 
   if (!data) return error ? <div className="banner warn">{error}</div> : <div className="empty">Loading…</div>;
+  const live = data.account === "live";
   const working = data.orders.filter((o) => o.status === "WORKING");
   const done = data.orders.filter((o) => o.status !== "WORKING").slice(0, 50);
   const realized = data.trades.reduce((a, t) => a + (t.realized_pl ?? 0), 0);
+  const byId = new Map(data.trades.map((t) => [String(t.id), t]));
 
   return (
     <div className="activity">
       {error ? <div className="banner warn">{error}</div> : null}
-      <div className="sim-summary">
-        <span className="badge sim">SIMULATED ACCOUNT</span>
-        <span>
-          <span className="lbl">Net liq</span> {money(data.net_liq)}
-        </span>
-        <span>
-          <span className="lbl">Cash</span> {money(data.cash)}
-        </span>
-        <span>
-          <span className="lbl">Since start</span>{" "}
-          <span className={tone(data.net_liq === null ? null : data.net_liq - data.start_cash)}>
-            {data.net_liq === null ? "–" : signed(data.net_liq - data.start_cash)}
+      {live ? (
+        <div className="sim-summary">
+          <span className="badge live">SCHWAB ACCOUNT</span>
+          <span>
+            <span className="lbl">History synced</span> {data.synced_at ? when(data.synced_at) : "not yet"}
           </span>
-        </span>
-        <span>
-          <span className="lbl">Realized</span> <span className={tone(realized)}>{signed(realized)}</span>
-        </span>
-        <button type="button" className="link reset" onClick={reset}>
-          Reset simulated account
-        </button>
-      </div>
-
-      <h3>Working orders</h3>
-      {working.length ? (
-        <OrderTable orders={working} onCancel={cancel} />
+          <span>
+            <span className="lbl">Realized</span> <span className={tone(realized)}>{signed(realized)}</span>
+          </span>
+          <span className="dim-text">Built from Schwab's transactions, including trades placed in thinkorswim.</span>
+        </div>
       ) : (
-        <p className="dim-text">None. Place simulated orders from the Trade screen, or close and roll from Positions.</p>
+        <div className="sim-summary">
+          <span className="badge sim">SIMULATED ACCOUNT</span>
+          <span>
+            <span className="lbl">Net liq</span> {money(data.net_liq ?? null)}
+          </span>
+          <span>
+            <span className="lbl">Cash</span> {money(data.cash ?? null)}
+          </span>
+          <span>
+            <span className="lbl">Since start</span>{" "}
+            <span className={tone(data.net_liq == null || data.start_cash == null ? null : data.net_liq - data.start_cash)}>
+              {data.net_liq == null || data.start_cash == null ? "–" : signed(data.net_liq - data.start_cash)}
+            </span>
+          </span>
+          <span>
+            <span className="lbl">Realized</span> <span className={tone(realized)}>{signed(realized)}</span>
+          </span>
+          <button type="button" className="link reset" onClick={reset}>
+            Reset simulated account
+          </button>
+        </div>
       )}
+
+      {live && data.error ? <div className="msg warn">History sync: {data.error}</div> : null}
+      {live && data.mismatches?.length ? (
+        <div className="msg warn">
+          The trade history does not fully explain what Schwab holds now:{" "}
+          {data.mismatches.map((m) => `${legText(m.symbol, m.schwab)} (history says ${signed(m.chains)})`).join("; ")}. It usually settles after the next sync.
+        </div>
+      ) : null}
+      {live && data.proposals?.length ? (
+        <div className="msg">
+          {data.proposals.map((p) => {
+            const c = byId.get(p.chain);
+            return (
+              <div key={p.group} className="proposal">
+                Order {p.group}: {p.reason.toLowerCase()} {c ? `(${c.underlying} ${c.strategy})` : ""}. Was it a roll?{" "}
+                <button type="button" className="small" onClick={() => link(p.group, p.chain)}>
+                  Link as a roll
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {!live ? (
+        <>
+          <h3>Working orders</h3>
+          {working.length ? (
+            <OrderTable orders={working} onCancel={cancel} />
+          ) : (
+            <p className="dim-text">None. Place simulated orders from the Trade screen, or close and roll from Positions.</p>
+          )}
+        </>
+      ) : null}
 
       <h3>Trades</h3>
       {data.trades.length ? (
@@ -110,7 +152,7 @@ export default function Activity() {
                 <th>Opened</th>
                 <th>Closed</th>
                 <th>Rolls</th>
-                <th>Net opened</th>
+                <th>Net so far</th>
                 <th>Realized P/L</th>
                 <th className="l">Status</th>
               </tr>
@@ -118,14 +160,17 @@ export default function Activity() {
             <tbody>
               {data.trades.map((t) => (
                 <TradeRows
-                  key={t.id}
+                  key={String(t.id)}
                   t={t}
-                  open={open.has(t.id)}
+                  account={account}
+                  onChanged={load}
+                  open={open.has(String(t.id))}
                   toggle={() =>
                     setOpen((s) => {
                       const n = new Set(s);
-                      if (n.has(t.id)) n.delete(t.id);
-                      else n.add(t.id);
+                      const k = String(t.id);
+                      if (n.has(k)) n.delete(k);
+                      else n.add(k);
                       return n;
                     })
                   }
@@ -135,7 +180,7 @@ export default function Activity() {
           </table>
         </div>
       ) : (
-        <p className="dim-text">No trades yet.</p>
+        <p className="dim-text">{live ? "No trades found in the Schwab history yet." : "No trades yet."}</p>
       )}
 
       <h3>Results by strategy</h3>
@@ -172,8 +217,12 @@ export default function Activity() {
         <p className="dim-text">Statistics appear once trades are closed.</p>
       )}
 
-      <h3>Order history</h3>
-      {done.length ? <OrderTable orders={done} /> : <p className="dim-text">No orders yet.</p>}
+      {!live ? (
+        <>
+          <h3>Order history</h3>
+          {done.length ? <OrderTable orders={done} /> : <p className="dim-text">No orders yet.</p>}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -233,8 +282,9 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
   );
 }
 
-function TradeRows({ t, open, toggle }: { t: SimTrade; open: boolean; toggle: () => void }) {
-  const opened = t.events.filter((e) => ["open", "roll", "adjust"].includes(e.kind)).reduce((a, e) => a + e.net, 0);
+function TradeRows(props: { t: SimTrade; account: "live" | "sim"; open: boolean; toggle: () => void; onChanged: () => void }) {
+  const { t, open, toggle } = props;
+  const sum = chainSummary(t);
   return (
     <>
       <tr className="strat" onClick={toggle} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && toggle()} aria-expanded={open}>
@@ -242,35 +292,27 @@ function TradeRows({ t, open, toggle }: { t: SimTrade; open: boolean; toggle: ()
           <span className="caret">{open ? "▾" : "▸"}</span>
           <span className="sym-inline">{t.underlying}</span>
           {t.strategy}
+          {t.carried_in ? (
+            <span className="sub" title="Held before the transaction history starts">
+              {" "}
+              carried in
+            </span>
+          ) : null}
         </td>
-        <td>{when(t.opened_at)}</td>
+        <td>{t.carried_in ? `before ${when(t.opened_at)}` : when(t.opened_at)}</td>
         <td>{when(t.closed_at)}</td>
-        <td>{t.events.filter((e) => e.kind === "roll").length}</td>
-        <td>{signed(opened)}</td>
+        <td>{sum.rolls}</td>
+        <td className={tone(sum.net)}>{signed(sum.net)}</td>
         <td className={tone(t.realized_pl)}>{t.realized_pl === null ? "–" : signed(t.realized_pl)}</td>
         <td className="l">{t.status}</td>
       </tr>
-      {open
-        ? t.events.map((e, i) => (
-            <tr className="leg" key={i}>
-              <td className="l">
-                {e.kind}
-                {e.order_id ? <span className="sub"> #{e.order_id}</span> : null}
-              </td>
-              <td>{when(e.at)}</td>
-              <td colSpan={2} className="l legs-cell">
-                {e.legs.map((l) => (
-                  <div key={l.symbol + l.quantity}>
-                    {legText(l.symbol, l.quantity)} @ {l.price.toFixed(2)}
-                  </div>
-                ))}
-              </td>
-              <td className={tone(e.net)}>{signed(e.net)}</td>
-              <td className="sub">fees {money(e.commission, 2)}</td>
-              <td />
-            </tr>
-          ))
-        : null}
+      {open ? (
+        <tr className="leg">
+          <td colSpan={7} className="l">
+            <ChainTimeline chain={t} account={props.account} onChanged={props.onChanged} />
+          </td>
+        </tr>
+      ) : null}
     </>
   );
 }

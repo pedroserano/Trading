@@ -27,14 +27,14 @@ button { font: inherit; color: inherit; }
 /* Header */
 header.top {
   position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap;
   padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: baseline; gap: 8px; }
 .acct { color: var(--dim); font-size: 13px; }
 .badge { font-size: 11px; font-weight: 600; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; }
 .badge.demo { background: var(--warn); color: #000; }
-.stats { display: flex; gap: 20px; flex-wrap: wrap; flex: 1; }
+.stats { display: flex; gap: 8px 16px; flex-wrap: wrap; flex: 1; }
 .stat-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
 .stat-value { font-size: 15px; font-weight: 500; white-space: nowrap; }
 .sub { color: var(--dim); font-weight: 400; font-size: 12px; }
@@ -283,3 +283,27 @@ td.legs-cell { font-size: 12px; line-height: 1.5; }
 td.status.filled { color: var(--ok); }
 td.status.working { color: var(--accent); }
 td.status.canceled, td.status.expired { color: var(--dim); }
+
+/* Trade chain timeline */
+.ticket.history { max-width: 760px; }
+ol.timeline { list-style: none; margin: 10px 0 4px; padding: 0 0 0 14px; border-left: 2px solid var(--line); }
+.timeline .ev { position: relative; padding: 4px 0 12px 12px; }
+.timeline .ev::before { content: ""; position: absolute; left: -21px; top: 9px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--dim); border: 2px solid var(--panel); }
+.timeline .ev.open::before, .timeline .ev.carried::before { background: var(--accent); }
+.timeline .ev.roll::before, .timeline .ev.adjust::before { background: #8957e5; }
+.timeline .ev.close::before, .timeline .ev.expire::before, .timeline .ev.settle::before { background: var(--ok); }
+.timeline .ev.assign::before, .timeline .ev.exercise::before { background: var(--warn); }
+.ev-head { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.ev-kind { font-weight: 600; min-width: 80px; }
+.ev-run { margin-left: auto; color: var(--dim); font-size: 13px; }
+.ev-legs { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: #c9d1d9; margin-top: 2px; }
+.ev-note { font-size: 12px; color: var(--dim); margin-top: 4px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.activity td .timeline { margin: 4px 0 0 18px; }
+.proposal { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 2px 0; }
+.msg:not(.bad):not(.warn):not(.ok) { border-color: var(--line); }
+
+@media (max-width: 1500px) {
+  .acct { display: none; }
+  .tabs a { padding: 4px 8px; }
+}

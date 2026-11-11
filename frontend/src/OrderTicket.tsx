@@ -8,7 +8,7 @@ export interface TicketSpec {
   account: "sim" | "live";
   intent: "open" | "close" | "roll" | "adjust";
   underlying: string;
-  tradeId: number | null;
+  tradeId: number | string | null;
   legs: OrderLeg[];
   /** For rolls: the strategy being rolled, so the new expiration can be chosen. */
   roll?: StrategyView;

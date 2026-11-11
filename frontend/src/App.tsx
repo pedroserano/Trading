@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
+import ChainHistory from "./ChainHistory";
 import OrderTicket, { closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Snapshot, StrategyView, UnderlyingView } from "./types";
@@ -121,9 +122,8 @@ export default function App() {
         </div>
         <Positions s={snapshot} view={view} flaggedOnly={flaggedOnly === "1"} />
         <p className="footnote">
-          Strategies are grouped from Schwab's individual legs; a leg can land in a different
-          group from how it was traded. Credit is the original opening price; rolls are not yet
-          tracked.
+          Positions are grouped by their trade history, including trades placed in thinkorswim;
+          credit includes every roll. Positions with no known history are grouped by their legs.
         </p>
           </>
         ) : null}
@@ -595,6 +595,7 @@ function StrategyRows(props: {
 function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | undefined; cols: number }) {
   const open = useContext(TicketContext);
   const account = useContext(AccountContext);
+  const [history, setHistory] = useState(false);
   if (!under) return null;
   return (
     <tr className="leg actions">
@@ -605,6 +606,12 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
         <button type="button" className="small" onClick={() => open(rollSpec(st, under, account))}>
           Roll
         </button>
+        {st.trade_id !== null ? (
+          <button type="button" className="small" onClick={() => setHistory(true)}>
+            History{st.rolls ? ` · ${st.rolls} roll${st.rolls > 1 ? "s" : ""}` : ""}
+          </button>
+        ) : null}
+        {history && st.trade_id !== null ? <ChainHistory account={account} chainId={st.trade_id} onClose={() => setHistory(false)} /> : null}
         {account === "live" ? <span className="sub"> Preview against Schwab; live orders arrive in phase 4.</span> : null}
       </td>
     </tr>

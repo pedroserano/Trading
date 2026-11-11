@@ -41,5 +41,15 @@ async def test_pgstore_roundtrip():
         assert await store.iv_history("TST", date(2026, 1, 1)) == [(date(2026, 1, 2), 16.0)]
         await store.upsert_beta("TST", 1.2, date(2026, 1, 2))
         assert await store.get_beta("TST") == (1.2, date(2026, 1, 2))
+        t = {
+            "activityId": f"test-{os.getpid()}",
+            "time": "2026-10-01T15:00:00+0000",
+            "type": "TRADE",
+            "transferItems": [],
+        }
+        assert await store.upsert_transactions([t]) == 1
+        assert await store.upsert_transactions([{**t, "netAmount": 1.0}]) == 0
+        mine = [x for x in await store.transactions() if x["activityId"] == t["activityId"]]
+        assert mine[0]["netAmount"] == 1.0
     finally:
         await store.close()

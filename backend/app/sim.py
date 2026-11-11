@@ -480,7 +480,8 @@ def stats(trades: list[dict]) -> list[dict]:
     """Closed-trade statistics by strategy."""
     groups: dict[str, list] = {}
     for tr in trades:
-        if tr["status"] == "closed":
+        # Chains carried in from before the history have no reliable opening price.
+        if tr["status"] == "closed" and not tr.get("carried_in"):
             groups.setdefault(tr["strategy"], []).append(tr)
     out = []
     for name, ts in sorted(groups.items()):

@@ -57,6 +57,7 @@ class PortfolioService:
         extra_symbols=None,
         after_quotes=None,
         trade_info=None,
+        chain_holdings=None,
     ):
         self.source = source
         self.store = store
@@ -73,6 +74,8 @@ class PortfolioService:
         self.extra_symbols = extra_symbols  # async () -> set of symbols to quote
         self.after_quotes = after_quotes  # async (quotes) -> number of fills
         self.trade_info = trade_info  # () -> {trade_id: {strategy, net, rolls}}
+        # () -> {chain_id: {symbol: quantity}}, for accounts whose legs carry no trade id.
+        self.chain_holdings = chain_holdings
         self.stream = None  # StreamService, attached when streaming is available
         self.watchlist: list[str] = []
         self._symbols: set[str] = set()
@@ -322,12 +325,46 @@ class PortfolioService:
                     except Exception as e:
                         log.warning("Flag notification failed: %s", e)
 
-    def _group_by_trade(self) -> dict:
-        """Simulated positions are grouped exactly, by the trade each leg belongs to."""
-        info = self.trade_info()
-        by_trade: dict[int, list[Leg]] = {}
+    def _tagged_legs(self) -> list[Leg]:
+        """Legs labelled with the chain they belong to.
+
+        Simulated legs arrive labelled. Schwab legs are split across chains by the chains'
+        holdings; anything the chains do not account for stays unlabelled.
+        """
+        holdings = self.chain_holdings() if self.chain_holdings else {}
+        out = []
         for leg in self.legs:
-            by_trade.setdefault(leg.extra.get("trade_id"), []).append(leg)
+            if leg.extra.get("trade_id") is not None or not holdings:
+                out.append(leg)
+                continue
+            left = leg.quantity
+            for cid, held in holdings.items():
+                q = held.get(leg.symbol, 0.0)
+                if q * left <= 0:
+                    continue
+                take = q if abs(q) <= abs(left) else left
+                part = leg.with_quantity(take)
+                part.extra["trade_id"] = cid
+                out.append(part)
+                left -= take
+            if abs(left) > 1e-9:
+                out.append(leg.with_quantity(left))
+        return out
+
+    def _group_by_trade(self) -> dict:
+        """Positions grouped exactly, by the trade chain each leg belongs to.
+
+        Legs that belong to no known chain are grouped by their shape instead.
+        """
+        info = self.trade_info()
+        by_trade: dict = {}
+        loose: list[Leg] = []
+        for leg in self._tagged_legs():
+            tid = leg.extra.get("trade_id")
+            if tid is None:
+                loose.append(leg)
+            else:
+                by_trade.setdefault(tid, []).append(leg)
         out: dict[str, list[Strategy]] = {}
         for tid, legs in by_trade.items():
             guess = group(legs)
@@ -343,6 +380,8 @@ class PortfolioService:
                 meta={"trade_id": tid, "rolls": t.get("rolls", 0)},
             )
             out.setdefault(legs[0].underlying, []).append(st)
+        for under, strategies in group_all(loose).items():
+            out.setdefault(under, []).extend(strategies)
         return dict(sorted(out.items()))
 
     def _build_and_publish(self, extras: dict | None = None) -> None:

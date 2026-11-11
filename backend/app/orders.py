@@ -76,7 +76,7 @@ class Ticket:
     intent: str = "open"  # open, close, roll, adjust
     duration: str = "DAY"  # DAY or GTC
     limit_net: float | None = None
-    trade_id: int | None = None
+    trade_id: int | str | None = None
     profit_target: float | None = None  # e.g. 0.5: GTC close at 50% of max profit on fill
     warnings: list[str] = field(default_factory=list)
 

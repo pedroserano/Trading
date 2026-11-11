@@ -17,6 +17,18 @@ class MemoryStore:
         self.notified: set[str] = set()
         self.iv: dict[str, dict[date, float]] = {}
         self.betas: dict[str, tuple[float, date]] = {}
+        self.transactions_raw: dict[str, dict] = {}
+
+    async def upsert_transactions(self, items: list[dict]) -> int:
+        new = 0
+        for t in items:
+            key = str(t.get("activityId"))
+            new += key not in self.transactions_raw
+            self.transactions_raw[key] = t
+        return new
+
+    async def transactions(self) -> list[dict]:
+        return list(self.transactions_raw.values())
 
     async def open(self):
         pass
@@ -147,6 +159,29 @@ class PgStore:
                 " ON CONFLICT (symbol) DO UPDATE SET beta = EXCLUDED.beta, as_of = EXCLUDED.as_of",
                 (symbol, beta, as_of),
             )
+
+    async def upsert_transactions(self, items: list[dict]) -> int:
+        from .chains import _ts
+
+        new = 0
+        async with self._pool.connection() as conn:
+            for t in items:
+                when = datetime.fromtimestamp(_ts(t.get("time") or t.get("tradeDate")), UTC)
+                cur = await conn.execute(
+                    "INSERT INTO schwab_transactions (activity_id, time, raw)"
+                    " VALUES (%s, %s, %s::jsonb)"
+                    " ON CONFLICT (activity_id) DO UPDATE SET raw = EXCLUDED.raw"
+                    " RETURNING (xmax = 0)",
+                    (str(t.get("activityId")), when, json.dumps(t)),
+                )
+                row = await cur.fetchone()
+                new += bool(row and row[0])
+        return new
+
+    async def transactions(self) -> list[dict]:
+        async with self._pool.connection() as conn:
+            cur = await conn.execute("SELECT raw FROM schwab_transactions ORDER BY time")
+            return [r[0] for r in await cur.fetchall()]
 
     async def get_beta(self, symbol: str) -> tuple[float, date] | None:
         async with self._pool.connection() as conn:

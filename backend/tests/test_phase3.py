@@ -393,7 +393,7 @@ def test_api_preview_place_activity_cancel(client):
         "/api/orders", json={**body, "limit_net": pv["limit_net"], "profit_target": 0.5}
     ).json()
     assert filled["status"] == "FILLED"
-    act = client.get("/api/activity").json()
+    act = client.get("/api/activity?account=sim").json()
     assert act["trades"][0]["status"] == "open"
     assert [o["status"] for o in act["orders"]][:2] == ["WORKING", "FILLED"]  # target + open
     # A fat-finger limit is refused.
@@ -419,7 +419,7 @@ def test_api_close_needs_trade_and_reset(client):
     assert client.post("/api/sim/reset", json={"start_cash": 50000, "confirm": "RESET"}).json() == {
         "ok": True
     }
-    assert client.get("/api/activity").json()["cash"] == 50000
+    assert client.get("/api/activity?account=sim").json()["cash"] == 50000
 
 
 @pytest.mark.anyio

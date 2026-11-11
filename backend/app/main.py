@@ -25,6 +25,7 @@ from . import chain as chain_mod
 from . import guards
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
+from .chain_service import ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .jobs import DailyJobs
@@ -85,11 +86,20 @@ class OrderLegIn(BaseModel):
 class OrderIn(BaseModel):
     account: Literal["sim", "live"] = "sim"
     intent: Literal["open", "close", "roll", "adjust"] = "open"
-    trade_id: int | None = None
+    trade_id: int | str | None = None
     legs: list[OrderLegIn] = Field(min_length=1, max_length=8)
     limit_net: float | None = None
     duration: Literal["DAY", "GTC"] = "DAY"
     profit_target: float | None = Field(None, ge=0.05, le=0.95)
+
+
+class LinkIn(BaseModel):
+    group: str = Field(max_length=64)
+    chain: str = Field(max_length=80)
+
+
+class SplitIn(BaseModel):
+    group: str = Field(max_length=64)
 
 
 class ResetIn(BaseModel):
@@ -256,6 +266,16 @@ def create_app(
             schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
         )
         portfolio.stream = stream
+    chain_service = ChainService(source, store, portfolio, selector)
+    portfolio.trade_info = chain_service.trade_info
+    portfolio.chain_holdings = chain_service.holdings
+    if stream is not None:
+
+        def on_activity():
+            portfolio.refresh_soon()
+            chain_service.refresh_soon()
+
+        stream.on_account_activity = on_activity
     broker = SimBroker(
         store, start_cash=settings.sim_start_cash, commission=settings.sim_commission
     )
@@ -308,6 +328,7 @@ def create_app(
                 "publisher": portfolio.publisher,
                 "watchlist": watchlist.run,
                 "simulated account": sim_portfolio.run,
+                "trade chains": chain_service.run,
                 "simulated publisher": sim_portfolio.publisher,
             }
             if stream is not None:
@@ -801,8 +822,64 @@ def create_app(
         sim_portfolio.refresh_soon()
         return order
 
+    def sim_chains(st: dict) -> list[dict]:
+        held: dict[int, dict[str, int]] = {}
+        for p in st["positions"]:
+            held.setdefault(p["trade_id"], {})[p["symbol"]] = p["quantity"]
+        return [
+            {**tr, "carried_in": False, "holdings": held.get(tr["id"], {})} for tr in st["trades"]
+        ]
+
+    @app.get("/api/chains", dependencies=[Depends(require_login)])
+    async def api_chains(account: Literal["live", "sim"] = "live"):
+        if account == "sim":
+            return {
+                "chains": sim_chains(await broker.snapshot()),
+                "proposals": [],
+                "mismatches": [],
+                "unmatched": [],
+                "synced_at": None,
+                "error": None,
+            }
+        return {
+            **chain_service.result,
+            "synced_at": chain_service.synced_at,
+            "error": chain_service.error,
+        }
+
+    @app.post("/api/chains/link", dependencies=[Depends(require_login)])
+    async def api_chain_link(body: LinkIn):
+        try:
+            await chain_service.link(body.group, body.chain)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        portfolio.refresh_soon()
+        return {"ok": True}
+
+    @app.post("/api/chains/split", dependencies=[Depends(require_login)])
+    async def api_chain_split(body: SplitIn):
+        await chain_service.split(body.group)
+        portfolio.refresh_soon()
+        return {"ok": True}
+
     @app.get("/api/activity", dependencies=[Depends(require_login)])
-    async def api_activity():
+    async def api_activity(account: Literal["live", "sim"] = "live"):
+        if account == "live":
+            chs = chain_service.result["chains"]
+            return {
+                "account": "live",
+                "orders": [],
+                "trades": sorted(
+                    chs,
+                    # Open chains first, then the most recently closed.
+                    key=lambda c: (c["status"] != "open", -(c["closed_at"] or c["opened_at"] or 0)),
+                ),
+                "stats": stats(chs),
+                "proposals": chain_service.result["proposals"],
+                "mismatches": chain_service.result["mismatches"],
+                "synced_at": chain_service.synced_at,
+                "error": chain_service.error,
+            }
         st = await broker.snapshot()
         acct = (sim_portfolio.snapshot or {}).get("account") or {}
         return {
@@ -811,7 +888,7 @@ def create_app(
             "start_cash": st["start_cash"],
             "net_liq": acct.get("net_liq"),
             "orders": sorted(st["orders"], key=lambda o: -o["id"])[:300],
-            "trades": sorted(st["trades"], key=lambda tr: -tr["id"])[:300],
+            "trades": sorted(sim_chains(st), key=lambda tr: -tr["id"])[:300],
             "stats": stats(st["trades"]),
         }
 
