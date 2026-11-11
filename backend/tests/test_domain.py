@@ -323,3 +323,23 @@ def test_day_pl_from_yesterdays_close_and_todays_fills():
     assert day_pl(short_put(-1, 4.00, 2.60, prev=-1)) is None
     # Schwab did not say what was held: treated as all held overnight.
     assert day_pl(short_put(-1, 4.00, 2.60, close=3.00)) == pytest.approx(40)
+
+
+def test_bp_for_ratios_and_covered_calls():
+    from app.analysis import TradeLeg, bp_estimate
+
+    exp = date(2026, 12, 18)
+    front = [TradeLeg("P", 575, exp, 1, 5.93), TradeLeg("P", 555, exp, -2, 3.10)]
+    # The long put covers one short (a debit spread, nothing more at risk); the other is naked:
+    # 20% of 590 less 35 out of the money (83) plus its 3.10 premium, and the long's cost.
+    assert bp_estimate(front, 590, -53_473) == pytest.approx((118 - 35 + 3.10) * 100 + 593)
+    call = [TradeLeg("C", 240, exp, -1, 3.15)]
+    assert bp_estimate(call, 230, float("-inf"), held_shares=100) == 0
+    assert bp_estimate(call, 230, float("-inf")) == pytest.approx((46 - 10 + 3.15) * 100)
+    condor = [
+        TradeLeg("P", 550, exp, 1, 1.0),
+        TradeLeg("P", 555, exp, -1, 1.5),
+        TradeLeg("C", 620, exp, -1, 1.5),
+        TradeLeg("C", 625, exp, 1, 1.0),
+    ]
+    assert bp_estimate(condor, 590, -400.0) == 400.0  # defined risk: the max loss

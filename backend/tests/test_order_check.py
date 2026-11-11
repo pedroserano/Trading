@@ -395,3 +395,31 @@ def test_every_thinkorswim_order_type(legs, expected):
         limit_net=1.0,
     )
     assert complex_type(t) == expected
+
+
+def test_ratio_spreads_from_the_trade_screen_are_named_and_built():
+    from app.orders import strategy_name
+
+    front = Ticket(
+        legs=[
+            TicketLeg.parse(option_symbol("SPY", EXP, "P", 580), 1, "open"),
+            TicketLeg.parse(option_symbol("SPY", EXP, "P", 560), -2, "open"),
+        ],
+        intent="open",
+        duration="DAY",
+        limit_net=0.5,
+    )
+    assert strategy_name(front) == "Put ratio 1×2"
+    body = schwab_order(front)
+    assert body["complexOrderStrategyType"] == "BACK_RATIO" and body["orderType"] == "NET_CREDIT"
+    assert [x["quantity"] for x in body["orderLegCollection"]] == [1, 2]
+    calls = Ticket(
+        legs=[
+            TicketLeg.parse(option_symbol("SPY", EXP, "C", 600), 1, "open"),
+            TicketLeg.parse(option_symbol("SPY", EXP, "C", 615), -2, "open"),
+        ],
+        intent="open",
+        duration="DAY",
+        limit_net=0.2,
+    )
+    assert strategy_name(calls) == "Call ratio 1×2"

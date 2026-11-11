@@ -196,6 +196,8 @@ class AnalyzeIn(BaseModel):
     spot: float = Field(gt=0)
     vol: float | None = None
     legs: list[LegIn] = Field(min_length=1, max_length=8)
+    # Shares already held that short calls are written against (a covered call).
+    held_shares: int = Field(0, ge=0, le=1_000_000)
 
 
 def _check_symbol(symbol: str) -> str:
@@ -906,7 +908,7 @@ def create_app(
             if leg.expiration and leg.expiration > today + timedelta(days=1200):
                 raise HTTPException(status_code=400, detail="Expiration too far out")
         try:
-            result = analyze(legs, body.spot, today, body.vol)
+            result = analyze(legs, body.spot, today, body.vol, held_shares=body.held_shares)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         snap = portfolio.snapshot or {}

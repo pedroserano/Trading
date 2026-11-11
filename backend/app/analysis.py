@@ -61,6 +61,7 @@ def analyze(
     today: date,
     vol: float | None = None,
     points: int = 121,
+    held_shares: float = 0,
 ) -> dict:
     """Numbers for the trade as a whole. vol is the ATM IV in percent for probabilities."""
     if not legs or spot <= 0:
@@ -164,38 +165,63 @@ def analyze(
         "delta": total("delta"),
         "theta": total("theta"),
         "vega": total("vega"),
-        "bp_estimate": round(bp_estimate(legs, spot, max_loss), 2),
+        "bp_estimate": round(bp_estimate(legs, spot, max_loss, held_shares), 2),
         "bp_exact": not math.isinf(max_loss) and all(leg.put_call for leg in legs),
         "curve": {"x": [round(x, 2) for x in xs], "expiry": expiry, "today": today_curve},
     }
 
 
-def bp_estimate(legs: list[TradeLeg], spot: float, max_loss: float) -> float:
-    """Buying power effect. Exact for defined-risk option trades (the max loss); for
-    undefined risk, the standard Reg T naked-option estimate. Schwab's own figure comes
-    from the order preview in phase 3."""
-    if not math.isinf(max_loss) and all(leg.put_call for leg in legs):
+def _naked(leg: TradeLeg, spot: float, contracts: float) -> float:
+    """Reg T for a short option: 20% of the price less the amount out of the money, at least
+    10% of the price (calls) or strike (puts), plus the premium."""
+    otm = max(leg.strike - spot, 0) if leg.put_call == "C" else max(spot - leg.strike, 0)
+    floor = 0.10 * (spot if leg.put_call == "C" else leg.strike)
+    return (max(0.20 * spot - otm, floor) + leg.price) * 100 * contracts
+
+
+def bp_estimate(
+    legs: list[TradeLeg], spot: float, max_loss: float, held_shares: float = 0
+) -> float:
+    """Buying power effect. Exact for defined-risk option trades (the max loss); otherwise the
+    Reg T estimate: each short covered by a long of its type is a spread (its width at risk),
+    each uncovered short is naked, and a short call covered by shares already held needs
+    nothing more. Schwab's own figure comes from the order preview."""
+    opts = [leg for leg in legs if leg.put_call]
+    stock = sum(abs(leg.quantity) * spot * 0.5 for leg in legs if leg.put_call is None)
+    longs_paid = sum(leg.price * 100 * leg.quantity for leg in opts if leg.quantity > 0)
+    uncovered: dict[str, list[tuple[TradeLeg, float]]] = {"P": [], "C": []}
+    spreads = 0.0
+    for pc in ("P", "C"):
+        shorts = sorted(
+            (x for x in opts if x.put_call == pc and x.quantity < 0),
+            key=lambda x: -_naked(x, spot, 1),
+        )
+        longs = [[x, x.quantity] for x in opts if x.put_call == pc and x.quantity > 0]
+        cover = held_shares / 100 if pc == "C" else 0.0
+        for leg in shorts:
+            need = abs(leg.quantity)
+            used = min(need, cover)
+            need, cover = need - used, cover - used
+            for lg in longs:
+                if need <= 0:
+                    break
+                take = min(need, lg[1])
+                if take <= 0:
+                    continue
+                lg[1] -= take
+                need -= take
+                width = (leg.strike - lg[0].strike) if pc == "P" else (lg[0].strike - leg.strike)
+                spreads += max(width, 0) * 100 * take
+            if need > 0:
+                uncovered[pc].append((leg, need))
+    if not uncovered["P"] and not uncovered["C"] and not math.isinf(max_loss) and not stock:
         return max(-max_loss, 0.0)
-    shorts = [leg for leg in legs if leg.put_call and leg.quantity < 0]
-
-    def naked(leg):
-        otm = max(leg.strike - spot, 0) if leg.put_call == "C" else max(spot - leg.strike, 0)
-        floor = 0.10 * (spot if leg.put_call == "C" else leg.strike)
-        per = max(0.20 * spot - otm, floor) + leg.price
-        return per * 100 * abs(leg.quantity)
-
-    puts = sum(naked(x) for x in shorts if x.put_call == "P")
-    calls = sum(naked(x) for x in shorts if x.put_call == "C")
+    puts = sum(_naked(x, spot, n) for x, n in uncovered["P"])
+    calls = sum(_naked(x, spot, n) for x, n in uncovered["C"])
     if puts and calls:
         # Strangles: the larger side plus the premium of the other.
-        other = sum(
-            x.price * 100 * abs(x.quantity)
-            for x in shorts
-            if x.put_call == ("C" if puts >= calls else "P")
-        )
+        other = sum(x.price * 100 * n for x, n in uncovered["C" if puts >= calls else "P"])
         req = max(puts, calls) + other
     else:
         req = puts + calls
-    stock = sum(abs(leg.quantity) * spot * 0.5 for leg in legs if leg.put_call is None)
-    longs = sum(leg.price * 100 * leg.quantity for leg in legs if leg.put_call and leg.quantity > 0)
-    return req + stock + longs
+    return req + spreads + stock + longs_paid

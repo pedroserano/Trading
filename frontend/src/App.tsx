@@ -116,7 +116,7 @@ export default function App() {
         {route.page === "activity" ? <Activity /> : null}
         {route.page === "dashboard" ? <Dashboard /> : null}
         {route.page === "settings" ? <Settings section={route.section} /> : null}
-        {route.page === "trade" ? <Trade symbol={route.symbol} /> : null}
+        {route.page === "trade" ? <Trade symbol={route.symbol} shares={sharesHeld(snapshot, route.symbol)} /> : null}
         {route.page === "positions" ? (
           <>
         <MarketStrip />
@@ -152,6 +152,16 @@ export default function App() {
       </AccountContext.Provider>
     </TicketContext.Provider>
   );
+}
+
+/** Shares of a symbol the account holds, from the Positions snapshot. */
+function sharesHeld(s: Snapshot, symbol: string): number {
+  const u = s.underlyings.find((x) => x.symbol === symbol);
+  if (!u) return 0;
+  return u.strategies
+    .flatMap((st) => st.legs)
+    .filter((l) => l.kind === "EQUITY")
+    .reduce((a, l) => a + l.quantity, 0);
 }
 
 function DataLight({ s, link }: { s: Snapshot; link: Link }) {

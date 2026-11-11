@@ -52,7 +52,11 @@ interface Params {
   width: number;
 }
 
-type Builder = { name: string; build: (rows: ChainRow[], exp: string, p: Params, spot: number) => BuildLeg[] | null };
+type Builder = {
+  name: string;
+  title?: string;
+  build: (rows: ChainRow[], exp: string, p: Params, spot: number, shares: number) => BuildLeg[] | null;
+};
 
 const BUILDERS: Builder[] = [
   {
@@ -74,9 +78,20 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Short put",
+    title: "Cash-secured when the account holds the strike's value in cash",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.vertical);
       return sp ? [legFrom(sp.put!, sp, "put", exp, -1)] : null;
+    },
+  },
+  {
+    name: "Covered call",
+    title: "Sells one call at the short delta for every 100 shares this account holds",
+    build: (rows, exp, p, _spot, shares) => {
+      const n = Math.floor(shares / 100);
+      const sc = byDelta(rows, "call", p.vertical);
+      if (n < 1 || !sc) return null;
+      return [legFrom(sc.call!, sc, "call", exp, -n)];
     },
   },
   {
@@ -114,6 +129,26 @@ const BUILDERS: Builder[] = [
     },
   },
   {
+    name: "Put ratio 1×2",
+    title: "Buys one put at the short delta and sells two at the strangle delta (a front ratio)",
+    build: (rows, exp, p) => {
+      const lp = byDelta(rows, "put", p.vertical);
+      const sp = byDelta(rows, "put", p.strangle);
+      if (!lp || !sp || sp.strike >= lp.strike) return null;
+      return [legFrom(lp.put!, lp, "put", exp, 1), legFrom(sp.put!, sp, "put", exp, -2)];
+    },
+  },
+  {
+    name: "Call ratio 1×2",
+    title: "Buys one call at the short delta and sells two at the strangle delta (a front ratio)",
+    build: (rows, exp, p) => {
+      const lc = byDelta(rows, "call", p.vertical);
+      const sc = byDelta(rows, "call", p.strangle);
+      if (!lc || !sc || sc.strike <= lc.strike) return null;
+      return [legFrom(lc.call!, lc, "call", exp, 1), legFrom(sc.call!, sc, "call", exp, -2)];
+    },
+  },
+  {
     name: "Jade lizard",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.vertical);
@@ -129,13 +164,19 @@ const BUILDERS: Builder[] = [
   },
 ];
 
-export default function Trade({ symbol }: { symbol: string }) {
+export default function Trade({ symbol, shares = 0 }: { symbol: string; shares?: number }) {
   const [input, setInput] = useState(symbol);
   const [exps, setExps] = useState<Expiration[]>([]);
   const [exp, setExp] = useState<string | null>(null);
   const [chain, setChain] = useState<Chain | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [legs, setLegs] = useState<BuildLeg[]>([]);
+  // Shares already held that a covered call is written against: in the payoff, not the order.
+  const [covered, setCovered] = useState(0);
+  const coveredNow = legs.length ? covered : 0;
+  useEffect(() => {
+    if (!legs.length) setCovered(0);
+  }, [legs.length]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [anaError, setAnaError] = useState<string | null>(null);
   const [params, setParams] = useState<Params>({ strangle: 0.16, vertical: 0.3, condor: 0.2, width: 5 });
@@ -219,12 +260,35 @@ export default function Trade({ symbol }: { symbol: string }) {
     }
     const t = window.setTimeout(async () => {
       try {
-        const a = await postJson<Analysis>("/api/analyze", {
+        const body = {
           symbol,
           spot: chain.underlying_price,
           vol: chain.atm_iv,
           legs: legs.map(({ symbol: _s, ...l }) => l),
-        });
+          held_shares: coveredNow,
+        };
+        let a = await postJson<Analysis>("/api/analyze", body);
+        if (coveredNow) {
+          // The order is only the calls; the payoff is the covered position, shares at today's
+          // price. Cost, buying power and the portfolio after stay the order's own.
+          const held = await postJson<Analysis>("/api/analyze", {
+            ...body,
+            legs: [
+              ...body.legs,
+              { put_call: null, strike: null, expiration: null, quantity: coveredNow, price: chain.underlying_price },
+            ],
+          });
+          a = {
+            ...a,
+            curve: held.curve,
+            max_profit: held.max_profit,
+            max_loss: held.max_loss,
+            unlimited_profit: held.unlimited_profit,
+            unlimited_loss: held.unlimited_loss,
+            breakevens: held.breakevens,
+            pop: held.pop,
+          };
+        }
         setAnalysis(a);
         setAnaError(null);
       } catch (e) {
@@ -232,7 +296,7 @@ export default function Trade({ symbol }: { symbol: string }) {
       }
     }, 250);
     return () => window.clearTimeout(t);
-  }, [legs, chain?.underlying_price, chain?.atm_iv, symbol]);
+  }, [legs, coveredNow, chain?.underlying_price, chain?.atm_iv, symbol]);
 
   // Tapping a price selects that contract; tapping it again deselects it. Tapping the other
   // side of a selected contract switches it between buy and sell. Quantity is set in the leg list.
@@ -392,12 +456,20 @@ export default function Trade({ symbol }: { symbol: string }) {
               <button
                 key={b.name}
                 type="button"
+                title={b.title}
                 disabled={!chain || !exp || spot === null}
                 onClick={() => {
                   if (!chain || !exp || spot === null) return;
-                  const built = b.build(chain.rows, exp, params, spot);
-                  if (built) setLegs(built);
-                  else setAnaError(`Not enough strikes in this chain for a ${b.name.toLowerCase()}.`);
+                  const built = b.build(chain.rows, exp, params, spot, shares);
+                  if (built) {
+                    setLegs(built);
+                    setCovered(b.name === "Covered call" ? Math.abs(built[0].quantity) * 100 : 0);
+                    setAnaError(null);
+                  } else if (b.name === "Covered call") {
+                    setAnaError(
+                      `A covered call needs 100 shares of ${symbol} per contract; this account holds ${shares}.`,
+                    );
+                  } else setAnaError(`Not enough strikes in this chain for a ${b.name.toLowerCase()}.`);
                 }}
               >
                 {b.name}
@@ -447,6 +519,16 @@ export default function Trade({ symbol }: { symbol: string }) {
                     </td>
                   </tr>
                 ))}
+                {coveredNow ? (
+                  <tr>
+                    <td className="qty">
+                      <span className={tone(coveredNow)}>+{coveredNow}</span>
+                    </td>
+                    <td className="l" colSpan={4}>
+                      shares held <span className="sub">(in the payoff, not in the order)</span>
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           ) : (

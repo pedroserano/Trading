@@ -156,7 +156,18 @@ def strategy_name(t: Ticket) -> str:
         for x in t.legs
     ]
     found = group(legs)
-    return found[0].name if len(found) == 1 else "Custom"
+    if len(found) == 1:
+        return found[0].name
+    if (
+        len(t.legs) == 2
+        and _vertical(*t.legs)
+        and abs(t.legs[0].quantity) != abs(t.legs[1].quantity)
+    ):
+        kind = "Put" if t.legs[0].put_call == "P" else "Call"
+        sold = sum(-x.quantity for x in t.legs if x.quantity < 0)
+        bought = sum(x.quantity for x in t.legs if x.quantity > 0)
+        return f"{kind} ratio {min(sold, bought)}×{max(sold, bought)}"
+    return "Custom"
 
 
 def _vertical(a: TicketLeg, b: TicketLeg) -> bool:
