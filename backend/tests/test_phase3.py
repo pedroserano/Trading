@@ -222,7 +222,7 @@ async def test_sim_open_fill_profit_target_and_close():
     order = await b.place(t, QUOTES)  # mid 5.80: fills at once
     assert order["status"] == "FILLED"
     st = await b.snapshot()
-    assert st["cash"] == pytest.approx(10_000 + 580 - 1.30)
+    assert st["cash"] == pytest.approx(10_000 + 580 - 0.90)  # 2 contracts at 0.45
     trade = st["trades"][0]
     assert trade["status"] == "open" and trade["strategy"] == "Strangle"
     assert {p["symbol"]: p["quantity"] for p in st["positions"]} == {
@@ -239,7 +239,7 @@ async def test_sim_open_fill_profit_target_and_close():
     assert await b.on_quotes(cheaper) == 1
     st = await b.snapshot()
     assert st["positions"] == [] and st["trades"][0]["status"] == "closed"
-    assert st["trades"][0]["realized_pl"] == pytest.approx(580 - 290 - 2.60)
+    assert st["trades"][0]["realized_pl"] == pytest.approx(580 - 290 - 1.80)
     assert stats(st["trades"])[0]["win_rate"] == 1.0
     # Saved to the store, so it survives a restart.
     again = SimBroker(store, 1, clock=clock())
@@ -299,7 +299,7 @@ async def test_sim_settles_expired_options_at_intrinsic():
     assert trade["status"] == "closed"
     kinds = sorted(e["kind"] for e in trade["events"])
     assert kinds == ["expire", "open", "settle"]
-    assert trade["realized_pl"] == pytest.approx(580 - 500 - 1.30)
+    assert trade["realized_pl"] == pytest.approx(580 - 500 - 0.90)
 
 
 @pytest.mark.anyio
@@ -312,7 +312,7 @@ async def test_sim_account_view_is_schwab_shaped():
     acct = b.account({**QUOTES, sym("P", 575): q(5.9, 6.1), sym("P", 570): q(4.9, 5.1)})
     sa = acct["securitiesAccount"]
     assert sa["currentBalances"]["maintenanceRequirement"] == 500  # 5-wide
-    assert sa["currentBalances"]["liquidationValue"] == pytest.approx(10_000 + 100 - 1.3 - 100)
+    assert sa["currentBalances"]["liquidationValue"] == pytest.approx(10_000 + 100 - 0.9 - 100)
     assert {p["tradeId"] for p in sa["positions"]} == {2}
 
 

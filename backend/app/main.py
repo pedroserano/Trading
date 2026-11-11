@@ -47,7 +47,7 @@ from .schwab_service import (
     SchwabNotConnected,
     SchwabService,
 )
-from .sim import COMMISSION, SimBroker, SimDataSource, stats
+from .sim import SimBroker, SimDataSource, stats
 from .store import PgStore
 from .streaming import StreamService
 from .token_store import TokenStore
@@ -256,7 +256,9 @@ def create_app(
             schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
         )
         portfolio.stream = stream
-    broker = SimBroker(store, start_cash=settings.sim_start_cash)
+    broker = SimBroker(
+        store, start_cash=settings.sim_start_cash, commission=settings.sim_commission
+    )
     sim_source = SimDataSource(source, broker)
 
     async def sim_account() -> str:
@@ -761,7 +763,7 @@ def create_app(
             "bp_effect": bp,
             "defined_risk": defined,
             "bp_used_after": after,
-            "commission": round(contracts * COMMISSION, 2),
+            "commission": round(contracts * broker.commission, 2),
             "errors": errors,
             "warnings": warnings,
             "schwab_json": body_json,

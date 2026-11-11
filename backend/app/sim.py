@@ -22,7 +22,7 @@ from .orders import Ticket, TicketLeg, schwab_order, strategy_name
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
-COMMISSION = 0.65  # per contract
+DEFAULT_COMMISSION = 0.45  # per contract; SIM_COMMISSION overrides
 STATE_KEY = "sim_state"
 AUDIT_KEEP = 2000
 
@@ -40,8 +40,15 @@ def _empty(start_cash: float) -> dict:
 
 
 class SimBroker:
-    def __init__(self, store, start_cash: float = 100_000.0, clock=lambda: datetime.now(ET)):
+    def __init__(
+        self,
+        store,
+        start_cash: float = 100_000.0,
+        clock=lambda: datetime.now(ET),
+        commission: float = DEFAULT_COMMISSION,
+    ):
         self.store = store
+        self.commission = commission
         self.start_cash = start_cash
         self.clock = clock
         self.lock = asyncio.Lock()
@@ -215,7 +222,7 @@ class SimBroker:
     def _apply_fill(self, order: dict, fills: list[dict]) -> None:
         st = self.state
         contracts = sum(abs(f["quantity"]) for f in fills)
-        commission = round(contracts * COMMISSION, 2)
+        commission = round(contracts * self.commission, 2)
         net_total = round(sum(-f["quantity"] * f["price"] * 100 for f in fills), 2)
         st["cash"] = round(st["cash"] + net_total - commission, 2)
 

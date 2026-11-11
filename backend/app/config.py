@@ -48,6 +48,8 @@ class Settings(BaseSettings):
 
     # Simulated account.
     sim_start_cash: float = Field(100_000.0, gt=0)
+    # Commission per contract used to track the simulated account.
+    sim_commission: float = Field(0.45, ge=0, le=10)
     # Hard limit on contracts per leg in any one order.
     max_contracts_per_leg: int = Field(10, ge=1, le=500)
 

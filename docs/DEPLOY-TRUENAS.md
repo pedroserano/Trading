@@ -156,6 +156,7 @@ so the container picks them up.
 | `WATCHLIST` | Starting watchlist, e.g. `SPY,QQQ,IWM`. Used only until the watchlist is edited on the Settings page, which also imports thinkorswim exports. |
 | `DEMO_MODE` | `true` shows a simulated account. Leave `false` for real use. |
 | `SIM_START_CASH` | Starting cash of the simulated account. Default 100000. Resetting the simulated account from the Activity page can set a different amount. |
+| `SIM_COMMISSION` | Commission per contract for the simulated account. Default 0.45. |
 | `MAX_CONTRACTS_PER_LEG` | Hard limit on contracts per leg in any order, simulated or live. Default 10. |
 
 ## One-tap Schwab sign-in (optional)

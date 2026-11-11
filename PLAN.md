@@ -10,8 +10,10 @@ trading short premium: find high-IV underlyings, sell around 45 DTE, manage winn
 profit target, manage everything at 21 DTE, and keep portfolio buying power, delta and
 theta inside set bounds.
 
-The app assists and the trader decides. Every order is previewed and confirmed by a
-click. No automated order entry in v1 (see section 9 for what could come later).
+By default the app assists and the trader decides: every order is previewed and confirmed
+by a click. From phase 4, each position can be handed to automanage, and from phase 5 the
+app can also find and open trades itself, both under the same rules and limits, both off
+until switched on, and both proven on the simulated account first (section 11).
 
 ## 2. Constraints found in research
 
@@ -178,6 +180,38 @@ out. That makes it testable and keeps it from ever touching orders directly.
 - **Buying power effect.** For defined risk it is computable (width minus credit). For undefined risk, use Schwab's order preview response as the source of truth before entry, and Schwab's reported maintenance requirement afterwards.
 - **Strategy grouping.** Schwab reports flat legs. Auto-detect strategies from fills that arrive in one order, let the user regroup manually, and persist the grouping. tastytrade's own platform loses custom groups on rolls; ours should carry the group through a roll via `roll_links`.
 
+### Trade chains and roll history
+
+Each position is tracked as a trade chain, the way tastytrade shows a position's roll history:
+one chain from the opening order, through every roll and adjustment, to the final close,
+expiration or assignment.
+
+- **Events.** Each chain records every order that touched it: open, roll, adjust, close,
+  expire, assign. Each event keeps its legs and fill prices, the net credit or debit, and
+  commissions.
+- **Running totals.** The chain shows the net credit taken in so far including all rolls,
+  realized P/L on legs already closed, open P/L on the legs still held, total P/L, days in
+  the trade, and the number of rolls. The Positions screen's credit and % of max profit use
+  the chain's cumulative credit, so a strangle rolled twice for credits shows its true
+  breakeven and profit.
+- **Chain view.** From any position, a History panel shows the timeline: each roll with its
+  date, the strikes and expiration it moved from and to, the credit for that roll, and the
+  running total, ending in the current open legs. Closed chains appear in the journal with the
+  same view and feed the results by strategy.
+- **Simulated account.** Already works this way since phase 3: every simulated order belongs
+  to a chain. Phase 4 adds the History panel.
+- **Schwab account.** Orders placed through the app are attached to their chain when placed.
+  Orders placed elsewhere, such as in thinkorswim, are picked up from Schwab's transaction
+  history (polled every few minutes, and back-filled once as far as Schwab's history goes) and
+  linked by rule: an order that only opens starts a chain; an order that closes legs of a
+  chain and opens new legs on the same underlying is a roll of that chain; expirations and
+  assignments close or convert legs. Shares received by assignment stay in the chain, so a
+  put assignment followed by covered calls reads as one trade. When a link is ambiguous (for
+  example a close and a separate open minutes apart), the app proposes it and a one-click
+  Link or Split corrects it.
+- **Commissions.** Taken from Schwab's transactions for the real account; $0.45 per contract
+  for the simulated account (a setting).
+
 ## 7. User interface
 
 Design principles for an expert user: dense rather than spacious, numbers over prose,
@@ -207,7 +241,7 @@ This app can move real money and holds credentials that can too.
 
 **Order safety**
 - SIM is the default. LIVE requires both an environment variable on the container and a setting in the UI.
-- Every order goes through preview, then an explicit confirmation showing the final legs, price, and max loss.
+- Every manual order goes through preview, then an explicit confirmation showing the final legs, price, and max loss. Automated orders go through the same preview and guards, within the limits in section 11, and each one is notified and logged.
 - Hard guards, rejected server-side: max contracts per order, max buying power effect per order, limit price outside a band around mid, orders while data is stale, market orders on multi-leg strategies, selling to open something that leaves a naked position not selected deliberately.
 - No automatic retries. An order with an unknown outcome blocks further orders on that underlying until reconciled against Schwab.
 - Reconcile positions and working orders against Schwab on startup and every few minutes. Schwab is always the source of truth.
@@ -237,14 +271,132 @@ This app can move real money and holds credentials that can too.
 | 1. Read-only portfolio | Token lifecycle, paste-URL and one-tap sign-in with weekly reminder, accounts and positions, quotes refreshed every 5 seconds and pushed to the browser (Schwab streaming deferred to phase 2, once the REST path is proven on real data), strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
 | 2. Analysis | Schwab streaming for quotes and account activity, chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
 | 3. Simulated trading | Order builder for all listed strategies, preview against Schwab, `SimBroker`, order and roll tickets, journal, roll chains. | Two weeks of simulated trading with builder output checked against orders built by hand in thinkorswim. |
-| 4. Live trading | Guards, audit log, reconciliation, GTC profit-taking orders, cancel and replace. Start with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches. |
+| 4. Live trading and automanage | Live order placement through Schwab with the phase 3 guards and preview, audit log table, reconciliation, cancel and replace, GTC profit targets resting at Schwab. Trade chains for the Schwab account from transaction history, and the History panel. Then per-position automanage (section 11), first on the simulated account, then live. Start live with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches, and every roll from that month shown correctly in its chain. Automanage: two weeks on the simulated account with every action reviewed, then two weeks live in Notify and Propose modes before any Auto. |
 | 4a. SPY-only first year | LIVE mode restricted to SPY by an allowlist setting, one-lot default and a low per-order buying power cap. Other underlyings stay available in SIM. | A year of SPY trading reviewed in the journal before the allowlist is widened. |
-| 5. Refinement | Portfolio screen, performance stats, mobile layout, earnings data, optional one-click "manage at 21 DTE" batch tickets. | Ongoing. |
+| 5. Opportunity scanner and automated opening | Scanner over the watchlist using the entry rules, ranked trade ideas, then Propose and Auto modes for opening trades (section 11), simulated account first. | A month of the scanner in Ideas mode on the simulated account, compared with what you would have chosen; then a month of Auto on the simulated account inside all limits, before Auto is allowed on the Schwab account. |
+| 6. Refinement | Portfolio screen, mobile layout, earnings data (needs a source other than Schwab), more strategy builders. | Ongoing. |
 
-Automation beyond one-click tickets (for example auto-closing at 50%) is deliberately left
-out. A resting GTC limit order at Schwab does that job without the app needing to be running.
+## 11. Automation
 
-## 11. Open questions
+Automation reuses everything built for manual trading: the rules engine decides what is due,
+the same ticket code builds the order, the same guards and Schwab preview check it, and the
+same journal records it. The automation layer only decides when to act and how far to chase
+a price. Nothing is automated that could not also be done by hand from a ticket.
+
+### Levels
+
+Every automated behaviour has four levels, chosen per rule:
+
+| Level | What happens |
+|---|---|
+| Off | Nothing. |
+| Notify | A Pushover notification and a flag on the position. |
+| Propose | A ready ticket waits on the position and in a Pending list; the notification opens it. Placing it is one tap. |
+| Auto | The app places the order itself, notifies you, and logs why. |
+
+An optional grace period sits between Propose and Auto: the app notifies you that it will
+place the order in, say, 10 minutes unless you cancel, then places it.
+
+### Phase 4: automanage per position
+
+Each open position (each trade chain) gets an Automanage switch, off by default. Turning it on
+shows the plan the app will follow for that position under the current rules, for example:
+
+- Profit target: a GTC limit to close at 50% of max profit, resting at Schwab.
+- At 21 DTE: roll to the monthly nearest 45 DTE at the same strikes if that is a credit; if
+  not, close.
+- Tested (short strike at 30 delta or in the money): notify.
+- Loss at 2x credit received: notify.
+
+Each line can be changed for that position, so one strangle can be fully automatic while
+another only notifies. Defaults are set on the Settings page.
+
+Default levels and actions, all editable:
+
+| Rule | Default level | Action |
+|---|---|---|
+| Profit target (50%, 25% for straddles and iron flies) | Auto | GTC limit close at Schwab, placed right after the opening fill and re-placed after every roll at the new cumulative credit. Lives at the broker, so it works even when the app is down. |
+| 21 DTE, undefined risk | Propose | Roll out to the monthly nearest 45 DTE at the same strikes for a net credit; close if no credit is available or the chain has already been rolled 3 times. |
+| 21 DTE, defined risk | Propose | Close. Rolling for a credit is an option. |
+| Tested short strike | Notify | For strangles, a proposed roll of the untested side toward 30 delta, same expiration, for a credit. |
+| Loss at 2x credit (undefined risk) | Notify | Proposed close. |
+| Expiration day with an in-the-money short | Propose | Close before 15:30 ET to avoid assignment. |
+
+How an automatic order is worked:
+
+- **Timing.** Only between 09:45 and 15:30 ET on full trading days, never in the first or last
+  15 minutes, and not after 12:30 on early-close days.
+- **Liquidity.** Skipped and retried later if the bid-ask spread of the order is wider than a
+  set share of its mid.
+- **Price.** Limit orders only. Start at mid; every few minutes move one cent toward natural,
+  up to a maximum concession (default 25% of the distance from mid to natural); then cancel
+  and notify. Never a market order.
+- **Checks.** Every order passes the same guards and Schwab preview as a manual one. A rejection
+  stops automation for that position and notifies you.
+- **Explanation.** Each automatic action is logged with the rule, the numbers that triggered it,
+  the quotes used and every price change, and appears in the position's History panel.
+
+### Phase 5: opportunity scanner and automated opening
+
+The scanner runs over the watchlist every 15 minutes in the trading window and proposes new
+trades that follow the entry mechanics:
+
+- **Candidate filter.** IV rank at or above 30 (preferring 50 and above). Liquid at the money
+  (spread and open interest thresholds). The monthly expiration nearest 45 DTE, within 30 to 60.
+  No ex-dividend date inside the trade for short calls. Earnings dates need another data
+  source, since Schwab's API does not appear to provide them; until one is added, single
+  stocks are flagged as "earnings unknown".
+- **Strategy choice.** From the strategies you enable, by IV regime: high IV rank, strangles at
+  16 delta or iron condors at 20 delta short strikes; moderate, defined-risk spreads at 30
+  delta collecting about a third of the width; low IV rank, no new short-premium trade. Each
+  needs a minimum credit and probability of profit.
+- **Portfolio fit.** A trade is only proposed if, afterwards, buying power used stays under the
+  VIX-based ceiling, the trade's buying power is within the per-position guide (3% defined,
+  5% undefined), beta-weighted delta moves toward neutral or stays inside a set band, and theta
+  stays within its target band. At most one open chain per underlying and expiration, and new
+  trades are spread across expirations rather than stacked in one.
+- **Ranking.** Candidates are scored on IV rank, credit per dollar of buying power, probability
+  of profit, liquidity and how much they improve the portfolio's delta and theta.
+
+Modes, chosen per account:
+
+- **Ideas.** A ranked list on a Scanner screen; each idea opens a ready ticket.
+- **Propose.** The best idea becomes a pending ticket and a notification.
+- **Auto.** The app opens the trade itself, with automanage switched on for it, so every
+  automatically opened trade is also automatically managed. Together with phase 4, this is
+  full automation within the rules.
+
+Limits for Auto opening, all enforced on the server:
+
+- A master switch per account, off by default. Turning on Auto for the Schwab account also
+  needs an environment variable on the container, like live trading itself.
+- Daily caps: new trades per day, buying power added per day, and automated orders per day.
+- The underlying allowlist (SPY only in the first year).
+- A daily loss limit that pauses all automation for the rest of the day.
+
+### Kill switch and automatic pauses
+
+A Pause automation switch sits in the header for each account. Automation also pauses itself,
+and notifies you, when:
+
+- Data is stale or the stream and REST polling both fail.
+- The Schwab sign-in has less than a day left.
+- Positions or working orders at Schwab do not match what the app expects.
+- An order is rejected or its outcome is unknown.
+- The daily loss limit or any daily cap is reached.
+
+### Validation
+
+Historical option prices are not available from Schwab, so the rules cannot be backtested
+here. They are validated forward instead: every automated behaviour runs on the simulated
+account first, against live prices, and the journal's results by strategy show how the
+mechanics are doing before anything is switched on for real money.
+
+Fully automatic trading of a real account is a decision with real risk. Before enabling Auto
+for the Schwab account, check Schwab's Trader API terms for automated order entry and the
+order throttle set on the app registration.
+
+## 12. Open questions
 
 Decided:
 
@@ -262,7 +414,11 @@ Decided:
 
 Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 complete: running on real Schwab data and checked against thinkorswim. Phase 2 built and deployed; its market-hours check against thinkorswim is pending. Phase 3 built: order tickets (open, close, roll) with Schwab preview, server-side guards, a simulated broker with fills against live quotes, GTC profit targets, expiry settlement, and a trade journal with statistics. Its exit test is two weeks of simulated trading with the order JSON checked against orders built in thinkorswim.
 
-Still open: nothing blocks phase 1. The remaining unknowns are listed at the end of section 2 and are resolved by testing against the live API.
+Still open:
+
+1. Phase 2's market-hours check against thinkorswim, and the phase 3 two-week simulated run.
+2. The order throttle on the Schwab app registration must be above zero before phase 4.
+3. An earnings calendar source for single stocks, before the scanner trades them (phase 5).
 
 ## Sources
 
