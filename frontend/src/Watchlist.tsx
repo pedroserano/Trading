@@ -23,7 +23,7 @@ function RangeBar({ x }: { x: PriceExtreme | null | undefined }) {
   const pos = Math.max(0, Math.min(1, x.range_pos));
   const near = x.reasons.some((r) => r.includes("52-week"));
   return (
-    <span className={`range ${near ? "near" : ""}`} title={`52-week range ${x.low} to ${x.high} (closes)`}>
+    <span className={`range ${near ? "near" : ""}`}>
       <span className="range-track">
         <span className="range-dot" style={{ left: `${pos * 100}%` }} />
       </span>
@@ -157,7 +157,14 @@ export default function Watchlist() {
                     <span className="sub warn-text"> {r.extreme.day_ratio.toFixed(1)}× avg</span>
                   ) : null}
                 </td>
-                <td>
+                <td
+                  title={
+                    r.extreme && r.extreme.high !== null && r.extreme.low !== null
+                      ? `52-week high ${r.extreme.high.toFixed(2)}\n52-week low ${r.extreme.low.toFixed(2)}\n` +
+                        `Now ${r.price === null ? "–" : r.price.toFixed(2)}, ${Math.round((r.extreme.range_pos ?? 0) * 100)}% of the range (closing prices)`
+                      : "52-week range not read yet"
+                  }
+                >
                   <RangeBar x={r.extreme} />
                 </td>
                 <td className={r.extreme?.reasons.some((x) => x.includes("-day move")) ? "warn-text" : ""}>

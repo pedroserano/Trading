@@ -23,6 +23,7 @@ class Rules:
     max_underlying_bp: float = 0.15
     max_index_bp: float = 0.50  # SPY and other broad index ETFs and indexes
     block_over_ceiling: bool = True  # refuse, not just warn, above the VIX-based ceiling
+    margin_type: str = "reg_t"  # or "pm" (portfolio margin): sizing limits halve
 
 
 @dataclass

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from . import analytics
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
+from .preferences import MARGIN_SCALE
 from .schwab_service import SchwabAuthError, SchwabError, SchwabNotConnected
 from .strategies import Rules, Strategy, evaluate, group, group_all
 
@@ -432,7 +433,10 @@ class PortfolioService:
                 "buying_power": _num(bal.get("buyingPower")),
                 "maintenance": maint,
                 "bp_used_pct": (maint / nl) if (maint is not None and nl) else None,
-                "bp_ceiling_pct": analytics.bp_ceiling(vix),
+                "bp_ceiling_pct": analytics.bp_ceiling(
+                    vix, MARGIN_SCALE.get(self.rules.margin_type, 1.0)
+                ),
+                "margin_type": self.rules.margin_type,
             }
         else:
             snap["account"] = None

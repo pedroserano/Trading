@@ -58,7 +58,15 @@ from .orders import (
 )
 from .orders import strategy_name as ticket_strategy
 from .portfolio import BENCH, PortfolioService
-from .preferences import _SYMBOL, RULE_FIELDS, RULE_NOTES, Preferences, parse_symbols
+from .preferences import (
+    _SYMBOL,
+    MARGIN_SCALE,
+    MARGIN_TYPES,
+    RULE_FIELDS,
+    RULE_NOTES,
+    Preferences,
+    parse_symbols,
+)
 from .schwab_service import (
     ConnectionStatus,
     SchwabError,
@@ -355,6 +363,17 @@ def create_app(
         stream.on_quotes = both
     portfolios = {"live": portfolio, "sim": sim_portfolio}
     limits = guards.Limits(max_contracts=settings.max_contracts_per_leg)
+
+    def margin_limits(rules) -> guards.Limits:
+        """The ticket's size guides and hard stop, halved under portfolio margin."""
+        k = MARGIN_SCALE.get(rules.margin_type, 1.0)
+        return guards.Limits(
+            max_contracts=limits.max_contracts,
+            size_warn_defined=limits.size_warn_defined * k,
+            size_warn_undefined=limits.size_warn_undefined * k,
+            size_block=limits.size_block * k,
+        )
+
     watchlist = WatchlistService(source, store, portfolio, preferences)
 
     async def earnings_symbols() -> set[str]:
@@ -538,6 +557,7 @@ def create_app(
                 "rules": await preferences.rules(),
                 "rule_fields": RULE_FIELDS,
                 "rule_notes": RULE_NOTES,
+                "margin_types": MARGIN_TYPES,
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
@@ -711,9 +731,31 @@ def create_app(
     async def rules_save(request: Request):
         form = dict(await request.form())
         try:
-            await preferences.set_rules(form)
+            before = (await preferences.rules()).margin_type
+            rules = await preferences.set_rules(form)
             portfolio.refresh_soon()
+            sim_portfolio.refresh_soon()
             request.session["notice"] = "Rules saved."
+            if rules.margin_type != before:
+                # One trade's buying power: the scanner's and live trading's limits follow.
+                share = 0.05 * MARGIN_SCALE[rules.margin_type]
+                scan = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
+                await store.set_setting(scan_mod.SETTINGS_KEY, {**scan, "max_bp_share": share})
+                live = await live_broker.config()
+                await live_broker.set_config(
+                    {
+                        "enabled": live["enabled"],
+                        "symbols": " ".join(live["symbols"]),
+                        "max_contracts": live["max_contracts"],
+                        "max_bp_share": share * 100,
+                    }
+                )
+                request.session["notice"] = (
+                    f"Margin type set to {MARGIN_TYPES[rules.margin_type]}: buying-power limits "
+                    f"reset to its defaults (one underlying {rules.max_underlying_bp:.1%}, an "
+                    f"index {rules.max_index_bp:.0%}, one trade {share:.1%}, VIX ceiling "
+                    f"{'halved' if rules.margin_type == 'pm' else 'as tastytrade sets it'})."
+                )
         except ValueError as e:
             request.session["flash"] = str(e)
         return RedirectResponse(settings_url("rules"), status_code=303)
@@ -937,7 +979,7 @@ def create_app(
             t,
             p,
             today,
-            limits=limits,
+            limits=margin_limits(rules),
             held=held,
             net_liq=nl,
             bp_effect=bp,

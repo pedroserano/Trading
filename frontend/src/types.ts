@@ -102,6 +102,7 @@ export interface Snapshot {
     maintenance: number | null;
     bp_used_pct: number | null;
     bp_ceiling_pct: number | null;
+    margin_type?: "reg_t" | "pm";
   } | null;
   underlyings: UnderlyingView[];
   totals: {

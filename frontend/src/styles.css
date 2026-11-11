@@ -397,7 +397,7 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .settings-page .rule-input .unit { width: 44px; font-size: 12px; }
 .settings-page .rule-input select, .settings-page .rule-input input[type=time] { padding: 6px 8px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; color-scheme: dark; }
-.settings-page .rule-input select { width: 136px; }
+.settings-page .rule-input select { width: 170px; }
 .settings-page .rule-input input[type=time] { width: 120px; }
 .settings-page .rule-input input[type=time] + .unit { width: auto; }
 

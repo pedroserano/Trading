@@ -21,11 +21,25 @@ RULE_FIELDS = [
     ("max_underlying_bp", "Buying power in one underlying, at most", 0.01, 1.0, "percent"),
     ("max_index_bp", "Buying power in one index underlying, at most", 0.01, 1.0, "percent"),
 ]
+# Portfolio margin asks roughly half Reg T's margin for short premium, so the same share of
+# net liq carries about twice the exposure. tastytrade's guidance is to size smaller under
+# portfolio margin; these defaults halve every buying-power limit to keep the exposure alike.
+MARGIN_TYPES = {"reg_t": "Reg T margin", "pm": "Portfolio margin"}
+MARGIN_SCALE = {"reg_t": 1.0, "pm": 0.5}
+MARGIN_DEFAULTS = {
+    "reg_t": {"max_underlying_bp": 0.15, "max_index_bp": 0.50},
+    "pm": {"max_underlying_bp": 0.075, "max_index_bp": 0.25},
+}
+
 # Shown by the fields that refuse orders, so their effect is plain.
 RULE_NOTES = {
     "max_underlying_bp": "Hard limit: an opening order that would take one underlying's buying "
     "power above this share of net liq is refused, for you, automanage and the scanner.",
     "max_index_bp": "The same limit for SPY, QQQ, IWM, DIA and the SPX, XSP, NDX and RUT indexes.",
+    "margin_type": "Switching resets the buying-power limits to the margin type's defaults: "
+    "under portfolio margin each one is half the Reg T figure (one underlying 7.5%, an index "
+    "25%, one scanner or live trade 2.5%, the VIX ceiling and the ticket's size guides halved), "
+    "because the same buying power carries about twice the exposure. You can adjust them after.",
     "block_over_ceiling": "Hard limit: an opening order that would take total buying power in "
     "use above the ceiling for the current VIX is refused. Unticked, it is only a warning.",
 }
@@ -101,5 +115,11 @@ class Preferences:
             current[name] = int(v) if kind == "int" else v
         current["notify_flags"] = form.get("notify_flags") in ("on", "true", "1", True)
         current["block_over_ceiling"] = form.get("block_over_ceiling") in ("on", "true", "1", True)
+        new_type = form.get("margin_type", current.get("margin_type", "reg_t"))
+        if new_type not in MARGIN_TYPES:
+            raise ValueError("Margin type: Reg T or portfolio margin")
+        if new_type != current.get("margin_type", "reg_t"):
+            current.update(MARGIN_DEFAULTS[new_type])
+        current["margin_type"] = new_type
         await self.store.set_setting("rules", current)
         return Rules(**current)

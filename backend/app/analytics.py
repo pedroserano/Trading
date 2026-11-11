@@ -7,13 +7,14 @@ from datetime import date
 VIX_BP_TIERS = [(15, 0.25), (20, 0.30), (30, 0.35), (40, 0.40), (math.inf, 0.50)]
 
 
-def bp_ceiling(vix: float | None) -> float | None:
+def bp_ceiling(vix: float | None, scale: float = 1.0) -> float | None:
+    """tastytrade's buying-power ceiling for the VIX level; scale 0.5 under portfolio margin."""
     if vix is None:
         return None
     for upper, share in VIX_BP_TIERS:
         if vix < upper:
-            return share
-    return VIX_BP_TIERS[-1][1]
+            return round(share * scale, 4)
+    return round(VIX_BP_TIERS[-1][1] * scale, 4)
 
 
 def _valid_vol(v) -> float | None:

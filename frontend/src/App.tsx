@@ -287,7 +287,9 @@ function Header(props: {
         <Stat label="Net liq">{money(a?.net_liq)}</Stat>
         <Stat
           label="BP used"
-          title={`Maintenance requirement as a share of net liq. Ceiling at this VIX: ${pct(ceiling)}`}
+          title={`Maintenance requirement as a share of net liq. Ceiling at this VIX: ${pct(ceiling)}${
+            a?.margin_type === "pm" ? " (portfolio margin: half the Reg T ceiling)" : ""
+          }`}
         >
           <span className={bp !== null && ceiling !== null && bp > ceiling ? "warn-text" : ""}>
             {pct(bp)}

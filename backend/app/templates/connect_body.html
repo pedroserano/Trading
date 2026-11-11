@@ -101,13 +101,22 @@
 <section id="rules">
   <h2>Management rules</h2>
   <form method="post" action="/rules">
+    <div class="rule">
+      <label for="r-margin">Margin type</label>
+      <span class="rule-input">
+        <select id="r-margin" name="margin_type">
+          {% for k, label in margin_types.items() %}<option value="{{ k }}" {% if rules.margin_type == k %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </span>
+    </div>
+    <p class="warn-note">⚠ {{ rule_notes.margin_type }}</p>
     {% for name, label, lo, hi, kind in rule_fields %}
       {% set v = rules[name] %}
       <div class="rule">
         <label for="r-{{ name }}">{{ label }}</label>
         <span class="rule-input">
           <input id="r-{{ name }}" type="number" name="{{ name }}" required
-            {% if kind == "percent" %}value="{{ (v * 100)|round(0)|int }}" step="1" min="{{ (lo*100)|int }}" max="{{ (hi*100)|int }}"
+            {% if kind == "percent" %}value="{{ '%g'|format((v * 100)|round(1)) }}" step="0.5" min="{{ (lo*100)|int }}" max="{{ (hi*100)|int }}"
             {% elif kind == "int" %}value="{{ v }}" step="1" min="{{ lo }}" max="{{ hi }}"
             {% else %}value="{{ v }}" step="0.01" min="{{ lo }}" max="{{ hi }}"{% endif %}>
           <span class="dim unit">{{ "%" if kind == "percent" else ("×" if kind == "multiple" else ("DTE" if kind == "int" else "Δ")) }}</span>

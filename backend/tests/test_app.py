@@ -352,3 +352,29 @@ def test_buying_power_limits_are_settings_with_warnings(settings):
         assert saved["block_over_ceiling"] is False  # unticked on that form
         c.post("/rules", data={"block_over_ceiling": "on"})
         assert store.settings["rules"]["block_over_ceiling"] is True
+
+
+def test_portfolio_margin_halves_the_sizing_defaults(settings):
+    from app.analytics import bp_ceiling
+
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        assert "Portfolio margin" in c.get("/connect").text
+        c.post("/rules", data={"margin_type": "pm", "max_underlying_bp": "15"})
+        r = store.settings["rules"]
+        assert r["margin_type"] == "pm"
+        assert r["max_underlying_bp"] == 0.075 and r["max_index_bp"] == 0.25
+        assert store.settings["scanner_settings"]["max_bp_share"] == 0.025
+        assert store.settings["live_trading"]["max_bp_share"] == pytest.approx(0.025)
+        assert "Portfolio margin" in c.get("/connect").text
+        # Adjusting a limit afterwards keeps the margin type and the new value.
+        c.post("/rules", data={"margin_type": "pm", "max_underlying_bp": "10"})
+        assert store.settings["rules"]["max_underlying_bp"] == 0.10
+        # Back to Reg T: its defaults return.
+        c.post("/rules", data={"margin_type": "reg_t"})
+        assert store.settings["rules"]["max_underlying_bp"] == 0.15
+        assert store.settings["scanner_settings"]["max_bp_share"] == 0.05
+        bad = c.post("/rules", data={"margin_type": "cash"})
+        assert bad.status_code == 303
+    assert bp_ceiling(18) == 0.30 and bp_ceiling(18, 0.5) == 0.15
