@@ -40,9 +40,65 @@
       {% if reminder_error %}<span class="dim">Last error: {{ reminder_error }}</span>{% endif %}
     {% else %}<span class="dot warn"></span>Notifications off: no Pushover keys in the settings file.{% endif %}
   </p>
+  {% if stream %}
+  <p>
+    {% if stream[0] == "live" %}<span class="dot ok"></span>Live streaming connected.
+    {% else %}<span class="dot warn"></span>Live streaming {{ stream[0] }}; prices refresh every few seconds instead.
+      {% if stream[1] %}<span class="dim">{{ stream[1] }}</span>{% endif %}{% endif %}
+  </p>
+  {% endif %}
   {% if pushover %}
   <form method="post" action="/notify/test"><button>Send a test notification</button></form>
   {% endif %}
+</section>
+
+<section id="watchlist">
+  <h2>Watchlist</h2>
+  <p class="dim">IV is recorded every trading day for these symbols, and they appear on the
+     Watchlist screen. Symbols you hold positions in are always recorded too.</p>
+  <p class="chips">
+    {% for sym in watchlist %}
+    <form class="inline chip" method="post" action="/watchlist/remove">
+      <input type="hidden" name="symbol" value="{{ sym }}">{{ sym }}
+      <button class="link" title="Remove {{ sym }}" aria-label="Remove {{ sym }}">×</button>
+    </form>
+    {% else %}<span class="dim">Empty.</span>{% endfor %}
+  </p>
+  <form method="post" action="/watchlist/import" enctype="multipart/form-data">
+    <p><strong>Import from thinkorswim:</strong> in the watchlist's menu choose Export, To file,
+       then choose that CSV file here.</p>
+    <p><input type="file" name="file" accept=".csv,.txt,text/csv,text/plain"></p>
+    <p>Or type or paste symbols, separated by commas or spaces:</p>
+    <p><textarea name="text" rows="2" placeholder="SPY, QQQ, IWM, GLD, TLT"></textarea></p>
+    <p>
+      <label><input type="radio" name="mode" value="add" checked> Add to the list</label>
+      &nbsp;&nbsp;
+      <label><input type="radio" name="mode" value="replace"> Replace the list</label>
+    </p>
+    <p><button class="primary" type="submit">Import</button></p>
+  </form>
+</section>
+
+<section id="rules">
+  <h2>Management rules</h2>
+  <form method="post" action="/rules">
+    {% for name, label, lo, hi, kind in rule_fields %}
+      {% set v = rules[name] %}
+      <div class="rule">
+        <label for="r-{{ name }}">{{ label }}</label>
+        <span class="rule-input">
+          <input id="r-{{ name }}" type="number" name="{{ name }}" required
+            {% if kind == "percent" %}value="{{ (v * 100)|round(0)|int }}" step="1" min="{{ (lo*100)|int }}" max="{{ (hi*100)|int }}"
+            {% elif kind == "int" %}value="{{ v }}" step="1" min="{{ lo }}" max="{{ hi }}"
+            {% else %}value="{{ v }}" step="0.01" min="{{ lo }}" max="{{ hi }}"{% endif %}>
+          <span class="dim unit">{{ "%" if kind == "percent" else ("×" if kind == "multiple" else ("DTE" if kind == "int" else "Δ")) }}</span>
+        </span>
+      </div>
+    {% endfor %}
+    <p><label><input type="checkbox" name="notify_flags" {% if rules.notify_flags %}checked{% endif %}>
+       Send a notification the first time each flag appears on a position</label></p>
+    <p><button class="primary" type="submit">Save rules</button></p>
+  </form>
 </section>
 
 {% if not demo and status.connected %}

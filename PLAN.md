@@ -260,7 +260,7 @@ Decided:
 - No tastytrade account. IV rank comes from Schwab data only.
 - A Schwab developer app already exists. Reuse it rather than recreating it: the key and secret are shown in the app's details in the portal, and a new app waits for approval again.
 
-Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 complete: running on real Schwab data and checked against thinkorswim.
+Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 complete: running on real Schwab data and checked against thinkorswim. Phase 2 built (streaming, watchlist with thinkorswim import, trade screen with payoff analysis, editable rules, flag notifications) and awaiting its exit test on real data.
 
 Still open: nothing blocks phase 1. The remaining unknowns are listed at the end of section 2 and are resolved by testing against the live API.
 

@@ -51,6 +51,8 @@ class PortfolioService:
         mode: str,
         rules: Rules | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(ET),
+        preferences=None,
+        notifier=None,
     ):
         self.source = source
         self.store = store
@@ -60,6 +62,14 @@ class PortfolioService:
         self.mode = mode
         self.rules = rules or Rules()
         self.clock = clock
+        self.preferences = preferences
+        self.notifier = notifier
+        self.stream = None  # StreamService, attached when streaming is available
+        self.watchlist: list[str] = []
+        self._symbols: set[str] = set()
+        self._full_poll_at = 0.0
+        self._extras: dict = {}
+        self._dirty = False
         self._subscribers: set[asyncio.Queue] = set()
         self._wake = asyncio.Event()
 
@@ -92,6 +102,31 @@ class PortfolioService:
                 except asyncio.QueueEmpty:
                     pass
             q.put_nowait(self.snapshot)
+
+    def wanted_symbols(self) -> set[str]:
+        """Everything that needs live quotes; used by the streamer."""
+        return set(self._symbols)
+
+    def on_stream_quotes(self, batch: dict[str, dict]) -> None:
+        for sym, fields in batch.items():
+            entry = self.quotes.setdefault(sym, {})
+            entry.setdefault("quote", {}).update(fields)
+        self.quotes_at = time.time()
+        self._dirty = True
+
+    async def publisher(self) -> None:
+        """Pushes streamed updates to browsers at most once a second."""
+        while True:
+            await asyncio.sleep(1)
+            if self._dirty and self.snapshot:
+                self._dirty = False
+                try:
+                    self._build_and_publish(self._extras)
+                except Exception:
+                    log.exception("Publishing a streamed update failed")
+
+    def streaming(self) -> bool:
+        return self.stream is not None and self.stream.status == "live"
 
     def refresh_soon(self) -> None:
         """Forces a positions refresh on the next loop, e.g. after an account change."""
@@ -129,6 +164,9 @@ class PortfolioService:
 
     async def tick(self) -> None:
         self.needs = None
+        if self.preferences is not None:
+            self.rules = await self.preferences.rules()
+            self.watchlist = await self.preferences.watchlist()
         try:
             account_hash = await self.resolve_account()
             today = self.clock().date()
@@ -149,12 +187,29 @@ class PortfolioService:
                     if (leg := leg_from_schwab_position(p)) is not None
                 ]
                 self.positions_at = time.time()
-            symbols = sorted(
+            symbols = (
                 {leg.symbol for leg in self.legs}
                 | {leg.underlying for leg in self.legs}
                 | {BENCH, VIX}
+                | set(self.watchlist)
             )
-            self.quotes = await self.source.quotes(symbols)
+            self._symbols = symbols
+            now = time.time()
+            full = not self.streaming() or now - self._full_poll_at >= 60
+            if full:
+                poll = sorted(symbols)
+            else:
+                # Streamed symbols are fresh already; poll only the rest (e.g. VIX).
+                poll = sorted(s for s in symbols if not self.stream.fresh(s, now))
+            if poll:
+                fetched = await self.source.quotes(poll)
+                if full:
+                    self.quotes = {k: v for k, v in self.quotes.items() if k in symbols}
+                    self._full_poll_at = now
+                for sym, q in fetched.items():
+                    entry = self.quotes.setdefault(sym, {})
+                    entry.update({k: v for k, v in q.items() if k != "quote"})
+                    entry.setdefault("quote", {}).update(q.get("quote", {}))
             self.quotes_at = time.time()
             await self._refresh_vix_history(today)
             self.error = None
@@ -214,7 +269,35 @@ class PortfolioService:
             b = await self.store.get_beta(u)
             hist = [v for _, v in await self.store.iv_history(u, since)]
             extras[u] = {"beta": 1.0 if u == BENCH else (b[0] if b else None), "iv_hist": hist}
+        self._extras = extras
         self._build_and_publish(extras)
+        await self._notify_flags()
+
+    async def _notify_flags(self) -> None:
+        """One push notification per flag per strategy, the first time it appears."""
+        if self.mode != "live" or not self.rules.notify_flags:
+            return
+        if self.notifier is None or not self.notifier.enabled:
+            return
+        for u in self.snapshot.get("underlyings", []):
+            for st in u["strategies"]:
+                n = st["numbers"]
+                strikes = "/".join(
+                    f"{x['strike']:g}{x['put_call']}" for x in st["legs"] if x["strike"]
+                )
+                ident = f"{u['symbol']}|{st['name']}|{n['expiration']}|{strikes}"
+                for f in st["flags"]:
+                    if f["kind"] == "data":
+                        continue
+                    if not await self.store.mark_notified(f"flag:{ident}:{f['kind']}"):
+                        continue
+                    title = f"{u['symbol']} {st['name']} {n['expiration'] or ''}".strip()
+                    try:
+                        await self.notifier.send(
+                            title, f"{f['detail']}. {strikes}", self.settings.app_url
+                        )
+                    except Exception as e:
+                        log.warning("Flag notification failed: %s", e)
 
     def _build_and_publish(self, extras: dict | None = None) -> None:
         extras = extras or {}
@@ -228,7 +311,12 @@ class PortfolioService:
             "needs": self.needs,
             "error": self.error,
             "session": self._session(),
-            "data": {"quotes_at": self.quotes_at, "positions_at": self.positions_at},
+            "data": {
+                "quotes_at": self.quotes_at,
+                "positions_at": self.positions_at,
+                "source": "stream" if self.streaming() else "poll",
+                "stream_detail": None if self.stream is None else self.stream.detail,
+            },
         }
         vix = self._price(VIX)
         spy = self._price(BENCH)

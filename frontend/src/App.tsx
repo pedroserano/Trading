@@ -2,6 +2,27 @@ import { useEffect, useMemo, useState } from "react";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
+import Trade from "./Trade";
+import Watchlist from "./Watchlist";
+
+type Route = { page: "positions" } | { page: "watchlist" } | { page: "trade"; symbol: string };
+
+function parseRoute(hash: string): Route {
+  const parts = hash.replace(/^#\/?/, "").split("/");
+  if (parts[0] === "watchlist") return { page: "watchlist" };
+  if (parts[0] === "trade") return { page: "trade", symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase() };
+  return { page: "positions" };
+}
+
+function useRoute(): Route {
+  const [route, setRoute] = useState(() => parseRoute(window.location.hash));
+  useEffect(() => {
+    const on = () => setRoute(parseRoute(window.location.hash));
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  return route;
+}
 
 type View = "underlying" | "dte";
 
@@ -46,6 +67,7 @@ function useNow(ms: number) {
 
 export default function App() {
   const { snapshot, link } = useSnapshot();
+  const route = useRoute();
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
   const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
 
@@ -58,9 +80,13 @@ export default function App() {
   }
   return (
     <>
-      <Header s={snapshot} link={link} />
+      <Header s={snapshot} link={link} route={route} />
       <main>
         <Banner s={snapshot} />
+        {route.page === "watchlist" ? <Watchlist /> : null}
+        {route.page === "trade" ? <Trade symbol={route.symbol} /> : null}
+        {route.page === "positions" ? (
+          <>
         <div className="toolbar">
           <div className="seg" role="group" aria-label="Group positions">
             <button aria-pressed={view === "underlying"} onClick={() => setView("underlying")}>
@@ -85,6 +111,8 @@ export default function App() {
           group from how it was traded. Credit is the original opening price; rolls are not yet
           tracked.
         </p>
+          </>
+        ) : null}
       </main>
     </>
   );
@@ -94,7 +122,7 @@ function DataLight({ s, link }: { s: Snapshot; link: Link }) {
   const now = useNow(2000);
   const age = s.data.quotes_at ? now - s.data.quotes_at : Infinity;
   let cls = "ok";
-  let text = "Live";
+  let text = s.data.source === "stream" ? "Streaming" : "Live";
   if (link !== "open") {
     cls = "bad";
     text = "No link to app";
@@ -125,7 +153,22 @@ function Stat(props: { label: string; children: React.ReactNode; title?: string 
   );
 }
 
-function Header({ s, link }: { s: Snapshot; link: Link }) {
+function Nav({ route }: { route: Route }) {
+  const tab = (page: Route["page"], href: string, label: string) => (
+    <a href={href} className={route.page === page ? "active" : ""} aria-current={route.page === page ? "page" : undefined}>
+      {label}
+    </a>
+  );
+  return (
+    <nav className="tabs">
+      {tab("positions", "#/", "Positions")}
+      {tab("watchlist", "#/watchlist", "Watchlist")}
+      {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
+    </nav>
+  );
+}
+
+function Header({ s, link, route }: { s: Snapshot; link: Link; route: Route }) {
   const a = s.account;
   const bp = a?.bp_used_pct ?? null;
   const ceiling = a?.bp_ceiling_pct ?? null;
@@ -144,6 +187,7 @@ function Header({ s, link }: { s: Snapshot; link: Link }) {
             …{a.last4} {a.type ? a.type.toLowerCase() : ""}
           </span>
         ) : null}
+        <Nav route={route} />
       </div>
       <div className="stats">
         <Stat label="Net liq">{money(a?.net_liq)}</Stat>
@@ -333,7 +377,9 @@ function UnderGroup(props: {
     <>
       <tr className="under">
         <td className="l" colSpan={compact ? 2 : 6}>
-          <span className="sym">{u.symbol}</span>
+          <a className="sym" href={`#/trade/${encodeURIComponent(u.symbol)}`} onClick={(e) => e.stopPropagation()}>
+            {u.symbol}
+          </a>
           <span className="px">{num(u.price, 2)}</span>
           <span className={`chg ${tone(u.change_pct)}`}>
             {u.change_pct === null ? "" : `${signed(u.change_pct, 2)}%`}

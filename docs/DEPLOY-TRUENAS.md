@@ -153,7 +153,7 @@ so the container picks them up.
 | `APP_URL` | The address you open the app at, e.g. `https://192.168.4.102`. Used as the link in notifications. |
 | `PUSHOVER_USER_KEY`, `PUSHOVER_APP_TOKEN` | Turn on notifications. The user key is on the Pushover dashboard; the token comes from creating an application there. |
 | `REMINDER_WEEKDAY`, `REMINDER_HOUR` | When the weekly Schwab sign-in reminder goes out, US Eastern. Default Sunday 18:00. |
-| `WATCHLIST` | Underlyings whose IV is recorded daily even with no position, e.g. `SPY,QQQ,IWM`. |
+| `WATCHLIST` | Starting watchlist, e.g. `SPY,QQQ,IWM`. Used only until the watchlist is edited on the Settings page, which also imports thinkorswim exports. |
 | `DEMO_MODE` | `true` shows a simulated account. Leave `false` for real use. |
 
 ## One-tap Schwab sign-in (optional)

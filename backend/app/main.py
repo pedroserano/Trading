@@ -4,9 +4,10 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
+from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -16,14 +17,18 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import chain as chain_mod
 from .accounts import AccountSelector
+from .analysis import TradeLeg, analyze
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .jobs import DailyJobs
 from .notify import PushoverNotifier, ReminderService
-from .portfolio import PortfolioService
+from .portfolio import BENCH, PortfolioService
+from .preferences import _SYMBOL, RULE_FIELDS, Preferences, parse_symbols
 from .schwab_service import (
     ConnectionStatus,
     SchwabError,
@@ -31,7 +36,9 @@ from .schwab_service import (
     SchwabService,
 )
 from .store import PgStore
+from .streaming import StreamService
 from .token_store import TokenStore
+from .watchlist import WatchlistService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -42,6 +49,32 @@ STATIC_DIR = Path(__file__).parent / "static"
 SESSION_MAX_AGE_S = 12 * 3600
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCKOUT_S = 60
+
+
+class LegIn(BaseModel):
+    put_call: str | None = Field(None, pattern="^[PC]$")
+    strike: float | None = None
+    expiration: date | None = None
+    quantity: float
+    price: float = Field(ge=0)
+    iv: float | None = None
+    delta: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+
+
+class AnalyzeIn(BaseModel):
+    symbol: str
+    spot: float = Field(gt=0)
+    vol: float | None = None
+    legs: list[LegIn] = Field(min_length=1, max_length=8)
+
+
+def _check_symbol(symbol: str) -> str:
+    symbol = symbol.upper()
+    if not _SYMBOL.match(symbol):
+        raise HTTPException(status_code=400, detail="Not a valid symbol")
+    return symbol
 
 
 class LoginThrottle:
@@ -112,9 +145,24 @@ def create_app(
             "visible_accounts": selector.visible_count,
         }
 
+    preferences = Preferences(store, settings)
     portfolio = PortfolioService(
-        source, store, settings, connection_json, selector, mode="demo" if demo else "live"
+        source,
+        store,
+        settings,
+        connection_json,
+        selector,
+        mode="demo" if demo else "live",
+        preferences=preferences,
+        notifier=notifier,
     )
+    stream = None
+    if not demo:
+        stream = StreamService(
+            schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
+        )
+        portfolio.stream = stream
+    watchlist = WatchlistService(source, store, portfolio)
     jobs = DailyJobs(source, store, portfolio, settings)
     reminders = ReminderService(notifier, store, connection_status, settings, demo)
 
@@ -129,7 +177,11 @@ def create_app(
                 asyncio.create_task(portfolio.run(), name="portfolio"),
                 asyncio.create_task(jobs.run(), name="jobs"),
                 asyncio.create_task(reminders.run(), name="reminders"),
+                asyncio.create_task(portfolio.publisher(), name="publisher"),
+                asyncio.create_task(watchlist.run(), name="watchlist"),
             ]
+            if stream is not None:
+                tasks.append(asyncio.create_task(stream.run(), name="stream"))
         yield
         for t in tasks:
             t.cancel()
@@ -234,6 +286,10 @@ def create_app(
                     "Sunday",
                 ][settings.reminder_weekday],
                 "reminder_hour": settings.reminder_hour,
+                "watchlist": await preferences.watchlist(),
+                "rules": await preferences.rules(),
+                "rule_fields": RULE_FIELDS,
+                "stream": None if stream is None else (stream.status, stream.detail),
             },
         )
 
@@ -287,6 +343,60 @@ def create_app(
             request.session["flash"] = f"Test notification failed: {e}"
         return RedirectResponse("/connect", status_code=303)
 
+    @app.post("/watchlist/import", dependencies=[Depends(require_login)])
+    async def watchlist_import(
+        request: Request,
+        text: str = Form(""),
+        file: UploadFile | None = File(None),
+        mode: str = Form("replace"),
+    ):
+        content = text
+        if file is not None and file.filename:
+            data = await file.read(512 * 1024)
+            content = data.decode("utf-8-sig", errors="replace")
+        symbols, skipped = parse_symbols(content)
+        if not symbols:
+            request.session["flash"] = "No symbols found in that file or text."
+            return RedirectResponse("/connect#watchlist", status_code=303)
+        unknown = []
+        try:
+            quotes = await source.quotes(symbols)
+            unknown = [s for s in symbols if s not in quotes]
+            symbols = [s for s in symbols if s in quotes]
+        except SchwabError:
+            pass  # Not connected: accept as given; bad symbols just show no data.
+        current = await preferences.watchlist()
+        merged = (
+            symbols if mode == "replace" else current + [s for s in symbols if s not in current]
+        )
+        await preferences.set_watchlist(merged)
+        portfolio.refresh_soon()
+        msg = f"Watchlist now has {len(merged)} symbols."
+        if skipped:
+            msg += f" Skipped (not stocks, ETFs or indexes): {', '.join(skipped[:12])}."
+        if unknown:
+            msg += f" Not recognised by Schwab: {', '.join(unknown[:12])}."
+        request.session["notice"] = msg
+        return RedirectResponse("/connect#watchlist", status_code=303)
+
+    @app.post("/watchlist/remove", dependencies=[Depends(require_login)])
+    async def watchlist_remove(request: Request, symbol: str = Form()):
+        current = await preferences.watchlist()
+        await preferences.set_watchlist([s for s in current if s != symbol])
+        portfolio.refresh_soon()
+        return RedirectResponse("/connect#watchlist", status_code=303)
+
+    @app.post("/rules", dependencies=[Depends(require_login)])
+    async def rules_save(request: Request):
+        form = dict(await request.form())
+        try:
+            await preferences.set_rules(form)
+            portfolio.refresh_soon()
+            request.session["notice"] = "Rules saved."
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse("/connect#rules", status_code=303)
+
     # API -------------------------------------------------------------------------------
 
     @app.get("/api/status", dependencies=[Depends(require_login)])
@@ -309,6 +419,97 @@ def create_app(
     @app.get("/api/snapshot", dependencies=[Depends(require_login)])
     async def api_snapshot():
         return JSONResponse(portfolio.snapshot or {"pending": True})
+
+    def _schwab_errors(e: Exception) -> HTTPException:
+        if isinstance(e, SchwabNotConnected):
+            return HTTPException(status_code=409, detail="Schwab is not connected")
+        return HTTPException(status_code=502, detail=str(e))
+
+    @app.get("/api/watchlist", dependencies=[Depends(require_login)])
+    async def api_watchlist():
+        return {"rows": await watchlist.rows()}
+
+    @app.get("/api/trade/{symbol:path}/expirations", dependencies=[Depends(require_login)])
+    async def api_expirations(symbol: str):
+        symbol = _check_symbol(symbol)
+        today = portfolio.clock().date()
+        try:
+            exps = chain_mod.expirations(await source.expirations(symbol), today)
+        except SchwabError as e:
+            raise _schwab_errors(e) from e
+        if not exps:
+            raise HTTPException(status_code=404, detail=f"No options found for {symbol}")
+        return {
+            "symbol": symbol,
+            "expirations": exps,
+            "default": chain_mod.default_expiration(exps),
+        }
+
+    @app.get("/api/trade/{symbol:path}/chain", dependencies=[Depends(require_login)])
+    async def api_chain(symbol: str, expiration: date, strikes: int = 20):
+        symbol = _check_symbol(symbol)
+        strikes = max(4, min(strikes, 60))
+        try:
+            raw = await source.option_chain(symbol, expiration, expiration, strike_count=strikes)
+        except SchwabError as e:
+            raise _schwab_errors(e) from e
+        out = chain_mod.chain_rows(raw or {})
+        out.update({"symbol": symbol, "expiration": expiration.isoformat()})
+        held = next(
+            (u for u in portfolio.snapshot.get("underlyings", []) if u["symbol"] == symbol), None
+        )
+        out["ivr"] = (held or {}).get("ivr")
+        if symbol == BENCH:
+            out["ivr"] = (portfolio.snapshot.get("ivr") or {}).get("SPY")
+        else:
+            wl = next((r for r in await watchlist.rows() if r["symbol"] == symbol), None)
+            out["ivr"] = out["ivr"] or (wl or {}).get("ivr")
+        return out
+
+    @app.post("/api/analyze", dependencies=[Depends(require_login)])
+    async def api_analyze(body: AnalyzeIn):
+        symbol = _check_symbol(body.symbol)
+        today = portfolio.clock().date()
+        legs = [TradeLeg(**leg.model_dump()) for leg in body.legs]
+        for leg in legs:
+            if leg.put_call and (leg.strike is None or leg.expiration is None):
+                raise HTTPException(status_code=400, detail="Option legs need strike and date")
+            if leg.expiration and leg.expiration > today + timedelta(days=1200):
+                raise HTTPException(status_code=400, detail="Expiration too far out")
+        try:
+            result = analyze(legs, body.spot, today, body.vol)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        snap = portfolio.snapshot or {}
+        totals = snap.get("totals") or {}
+        acct = snap.get("account") or {}
+        beta = 1.0 if symbol == BENCH else None
+        if beta is None:
+            b = await store.get_beta(symbol)
+            beta = b[0] if b else None
+        spy = (snap.get("market") or {}).get("spy")
+        after = {
+            "delta_bw": None,
+            "theta": None,
+            "bp_used_pct": None,
+            "bp_ceiling_pct": acct.get("bp_ceiling_pct"),
+        }
+        if (
+            result["delta"] is not None
+            and beta is not None
+            and spy
+            and totals.get("delta_bw") is not None
+        ):
+            after["delta_bw"] = round(
+                totals["delta_bw"] + result["delta"] * beta * body.spot / spy, 1
+            )
+        if result["theta"] is not None and totals.get("theta") is not None:
+            after["theta"] = round(totals["theta"] + result["theta"], 2)
+        if acct.get("net_liq") and acct.get("maintenance") is not None:
+            after["bp_used_pct"] = (acct["maintenance"] + result["bp_estimate"]) / acct["net_liq"]
+        result["portfolio_after"] = after
+        result["beta"] = beta
+        return result
 
     @app.get("/api/events", dependencies=[Depends(require_login)])
     async def api_events(request: Request):

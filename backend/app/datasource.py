@@ -16,7 +16,10 @@ class DataSource(Protocol):
     async def account(self, account_hash: str) -> dict: ...
     async def quotes(self, symbols: list[str]) -> dict: ...
     async def daily_closes(self, symbol: str, days: int) -> list[tuple[date, float]]: ...
-    async def option_chain(self, symbol: str, from_date: date, to_date: date) -> dict: ...
+    async def option_chain(
+        self, symbol: str, from_date: date, to_date: date, strike_count: int = 6
+    ) -> dict: ...
+    async def expirations(self, symbol: str) -> dict: ...
     async def market_open(self, day: date) -> bool | None: ...
 
 
@@ -49,16 +52,21 @@ class SchwabDataSource:
             out.append((d, float(c["close"])))
         return out
 
-    async def option_chain(self, symbol: str, from_date: date, to_date: date) -> dict:
+    async def option_chain(
+        self, symbol: str, from_date: date, to_date: date, strike_count: int = 6
+    ) -> dict:
         c = self.schwab.client()
         return await self.schwab.call(
             "get_option_chain",
             symbol,
             contract_type=c.Options.ContractType.ALL,
-            strike_count=6,
+            strike_count=strike_count,
             from_date=from_date,
             to_date=to_date,
         )
+
+    async def expirations(self, symbol: str) -> dict:
+        return await self.schwab.call("get_option_expiration_chain", symbol)
 
     async def market_open(self, day: date) -> bool | None:
         c = self.schwab.client()
@@ -169,7 +177,7 @@ class DemoDataSource:
 
     def step(self):
         for s in self.prices:
-            beta = _DEMO_UNDERLYINGS[s][2]
+            beta = _DEMO_UNDERLYINGS.get(s, (0, 0, 1.0))[2]
             self.prices[s] *= math.exp(self.rng.gauss(0, 0.0004 * beta))
         self.vix = max(10.0, self.vix * math.exp(self.rng.gauss(0, 0.002)))
 
@@ -212,8 +220,8 @@ class DemoDataSource:
         for sym in symbols:
             if sym == VIX:
                 out[sym] = {"assetMainType": "INDEX", "quote": {"lastPrice": round(self.vix, 2)}}
-            elif sym in self.prices:
-                p = self.prices[sym]
+            elif sym in self.prices or not parse_option_symbol(sym):
+                p = self._price_of(sym)
                 out[sym] = {
                     "assetMainType": "EQUITY",
                     "quote": {
@@ -244,24 +252,68 @@ class DemoDataSource:
         base = self.prices.get(symbol, 100.0)
         return [(d, base * x / out[-1][1]) for d, x in out]
 
-    async def option_chain(self, symbol: str, from_date: date, to_date: date) -> dict:
-        s = self.prices.get(symbol, 100.0)
+    def _price_of(self, symbol: str) -> float:
+        if symbol not in self.prices:
+            # Unknown demo symbols get a stable made-up price.
+            self.prices[symbol] = 50.0 + sum(map(ord, symbol)) % 250
+            self.prev_close[symbol] = self.prices[symbol]
+        return self.prices[symbol]
+
+    def _demo_expirations(self, until: date) -> list[date]:
+        out, d = [], _friday_after(self.today + timedelta(days=1))
+        while d <= until:
+            out.append(d)
+            d += timedelta(days=7)
+        return out
+
+    async def expirations(self, symbol: str) -> dict:
+        self._price_of(symbol)
+        return {
+            "expirationList": [
+                {"expirationDate": d.isoformat(), "daysToExpiration": (d - self.today).days}
+                for d in self._demo_expirations(self.today + timedelta(days=120))
+            ]
+        }
+
+    async def option_chain(
+        self, symbol: str, from_date: date, to_date: date, strike_count: int = 6
+    ) -> dict:
+        s = self._price_of(symbol)
         calls, puts = {}, {}
-        d = _friday_after(from_date)
-        while d <= to_date:
+        step = 5 if s > 200 else (1 if s > 50 else 0.5)
+        atm = round(s / step) * step
+        strikes = [atm + step * i for i in range(-strike_count, strike_count + 1)]
+        for d in self._demo_expirations(to_date):
+            if d < from_date:
+                continue
             days = (d - self.today).days
             key = f"{d.isoformat()}:{days}"
             calls[key], puts[key] = {}, {}
-            step = 5 if s > 200 else 1
-            atm = round(s / step) * step
-            for k in (atm - step, atm, atm + step):
+            for k in strikes:
+                if k <= 0:
+                    continue
                 for pc, m in (("C", calls), ("P", puts)):
-                    vol = self._vol(symbol, k, pc) if symbol in self.prices else 0.3
+                    vol = self._vol(symbol, k, pc) if symbol in _DEMO_UNDERLYINGS else 0.3
+                    g = bs(pc, s, k, days / 365, vol)
+                    spread = max(0.01, round(g["price"] * 0.03, 2))
                     m[key][f"{k:.1f}"] = [
-                        {"volatility": round(vol * 100, 2), "daysToExpiration": days}
+                        {
+                            "symbol": option_symbol(symbol, d, pc, k),
+                            "bid": round(max(g["price"] - spread / 2, 0), 2),
+                            "ask": round(g["price"] + spread / 2, 2),
+                            "mark": round(g["price"], 2),
+                            "delta": round(g["delta"], 3),
+                            "gamma": round(g["gamma"], 4),
+                            "theta": round(g["theta"], 3),
+                            "vega": round(g["vega"], 3),
+                            "volatility": round(vol * 100, 2),
+                            "openInterest": int(5000 * math.exp(-abs(math.log(k / s)) * 12)),
+                            "totalVolume": int(800 * math.exp(-abs(math.log(k / s)) * 15)),
+                            "daysToExpiration": days,
+                            "strikePrice": k,
+                        }
                     ]
-            d += timedelta(days=7)
-        return {"underlyingPrice": s, "callExpDateMap": calls, "putExpDateMap": puts}
+        return {"underlyingPrice": round(s, 2), "callExpDateMap": calls, "putExpDateMap": puts}
 
     async def market_open(self, day: date) -> bool | None:
         return day.weekday() < 5

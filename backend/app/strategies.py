@@ -18,6 +18,7 @@ class Rules:
     manage_dte: int = 21
     tested_delta: float = 0.30
     loss_multiple: float = 2.0
+    notify_flags: bool = True
 
 
 @dataclass

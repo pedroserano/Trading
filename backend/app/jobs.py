@@ -25,7 +25,7 @@ class DailyJobs:
 
     def symbols(self) -> list[str]:
         held = {leg.underlying for leg in self.portfolio.legs}
-        return sorted(held | set(self.settings.watchlist_symbols) | {BENCH})
+        return sorted(held | set(self.portfolio.watchlist) | {BENCH})
 
     async def run(self) -> None:
         while True:
