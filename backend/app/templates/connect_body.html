@@ -120,12 +120,47 @@
   </form>
 </section>
 
+<section id="live">
+  <h2>Live trading</h2>
+  {% if live.demo %}
+  <p class="dim">Demo mode: there is no real Schwab account, so live orders stay off.</p>
+  {% elif not live.server_allowed %}
+  <p class="dim">The server does not allow live orders yet. Add <code>LIVE_TRADING=true</code> to the
+     <code>.env</code> file and restart the app; then this switch decides.</p>
+  {% endif %}
+  <p class="dim">With live trading on, the order ticket can send orders to Schwab, after the same
+     checks and Schwab preview as always, and a second confirm. Switch it off to keep testing on the
+     simulated account: the ticket then only previews live orders.</p>
+  <form method="post" action="/live/settings">
+    <p><label><input type="checkbox" name="enabled" {% if live.enabled %}checked{% endif %}>
+       <b>Live trading on</b></label>
+       {% if live.on %}<span class="dot ok"></span> orders go to Schwab{% endif %}</p>
+    <div class="rule">
+      <label for="l-symbols">Underlyings allowed live</label>
+      <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
+        value="{{ live.symbols|join(' ') }}" style="width:160px"></span>
+    </div>
+    <div class="rule">
+      <label for="l-max">Contracts per leg, at most</label>
+      <span class="rule-input"><input id="l-max" type="number" name="max_contracts" min="1" max="50"
+        step="1" value="{{ live.max_contracts }}"><span class="dim unit">contracts</span></span>
+    </div>
+    <div class="rule">
+      <label for="l-bp">Buying power for one trade, at most</label>
+      <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
+        step="0.5" value="{{ '%g'|format(live.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
+    </div>
+    <p><button class="primary" type="submit">Save live trading</button></p>
+  </form>
+</section>
+
 <section id="automation">
   <h2>Automanage</h2>
   <p class="dim">Applies the rules above to trades you switch to automanage, on the simulated
      account for now. Notify sends a message; Propose prepares an order for one tap;
      Auto places it at mid and steps toward natural. These levels apply to every trade with Automanage ticked on Positions.</p>
   <form method="post" action="/automation/settings">
+    <input type="hidden" name="_form" value="automation">
     {% for rule, label in auto_rules.items() %}
       <div class="rule">
         <label for="a-{{ rule }}">{{ label }}</label>
@@ -158,6 +193,8 @@
         </span>
       </div>
     {% endfor %}
+    <p><label><input type="checkbox" name="allow_inverted" {% if auto.allow_inverted %}checked{% endif %}>
+       Let a tested strangle go inverted (roll the untested side past the tested strike)</label></p>
     <div class="rule">
       <label for="a-ws">Act only between (ET)</label>
       <span class="rule-input">

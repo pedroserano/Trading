@@ -8,17 +8,14 @@ type Ctx = { view: AutomationView | null; update: (v: AutomationView) => void };
 /** Automanage state, shared by the Positions toolbar and every position's actions row. */
 export const AutomationContext = createContext<Ctx>({ view: null, update: () => {} });
 
-export function useAutomation(enabled: boolean): Ctx {
+export function useAutomation(account: "sim" | "live"): Ctx {
   const [view, setView] = useState<AutomationView | null>(null);
   useEffect(() => {
-    if (!enabled) {
-      setView(null);
-      return;
-    }
+    setView(null);
     let stop = false;
     const load = async () => {
       try {
-        const v = await getJson<AutomationView>("/api/automation");
+        const v = await getJson<AutomationView>(`/api/automation?account=${account}`);
         if (!stop) setView(v);
       } catch {
         /* shown as missing controls; the next poll retries */
@@ -30,7 +27,7 @@ export function useAutomation(enabled: boolean): Ctx {
       stop = true;
       window.clearInterval(t);
     };
-  }, [enabled]);
+  }, [account]);
   return { view, update: setView };
 }
 
@@ -45,11 +42,13 @@ export function AutoBar() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (!view) return null;
+  const live = view.account === "live";
   const run = async (url: string, body: unknown = {}) => {
+    if (live && url.endsWith("/accept") && !window.confirm("Send this order to Schwab at mid?")) return;
     setBusy(true);
     setError(null);
     try {
-      update(await postJson<AutomationView>(url, body));
+      update(await postJson<AutomationView>(`${url}?account=${view.account}`, body));
     } catch (e) {
       setError(String((e as Error).message));
     } finally {
@@ -72,6 +71,7 @@ export function AutoBar() {
         <span className="dim-text">
           {managed} trade{managed === 1 ? "" : "s"} · {view.orders_today}/{view.settings.daily_cap} orders today ·{" "}
           {view.in_window ? "in" : "outside"} its window {view.settings.window_start}–{view.settings.window_end} ET
+          {live ? " · live: proposes only, every order waits for your tap" : ""}
         </span>
         <a href="#/settings/automation" className="toolbar-link">
           Automanage settings
@@ -94,7 +94,7 @@ export function AutoBar() {
           </div>
           <div className="proposal-actions">
             <button type="button" className="small primary" disabled={busy} onClick={() => run(`/api/automation/proposal/${p.id}/accept`)}>
-              Place at mid
+              {live ? "Send to Schwab at mid" : "Place at mid"}
             </button>
             <button type="button" className="small" disabled={busy} onClick={() => run(`/api/automation/proposal/${p.id}/dismiss`)}>
               Dismiss
@@ -144,7 +144,12 @@ export function AutoPanel({ st }: { st: StrategyView }) {
   const save = async (on: boolean) => {
     setError(null);
     try {
-      update(await postJson<AutomationView>("/api/automation/trade", { trade_id: st.trade_id, enabled: on }));
+      update(
+        await postJson<AutomationView>(`/api/automation/trade?account=${view.account}`, {
+          trade_id: st.trade_id,
+          enabled: on,
+        }),
+      );
     } catch (e) {
       setError(String((e as Error).message));
     }

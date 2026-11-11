@@ -79,7 +79,13 @@ def test_decide_follows_the_rules():
     assert kinds(decide(strat(), 590, r, s, ALL)) == [("profit", "target")]
     assert kinds(decide(strat(dte=20), 590, r, s, ALL)) == [("dte", "roll"), ("profit", "target")]
     assert ("dte", "close") in kinds(decide(strat(dte=20, defined=True), 590, r, s, ALL))
-    assert ("dte", "close") in kinds(decide(strat(dte=20, rolls=3), 590, r, s, ALL))
+    assert ("dte", "roll") in kinds(decide(strat(dte=20, rolls=3), 590, r, s, ALL))  # no cap
+    capped = {**s, "max_rolls": 3}
+    assert ("dte", "close") in kinds(decide(strat(dte=20, rolls=3), 590, r, capped, ALL))
+    # IV rank decides between rolling and closing.
+    low = decide(strat(dte=20), 590, r, s, ALL, ivr=12)
+    assert ("dte", "close") in kinds(low) and "IV rank 12" in low[0].reason
+    assert ("dte", "roll") in kinds(decide(strat(dte=20), 590, r, s, ALL, ivr=40))
     assert ("tested", "roll_untested") in kinds(decide(strat(flags=["tested"]), 590, r, s, ALL))
     assert ("tested", "notify") in kinds(
         decide(strat(name="Iron condor", flags=["tested"], defined=True), 590, r, s, ALL)

@@ -392,13 +392,6 @@ def test_api_preview_place_activity_cancel(client):
     assert pv["errors"] == [] and pv["limit_net"] == pv["prices"]["mid"]
     assert pv["schwab_json"]["orderLegCollection"][0]["instruction"] == "SELL_TO_OPEN"
     assert pv["schwab_preview"]["simulated"] is True and pv["bp_effect"] > 0
-    # Live placement is not available yet.
-    assert (
-        client.post(
-            "/api/orders", json={**body, "account": "live", "limit_net": pv["limit_net"]}
-        ).status_code
-        == 403
-    )
     # A far-away limit rests; then cancel it.
     order = client.post("/api/orders", json={**body, "limit_net": pv["prices"]["far"]}).json()
     assert order["status"] == "WORKING"
@@ -414,6 +407,11 @@ def test_api_preview_place_activity_cancel(client):
     # A fat-finger limit is refused.
     bad = client.post("/api/orders", json={**body, "limit_net": 0.01})
     assert bad.status_code == 400 and "natural" in bad.json()["detail"]
+    # No live orders in demo mode, whatever the switches say.
+    live = client.post(
+        "/api/orders", json={**body, "account": "live", "limit_net": pv["limit_net"]}
+    )
+    assert live.status_code == 403 and "Demo mode" in live.json()["detail"]
 
 
 def test_api_close_needs_trade_and_reset(client):

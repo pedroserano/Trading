@@ -40,7 +40,10 @@ DEFAULT_SETTINGS = {
     },
     "dte_defined_action": "close",  # or "roll"
     "roll_target_dte": 45,
-    "max_rolls": 3,
+    # tastytrade keeps rolling for a credit while premium is worth selling; IV rank decides.
+    "min_roll_ivr": 25,
+    "max_rolls": 0,  # 0: no limit
+    "allow_inverted": False,  # rolling the untested side past the tested strike
     "min_roll_credit": 0.0,  # per unit; a roll for less is replaced by a close
     "step_cents": 1,
     "step_minutes": 3,
@@ -53,7 +56,8 @@ DEFAULT_SETTINGS = {
 # Adjustable on the Settings page: (key, label, low, high, kind, unit).
 SETTING_FIELDS = [
     ("roll_target_dte", "Roll out to about", 14, 120, "int", "DTE"),
-    ("max_rolls", "Close instead of rolling after", 0, 20, "int", "rolls"),
+    ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
+    ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
     ("min_roll_credit", "Least credit to roll for, per unit", 0.0, 50.0, "float", "$"),
     ("step_cents", "Price step", 1, 25, "int", "cents"),
     ("step_minutes", "Step every", 1, 60, "int", "min"),
@@ -86,6 +90,8 @@ def parse_settings(form: dict, current: dict) -> dict:
             out["levels"][rule] = v
     if form.get("dte_defined_action") in ("close", "roll"):
         out["dte_defined_action"] = form["dte_defined_action"]
+    if form.get("_form") == "automation":  # checkboxes are only sent when ticked
+        out["allow_inverted"] = form.get("allow_inverted") in ("on", "true", "1")
     for key, label, lo, hi, kind, _unit in SETTING_FIELDS:
         if key not in form:
             continue
@@ -132,7 +138,9 @@ class Action:
 # Deciding --------------------------------------------------------------------------------
 
 
-def decide(st: dict, spot: float | None, rules, settings: dict, levels: dict) -> list[Action]:
+def decide(
+    st: dict, spot: float | None, rules, settings: dict, levels: dict, ivr: float | None = None
+) -> list[Action]:
     """What the rules call for on one strategy (the Positions snapshot's JSON), by priority.
 
     Pure: no orders, no state. Levels decide later whether an action is only a
@@ -158,8 +166,17 @@ def decide(st: dict, spot: float | None, rules, settings: dict, levels: dict) ->
     if levels.get("dte", "off") != "off" and dte is not None and 0 < dte <= rules.manage_dte:
         if st["defined_risk"] and settings["dte_defined_action"] == "close":
             out.append(Action("dte", "close", f"{dte} DTE: defined-risk trades are closed"))
-        elif st.get("rolls", 0) >= settings["max_rolls"]:
+        elif settings["max_rolls"] and st.get("rolls", 0) >= settings["max_rolls"]:
             out.append(Action("dte", "close", f"{dte} DTE after {st['rolls']} rolls: close"))
+        elif ivr is not None and ivr < settings["min_roll_ivr"]:
+            out.append(
+                Action(
+                    "dte",
+                    "close",
+                    f"{dte} DTE with IV rank {ivr:.0f}, under {settings['min_roll_ivr']}: "
+                    "close instead of rolling",
+                )
+            )
         else:
             out.append(Action("dte", "roll", f"{dte} DTE: roll out for a credit"))
     if levels.get("tested", "off") != "off" and "tested" in flags:
@@ -224,6 +241,7 @@ class AutomationService:
         app_url: str = "",
         clock=lambda: datetime.now(ET),
         account: str = "sim",
+        max_level: str = "auto",
     ):
         self.store = store
         self.portfolio = portfolio
@@ -235,6 +253,9 @@ class AutomationService:
         self.app_url = app_url
         self.clock = clock
         self.account = account
+        # The highest level any rule may act at here: live automanage stops at propose.
+        self.max_level = max_level
+        self.state_key = STATE_KEY if account == "sim" else f"{STATE_KEY}_{account}"
         self.lock = asyncio.Lock()
         self.state: dict | None = None
 
@@ -242,7 +263,7 @@ class AutomationService:
 
     async def load(self) -> dict:
         if self.state is None:
-            self.state = await self.store.get_setting(STATE_KEY) or {}
+            self.state = await self.store.get_setting(self.state_key) or {}
         self.state.setdefault("paused", False)
         self.state.setdefault("trades", {})
         self.state.setdefault("proposals", [])
@@ -261,7 +282,7 @@ class AutomationService:
         self.state["proposals"] = [
             p for p in self.state["proposals"] if p["status"] == "pending" or p["created_at"] > week
         ]
-        await self.store.set_setting(STATE_KEY, self.state)
+        await self.store.set_setting(self.state_key, self.state)
 
     async def settings(self) -> dict:
         return merged_settings(await self.store.get_setting(SETTINGS_KEY))
@@ -302,7 +323,9 @@ class AutomationService:
         today = self.clock().date().isoformat()
         return {
             "paused": st["paused"],
-            "settings": settings,
+            "settings": {**settings, "levels": self.levels(settings)},
+            "max_level": self.max_level,
+            "account": self.account,
             "trades": st["trades"],
             "proposals": [p for p in st["proposals"] if p["status"] == "pending"],
             "log": st["log"][-150:][::-1],
@@ -356,8 +379,9 @@ class AutomationService:
                     open_ids.add(str(tid))
                     if not st["trades"].get(str(tid), {}).get("enabled"):
                         continue
-                    levels = settings["levels"]
-                    for action in decide(s, u["price"], rules, settings, levels):
+                    levels = self.levels(settings)
+                    ivr = (u.get("ivr") or {}).get("rank")
+                    for action in decide(s, u["price"], rules, settings, levels, ivr):
                         await self._handle(s, u, action, levels[action.rule], settings, rules, done)
             # Proposals for trades that have closed no longer apply.
             for p in st["proposals"]:
@@ -365,6 +389,10 @@ class AutomationService:
                     p["status"] = "expired"
             await self._save()
             return done
+
+    def levels(self, settings: dict) -> dict:
+        cap = LEVELS.index(self.max_level)
+        return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in settings["levels"].items()}
 
     def _working(self, trade_id) -> list[dict]:
         return [
@@ -732,6 +760,18 @@ class AutomationService:
             side = "call" if untested["put_call"] == "C" else "put"
             rules = await self.preferences.rules()
             cands = [r for r in chain["rows"] if r[side] and r[side]["delta"] is not None]
+            if not settings.get("allow_inverted"):
+                # Keep the put below the call: never roll the untested side past the tested.
+                tested = next(x for x in shorts if x is not untested)
+                cands = [
+                    r
+                    for r in cands
+                    if (
+                        r["strike"] <= tested["strike"]
+                        if side == "put"
+                        else r["strike"] >= tested["strike"]
+                    )
+                ]
             if not cands:
                 return []
             best = min(cands, key=lambda r: abs(abs(r[side]["delta"]) - rules.tested_delta))
@@ -764,7 +804,8 @@ class AutomationService:
         self.state["notified"].append(key)
         if self.notifier is not None and self.notifier.enabled:
             try:
-                await self.notifier.send(f"[Simulated] {title}", message, self.app_url)
+                prefix = "[Simulated]" if self.account == "sim" else "[Live]"
+                await self.notifier.send(f"{prefix} {title}", message, self.app_url)
             except Exception as e:
                 log.warning("Automation notification failed: %s", e)
         return True

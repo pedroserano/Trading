@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     sim_commission: float = Field(0.45, ge=0, le=10)
     # Hard limit on contracts per leg in any one order.
     max_contracts_per_leg: int = Field(10, ge=1, le=500)
+    # The server-side switch for live orders. Live orders also need the Live trading switch
+    # in Settings; both must be on.
+    live_trading: bool = False
 
     quote_interval_s: float = Field(5.0, ge=2.0)
     positions_interval_s: float = Field(60.0, ge=15.0)

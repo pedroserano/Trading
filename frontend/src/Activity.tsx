@@ -37,7 +37,8 @@ export default function Activity() {
 
   const cancel = async (o: SimOrder) => {
     try {
-      await postJson(`/api/orders/${o.id}/cancel`, {});
+      if (account === "live" && !window.confirm(`Cancel order #${o.id} at Schwab?`)) return;
+      await postJson(`/api/orders/${o.id}/cancel?account=${account}`, {});
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -109,16 +110,30 @@ export default function Activity() {
         </div>
       ) : null}
 
-      {!live ? (
-        <>
-          <h3>Working orders</h3>
-          {working.length ? (
-            <OrderTable orders={working} onCancel={cancel} />
-          ) : (
-            <p className="dim-text">None. Place simulated orders from the Trade screen, or close and roll from Positions.</p>
-          )}
-        </>
+      {live && data.live ? (
+        <div className={`msg ${data.live.on ? "warn" : ""}`}>
+          Live trading is <b>{data.live.on ? "on" : "off"}</b>
+          {data.live.on
+            ? `: ${data.live.symbols.join(", ")}, up to ${data.live.max_contracts} contract${data.live.max_contracts > 1 ? "s" : ""} per leg.`
+            : data.live.demo
+              ? " (demo mode)."
+              : !data.live.server_allowed
+                ? ": LIVE_TRADING=true is not set in the server's .env file."
+                : ": switch it on in Settings."}{" "}
+          <a href="#/settings/live">Live trading settings</a>
+          {data.live.error ? <span className="sub"> Reading orders from Schwab: {data.live.error}</span> : null}
+        </div>
       ) : null}
+      <h3>{live ? "Working orders at Schwab" : "Working orders"}</h3>
+      {working.length ? (
+        <OrderTable orders={working} onCancel={cancel} />
+      ) : (
+        <p className="dim-text">
+          {live
+            ? "None. Orders placed in thinkorswim show here too."
+            : "None. Place simulated orders from the Trade screen, or close and roll from Positions."}
+        </p>
+      )}
 
       <h3>Trades</h3>
       {live && data.trade_counts ? (
@@ -239,12 +254,8 @@ export default function Activity() {
 
       {live ? <OrderCheck /> : null}
 
-      {!live ? (
-        <>
-          <h3>Order history</h3>
-          {done.length ? <OrderTable orders={done} /> : <p className="dim-text">No orders yet.</p>}
-        </>
-      ) : null}
+      <h3>{live ? "Orders at Schwab, last 7 days" : "Order history"}</h3>
+      {done.length ? <OrderTable orders={done} /> : <p className="dim-text">No orders yet.</p>}
     </div>
   );
 }
@@ -271,7 +282,8 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
               <td className="l">{when(o.created_at)}</td>
               <td className="l">
                 <span className="sym-inline">{o.underlying}</span>
-                {o.intent} · {o.strategy} · {o.duration}
+                {[o.intent, o.strategy, o.duration].filter(Boolean).join(" · ")}
+                {o.placed_by_app ? <span className="sub"> · placed by the app</span> : null}
                 {o.reason ? <div className="sub">{o.reason}</div> : null}
               </td>
               <td className="l legs-cell">
@@ -281,7 +293,7 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
               </td>
               <td>{net(o.limit_net)}</td>
               <td className={`l status ${o.status.toLowerCase()}`}>
-                {o.status.toLowerCase()}
+                {(o.schwab_status ?? o.status).toLowerCase().replace(/_/g, " ")}
                 {o.filled_at ? <div className="sub">{when(o.filled_at)}</div> : null}
               </td>
               <td>
@@ -289,7 +301,7 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
                   <button type="button" className="small" onClick={() => onCancel(o)}>
                     Cancel
                   </button>
-                ) : (
+                ) : o.schwab_json === undefined ? null : (
                   <details className="json inline">
                     <summary>JSON</summary>
                     <pre>{JSON.stringify(o.schwab_json, null, 2)}</pre>

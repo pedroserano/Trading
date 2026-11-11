@@ -90,7 +90,7 @@ export default function App() {
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
   const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
-  const automation = useAutomation(account === "sim");
+  const automation = useAutomation(account);
 
   if (!snapshot) {
     return (
@@ -131,7 +131,7 @@ export default function App() {
             Flagged only ({snapshot.totals.flags})
           </label>
         </div>
-        {account === "sim" ? <AutoBar /> : null}
+        <AutoBar />
         <Positions s={snapshot} view={view} flaggedOnly={flaggedOnly === "1"} />
         <p className="footnote">
           Positions are grouped by their trade history, including trades placed in thinkorswim;
@@ -637,8 +637,7 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
           </button>
         ) : null}
         {history && st.trade_id !== null ? <ChainHistory account={account} chainId={st.trade_id} onClose={() => setHistory(false)} /> : null}
-        {account === "live" ? <span className="sub"> Preview against Schwab; live orders arrive in phase 4.</span> : null}
-        {account === "sim" ? <AutoPanel st={st} /> : null}
+        <AutoPanel st={st} />
       </td>
     </tr>
   );

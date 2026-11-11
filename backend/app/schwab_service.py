@@ -167,8 +167,8 @@ class SchwabService:
         self._client = None
         self._store.delete()
 
-    async def call(self, method: str, *args, **kwargs):
-        """Calls a schwab-py client method and returns the decoded JSON body."""
+    async def _request(self, method: str, *args, **kwargs):
+        """Calls a schwab-py client method and returns the checked HTTP response."""
         if not self.status().connected:
             raise SchwabNotConnected()
         started = time.monotonic()
@@ -188,7 +188,25 @@ class SchwabService:
             raise SchwabError("Schwab rate limit reached (429). Retrying shortly.")
         if resp.status_code >= 300:
             raise SchwabError(f"Schwab returned HTTP {resp.status_code}: {resp.text[:300]}")
+        return resp
+
+    async def call(self, method: str, *args, **kwargs):
+        """Calls a schwab-py client method and returns the decoded JSON body."""
+        resp = await self._request(method, *args, **kwargs)
         return resp.json() if resp.content else None
+
+    async def place_order(self, account_hash: str, body: dict) -> str:
+        """Places an order. Returns Schwab's order id, from the Location header."""
+        resp = await self._request("place_order", account_hash, body)
+        return _order_id(resp)
+
+    async def replace_order(self, account_hash: str, order_id: str, body: dict) -> str:
+        """Replaces a working order with a new one. Returns the new order's id."""
+        resp = await self._request("replace_order", account_hash, int(order_id), body)
+        return _order_id(resp)
+
+    async def cancel_order(self, account_hash: str, order_id: str) -> None:
+        await self._request("cancel_order", int(order_id), account_hash)
 
     def client(self):
         """The underlying schwab-py client, for enum access. None when not signed in."""
@@ -201,3 +219,14 @@ class SchwabService:
     async def close(self) -> None:
         if self._client is not None:
             await self._client.close_async_session()
+
+
+def _order_id(resp) -> str:
+    """Schwab answers a placed order with 201 and the new order's address in Location."""
+    location = resp.headers.get("Location") or resp.headers.get("location") or ""
+    order_id = location.rstrip("/").rsplit("/", 1)[-1]
+    if not order_id.isdigit():
+        raise SchwabError(
+            f"Schwab accepted the order but did not return its id (HTTP {resp.status_code})"
+        )
+    return order_id

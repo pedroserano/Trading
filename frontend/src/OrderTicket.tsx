@@ -158,9 +158,20 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legs, limit, duration, target]);
 
-  const canPlace = spec.account === "sim" && !!preview && preview.errors.length === 0 && !busy && limit !== null;
+  const live = spec.account === "live";
+  const liveBlocks = preview?.live_blocks ?? [];
+  const canPlace =
+    !!preview && preview.errors.length === 0 && (!live || liveBlocks.length === 0) && !busy && limit !== null;
+  // A live order takes two clicks: Place, then Send to Schwab.
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => setConfirming(false), [legs, limit, duration, target]);
   const place = async () => {
     if (!canPlace) return;
+    if (live && !confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
     setBusy(true);
     try {
       const o = await postJson<SimOrder>("/api/orders", {
@@ -214,10 +225,18 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         {placed ? (
           <div className="ticket-done">
             <p>
-              Simulated order #{placed.id} <b>{placed.status.toLowerCase()}</b>
+              {live ? "Schwab order" : "Simulated order"} #{placed.id} <b>{live ? "sent" : placed.status.toLowerCase()}</b>
               {placed.status === "FILLED" ? ` at ${netLabel(placed.fill_net)}` : ` at a limit of ${netLabel(placed.limit_net)}`}.
+              {placed.replaces?.length ? ` It replaced order #${placed.replaces.join(", #")}.` : ""}
             </p>
-            {placed.status === "WORKING" ? <p className="dim-text">It fills when the mid price reaches the limit. See it on the Activity page.</p> : null}
+            {live ? (
+              <p className="dim-text">
+                Follow it on the Activity page, which reads Schwab's orders every 10 seconds while it works.
+                {spec.intent === "open" && target ? " The profit target goes in as a GTC order once it fills." : ""}
+              </p>
+            ) : placed.status === "WORKING" ? (
+              <p className="dim-text">It fills when the mid price reaches the limit. See it on the Activity page.</p>
+            ) : null}
             <button type="button" className="primary" onClick={() => onClose(placed)}>
               Done
             </button>
@@ -359,6 +378,13 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                 ))}
               </div>
             ) : null}
+            {live
+              ? liveBlocks.map((b) => (
+                  <div key={b} className="msg warn">
+                    Live: {b}
+                  </div>
+                ))
+              : null}
             {error ? <div className="msg bad">{error}</div> : null}
 
             {preview?.schwab_json ? (
@@ -372,12 +398,22 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               <button type="button" onClick={() => onClose()}>
                 Cancel
               </button>
-              {spec.account === "sim" ? (
+              {!live ? (
                 <button type="button" className="primary" disabled={!canPlace} onClick={place} title="Ctrl+Enter">
                   {busy ? "Checking…" : "Place simulated order"}
                 </button>
+              ) : liveBlocks.length ? (
+                <span className="dim-text">Preview only: see why above.</span>
               ) : (
-                <span className="dim-text">Preview only. Live orders arrive in phase 4.</span>
+                <button
+                  type="button"
+                  className={confirming ? "danger" : "primary"}
+                  disabled={!canPlace}
+                  onClick={place}
+                  title="Ctrl+Enter"
+                >
+                  {busy ? "Sending…" : confirming ? `Send to Schwab: ${netLabel(limit)}` : "Place live order"}
+                </button>
               )}
             </div>
           </>

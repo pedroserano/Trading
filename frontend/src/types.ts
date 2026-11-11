@@ -240,6 +240,7 @@ export interface Preview {
   commission: number;
   errors: string[];
   warnings: string[];
+  live_blocks?: string[];
   schwab_json: unknown;
   schwab_preview: {
     ok: boolean;
@@ -251,11 +252,14 @@ export interface Preview {
 }
 
 export interface SimOrder {
-  id: number;
-  created_at: number;
+  id: number | string;
+  created_at: number | null;
   status: "WORKING" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED" | "REPLACED";
+  schwab_status?: string;
+  placed_by_app?: boolean;
+  replaces?: (number | string)[];
   intent: string;
-  trade_id: number | null;
+  trade_id: number | string | null;
   underlying: string;
   strategy: string;
   legs: OrderLeg[];
@@ -329,6 +333,7 @@ export interface Activity {
   trade_counts?: Record<string, number>;
   trades_shown_of?: number;
   sheet?: { rows: number; error: string | null };
+  live?: LiveStatus;
   stats: StatRow[];
 }
 
@@ -355,6 +360,8 @@ export interface AutoLogEntry {
 }
 
 export interface AutomationView {
+  account: "sim" | "live";
+  max_level: AutoLevel;
   paused: boolean;
   settings: { levels: Record<string, AutoLevel>; window_start: string; window_end: string; daily_cap: number };
   trades: Record<string, { enabled: boolean }>;
@@ -362,4 +369,16 @@ export interface AutomationView {
   log: AutoLogEntry[];
   orders_today: number;
   in_window: boolean;
+}
+
+export interface LiveStatus {
+  enabled: boolean;
+  symbols: string[];
+  max_contracts: number;
+  max_bp_share: number;
+  server_allowed: boolean;
+  demo: boolean;
+  on: boolean;
+  refreshed_at: number | null;
+  error: string | null;
 }

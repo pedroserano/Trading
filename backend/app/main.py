@@ -40,6 +40,7 @@ from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
+from .live import LiveBroker
 from .notify import PushoverNotifier, ReminderService
 from .order_check import OrderCheckService
 from .orders import (
@@ -297,6 +298,16 @@ def create_app(
     order_check = OrderCheckService(
         source, store, selector, enabled=lambda: connection_status().connected
     )
+    live_broker = LiveBroker(
+        store,
+        schwab,
+        source,
+        selector,
+        server_allowed=settings.live_trading,
+        notifier=notifier,
+        app_url=settings.app_url,
+        demo=demo,
+    )
     portfolio.trade_info = chain_service.trade_info
     portfolio.chain_holdings = chain_service.holdings
     if stream is not None:
@@ -305,6 +316,7 @@ def create_app(
             portfolio.refresh_soon()
             chain_service.refresh_soon()
             order_check.refresh_soon()
+            live_broker.refresh_soon()
 
         stream.on_account_activity = on_activity
     broker = SimBroker(
@@ -361,9 +373,11 @@ def create_app(
                 "simulated account": sim_portfolio.run,
                 "trade chains": chain_service.run,
                 "order check": order_check.run,
+                "live orders": live_broker.run,
                 "price history": prices_service.run,
                 "simulated publisher": sim_portfolio.publisher,
-                "automation": automation.run,
+                "automation": automations["sim"].run,
+                "live automation": automations["live"].run,
             }
             if stream is not None:
                 services["streaming"] = stream.run
@@ -489,6 +503,7 @@ def create_app(
                 "rules": await preferences.rules(),
                 "rule_fields": RULE_FIELDS,
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
+                "live": await live_broker.status(),
                 "auto_rules": RULES,
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
@@ -593,6 +608,18 @@ def create_app(
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
         return RedirectResponse(settings_url("watchlist"), status_code=303)
+
+    @app.post("/live/settings", dependencies=[Depends(require_login)])
+    async def live_settings_save(request: Request):
+        form = dict(await request.form())
+        try:
+            c = await live_broker.set_config(form)
+            request.session["notice"] = (
+                "Live trading switched on." if c["enabled"] else "Live trading is off."
+            )
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("live"), status_code=303)
 
     @app.post("/automation/settings", dependencies=[Depends(require_login)])
     async def automation_settings_save(request: Request):
@@ -844,8 +871,23 @@ def create_app(
                 except Exception as e:
                     preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
         contracts = sum(abs(x.quantity) for x in t.legs)
+        live_blocks = []
+        if body.account == "live":
+            live_blocks = await live_broker.gate(t, bp, nl)
+            if preview is not None and not preview.get("ok"):
+                live_blocks.append(
+                    "Schwab's preview did not accept the order: "
+                    + (
+                        preview.get("error")
+                        or "; ".join(
+                            m["text"] for m in preview.get("messages", []) if m["level"] == "error"
+                        )
+                        or "see the preview"
+                    )
+                )
         return {
             "account": body.account,
+            "live_blocks": live_blocks,
             "intent": t.intent,
             "strategy": ticket_strategy(t),
             "underlying": t.underlying,
@@ -885,14 +927,27 @@ def create_app(
         return await assess(body, t, p, quotes)
 
     async def place_order(body: OrderIn) -> dict:
-        if body.account != "sim":
-            raise HTTPException(status_code=403, detail="Live orders arrive in phase 4")
         if body.limit_net is None:
             raise HTTPException(status_code=400, detail="Set a limit price")
         t, p, quotes = await build_ticket(body)
         result = await assess(body, t, p, quotes)
         if result["errors"]:
             raise HTTPException(status_code=400, detail="; ".join(result["errors"]))
+        if body.account == "live":
+            if result["live_blocks"]:
+                raise HTTPException(status_code=403, detail="; ".join(result["live_blocks"]))
+            try:
+                order = await live_broker.place(
+                    t,
+                    trade_id=body.trade_id,
+                    profit_target=t.profit_target,
+                    entry=result["entry"],
+                )
+            except SchwabError as e:
+                raise _schwab_errors(e) from e
+            portfolio.refresh_soon()
+            chain_service.refresh_soon()
+            return order
         try:
             order = await broker.place(t, quotes, entry=result["entry"])
         except ValueError as e:
@@ -918,51 +973,79 @@ def create_app(
         except ValueError as e:
             raise ValueError(str(e)) from e
 
-    automation = AutomationService(
-        store,
-        sim_portfolio,
-        broker,
-        source,
-        preferences,
-        notifier,
-        auto_submit,
-        app_url=settings.app_url,
-        clock=lambda: sim_portfolio.clock(),
-    )
-    app.state.automation = automation
+    automations = {
+        "sim": AutomationService(
+            store,
+            sim_portfolio,
+            broker,
+            source,
+            preferences,
+            notifier,
+            auto_submit,
+            app_url=settings.app_url,
+            clock=lambda: sim_portfolio.clock(),
+        ),
+        # Live automanage proposes at most: every live order waits for your tap.
+        "live": AutomationService(
+            store,
+            portfolio,
+            live_broker,
+            source,
+            preferences,
+            notifier,
+            auto_submit,
+            app_url=settings.app_url,
+            clock=lambda: portfolio.clock(),
+            account="live",
+            max_level="propose",
+        ),
+    }
+    app.state.automation = automations["sim"]
+    Acct = Literal["sim", "live"]
 
     @app.get("/api/automation", dependencies=[Depends(require_login)])
-    async def api_automation():
-        return await automation.view()
+    async def api_automation(account: Acct = "sim"):
+        return await automations[account].view()
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
-    async def api_automation_trade(body: AutoTradeIn):
-        await automation.set_trade(body.trade_id, body.enabled)
-        return await automation.view()
+    async def api_automation_trade(body: AutoTradeIn, account: Acct = "sim"):
+        await automations[account].set_trade(body.trade_id, body.enabled)
+        return await automations[account].view()
 
     @app.post("/api/automation/pause", dependencies=[Depends(require_login)])
-    async def api_automation_pause(body: PauseIn):
-        await automation.set_paused(body.paused)
-        return await automation.view()
+    async def api_automation_pause(body: PauseIn, account: Acct = "sim"):
+        await automations[account].set_paused(body.paused)
+        return await automations[account].view()
 
     @app.post("/api/automation/proposal/{pid}/dismiss", dependencies=[Depends(require_login)])
-    async def api_automation_dismiss(pid: str):
-        await automation.dismiss(pid)
-        return await automation.view()
+    async def api_automation_dismiss(pid: str, account: Acct = "sim"):
+        await automations[account].dismiss(pid)
+        return await automations[account].view()
 
     @app.post("/api/automation/proposal/{pid}/accept", dependencies=[Depends(require_login)])
-    async def api_automation_accept(pid: str):
+    async def api_automation_accept(pid: str, account: Acct = "sim"):
         try:
-            await automation.accept(pid)
+            await automations[account].accept(pid)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        sim_portfolio.refresh_soon()
-        return await automation.view()
+        portfolios[account].refresh_soon()
+        return await automations[account].view()
+
+    @app.get("/api/live", dependencies=[Depends(require_login)])
+    async def api_live():
+        return {**await live_broker.status(), "audit": await live_broker.audit()}
 
     @app.post("/api/orders/{order_id}/cancel", dependencies=[Depends(require_login)])
-    async def api_order_cancel(order_id: int):
+    async def api_order_cancel(order_id: str, account: Acct = "sim"):
+        if account == "live":
+            try:
+                order = await live_broker.cancel(order_id)
+            except SchwabError as e:
+                raise _schwab_errors(e) from e
+            portfolio.refresh_soon()
+            return order
         try:
-            order = await broker.cancel(order_id)
+            order = await broker.cancel(int(order_id))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         sim_portfolio.refresh_soon()
@@ -1065,7 +1148,13 @@ def create_app(
             shown = [c for c in chs if source == "all" or (c.get("source") or "schwab") == source]
             return {
                 "account": "live",
-                "orders": [],
+                # Orders at Schwab from the last week, working first, as the live broker
+                # last read them (every 10 seconds while one of the app's orders works).
+                "orders": sorted(
+                    live_broker.state["orders"],
+                    key=lambda o: (o["status"] != "WORKING", -(o["created_at"] or 0)),
+                )[:200],
+                "live": await live_broker.status(),
                 "trades": sorted(
                     shown,
                     # Open chains first, then the most recently closed.
