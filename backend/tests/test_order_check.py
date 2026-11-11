@@ -285,3 +285,113 @@ def test_butterfly_needs_the_one_two_one_shape():
     assert complex_type(ratio) != "BUTTERFLY"
     mixed = t((sym("P", 560), 1, "open"), (sym("C", 570), -2, "open"), (sym("C", 580), 1, "open"))
     assert complex_type(mixed) != "BUTTERFLY"
+
+
+N1 = date(2027, 1, 15)
+
+
+@pytest.mark.parametrize(
+    "legs,expected",
+    [
+        ([("P", 570, -1, EXP, "open")], "NONE"),
+        ([("P", 570, -1, EXP, "open"), ("P", 565, 1, EXP, "open")], "VERTICAL"),
+        ([("C", 600, -1, EXP, "open"), ("C", 610, 2, EXP, "open")], "BACK_RATIO"),
+        ([("P", 570, 1, EXP, "close"), ("P", 570, -1, N1, "open")], "CALENDAR"),
+        ([("P", 570, 1, EXP, "close"), ("P", 565, -1, N1, "open")], "DIAGONAL"),
+        ([("P", 590, -1, EXP, "open"), ("C", 590, -1, EXP, "open")], "STRADDLE"),
+        ([("P", 555, -1, EXP, "open"), ("C", 610, -1, EXP, "open")], "STRANGLE"),
+        ([("P", 560, -1, EXP, "open"), ("C", 620, 1, EXP, "open")], "COLLAR_SYNTHETIC"),
+        (
+            [("P", 560, 1, EXP, "open"), ("P", 570, -2, EXP, "open"), ("P", 580, 1, EXP, "open")],
+            "BUTTERFLY",
+        ),
+        (
+            [("P", 560, 1, EXP, "open"), ("P", 570, -3, EXP, "open"), ("P", 590, 2, EXP, "open")],
+            "UNBALANCED_BUTTERFLY",
+        ),
+        (
+            [
+                ("C", 600, 1, EXP, "open"),
+                ("C", 605, -1, EXP, "open"),
+                ("C", 610, -1, EXP, "open"),
+                ("C", 615, 1, EXP, "open"),
+            ],
+            "CONDOR",
+        ),
+        (
+            [
+                ("C", 600, 2, EXP, "open"),
+                ("C", 605, -2, EXP, "open"),
+                ("C", 610, -1, EXP, "open"),
+                ("C", 615, 1, EXP, "open"),
+            ],
+            "UNBALANCED_CONDOR",
+        ),
+        (
+            [
+                ("P", 550, 1, EXP, "open"),
+                ("P", 555, -1, EXP, "open"),
+                ("C", 610, -1, EXP, "open"),
+                ("C", 615, 1, EXP, "open"),
+            ],
+            "IRON_CONDOR",
+        ),
+        (
+            [
+                ("P", 550, 2, EXP, "open"),
+                ("P", 555, -2, EXP, "open"),
+                ("C", 610, -1, EXP, "open"),
+                ("C", 615, 1, EXP, "open"),
+            ],
+            "UNBALANCED_IRON_CONDOR",
+        ),
+        (
+            [
+                ("P", 555, 1, EXP, "close"),
+                ("P", 550, -1, EXP, "close"),
+                ("P", 555, -1, N1, "open"),
+                ("P", 550, 1, N1, "open"),
+            ],
+            "VERTICAL_ROLL",
+        ),
+        (
+            [
+                ("P", 555, 1, EXP, "close"),
+                ("P", 550, -1, EXP, "close"),
+                ("P", 555, -2, N1, "open"),
+                ("P", 550, 2, N1, "open"),
+            ],
+            "UNBALANCED_VERTICAL_ROLL",
+        ),
+        (
+            [
+                ("P", 555, 1, EXP, "close"),
+                ("C", 610, 1, EXP, "close"),
+                ("P", 555, -1, N1, "open"),
+                ("C", 610, -1, N1, "open"),
+            ],
+            "DOUBLE_DIAGONAL",
+        ),
+        (
+            [
+                ("P", 555, 1, EXP, "close"),
+                ("C", 610, 1, EXP, "close"),
+                ("P", 550, -1, N1, "open"),
+                ("C", 615, -1, N1, "open"),
+            ],
+            "DOUBLE_DIAGONAL",
+        ),
+        (
+            [("P", 560, 1, EXP, "open"), ("C", 570, -2, EXP, "open"), ("C", 580, 1, EXP, "open")],
+            "CUSTOM",
+        ),
+    ],
+)
+def test_every_thinkorswim_order_type(legs, expected):
+    from app.orders import complex_type
+
+    t = Ticket(
+        legs=[TicketLeg.parse(sym(pc, k, exp), n, eff) for pc, k, n, exp, eff in legs],
+        limit_net=1.0,
+    )
+    assert complex_type(t) == expected

@@ -105,7 +105,9 @@ def test_single_leg_debit_gtc_and_strategy_types():
         limit_net=0.85,
     )
     body = schwab_order(roll)
-    assert body["complexOrderStrategyType"] == "CUSTOM" and body["orderType"] == "NET_CREDIT"
+    assert (
+        body["complexOrderStrategyType"] == "DOUBLE_DIAGONAL" and body["orderType"] == "NET_CREDIT"
+    )
     # Rolls of one option are labelled as thinkorswim labels them.
     one = ticket(
         [(sym("P", 555), 1, "close"), (sym("P", 555, NEXT), -1, "open")],

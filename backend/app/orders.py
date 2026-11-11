@@ -14,18 +14,8 @@ from functools import reduce
 from .options import Leg, parse_option_symbol
 from .strategies import group
 
+
 # Our strategy names -> Schwab's complexOrderStrategyType.
-COMPLEX_TYPES = {
-    "Put vertical": "VERTICAL",
-    "Call vertical": "VERTICAL",
-    "Iron condor": "IRON_CONDOR",
-    "Strangle": "STRANGLE",
-    "Straddle": "STRADDLE",
-    "Calendar": "CALENDAR",
-    "Diagonal": "DIAGONAL",
-}
-
-
 class TicketError(ValueError):
     pass
 
@@ -169,34 +159,122 @@ def strategy_name(t: Ticket) -> str:
     return found[0].name if len(found) == 1 else "Custom"
 
 
-def _is_butterfly(t: Ticket) -> bool:
-    """Three options of one type and expiration, quantities 1, -2, 1 (or the reverse) by
-    strike. thinkorswim labels it BUTTERFLY whether or not the wings are equal (checked
-    against a real broken-wing butterfly)."""
-    legs = sorted(t.legs, key=lambda x: x.strike or 0)
-    if len(legs) != 3 or len({(x.put_call, x.expiration) for x in legs}) != 1:
-        return False
-    if len({x.strike for x in legs}) != 3:
-        return False
-    low, mid, high = (x.quantity for x in legs)
-    return low == high and mid == -2 * low
+def _vertical(a: TicketLeg, b: TicketLeg) -> bool:
+    """Two options of one type and expiration at different strikes, one bought, one sold."""
+    return (
+        a.put_call == b.put_call
+        and a.expiration == b.expiration
+        and a.strike != b.strike
+        and (a.quantity > 0) != (b.quantity > 0)
+    )
+
+
+def _pairs(legs: list[TicketLeg]):
+    """Ways to split four legs into two pairs."""
+    a, b, c, d = legs
+    return [((a, b), (c, d)), ((a, c), (b, d)), ((a, d), (b, c))]
 
 
 def complex_type(t: Ticket) -> str:
-    if len(t.legs) == 1:
+    """The order's strategy type as thinkorswim labels it, from the legs' shape alone.
+
+    thinkorswim's types: single, vertical, back/ratio, calendar, diagonal, straddle,
+    strangle, butterfly, condor, iron condor, vertical roll, covered stock, collar/synthetic,
+    double diagonal (double calendar, straddle/strangle swap, double diagonal) and the
+    unbalanced butterfly, condor, iron condor and vertical roll. Checked against real
+    thinkorswim orders so far: calendar, diagonal (rolls of one option) and a broken-wing
+    butterfly, which is a BUTTERFLY whatever the wing widths. Anything else is CUSTOM.
+    Covered stock and collars with stock need a stock leg, which tickets never have.
+    """
+    legs = t.legs
+    n = len(legs)
+    if n == 1:
         return "NONE"
-    if _is_butterfly(t):
-        return "BUTTERFLY"
-    if t.intent == "roll":
-        # thinkorswim labels a one-option roll by its shape: another expiration at the same
-        # strike is a CALENDAR, at another strike a DIAGONAL (both checked against real
-        # thinkorswim orders). Rolls of more than one option stay CUSTOM until checked.
-        if len(t.legs) == 2:
-            a, b = t.legs
-            if a.put_call == b.put_call and a.expiration != b.expiration:
-                return "CALENDAR" if a.strike == b.strike else "DIAGONAL"
+    if n == 2:
+        a, b = legs
+        opposite = (a.quantity > 0) != (b.quantity > 0)
+        equal = abs(a.quantity) == abs(b.quantity)
+        if a.put_call == b.put_call:
+            if not opposite:
+                return "CUSTOM"
+            if a.expiration == b.expiration:
+                if a.strike == b.strike:
+                    return "CUSTOM"
+                return "VERTICAL" if equal else "BACK_RATIO"
+            if not equal:
+                return "CUSTOM"
+            return "CALENDAR" if a.strike == b.strike else "DIAGONAL"
+        # A put and a call.
+        if a.expiration != b.expiration or not equal:
+            return "CUSTOM"
+        if opposite:
+            return "COLLAR_SYNTHETIC"
+        return "STRADDLE" if a.strike == b.strike else "STRANGLE"
+    if n == 3:
+        lo, mid, hi = sorted(legs, key=lambda x: x.strike)
+        if len({(x.put_call, x.expiration) for x in legs}) != 1:
+            return "CUSTOM"
+        if len({x.strike for x in legs}) != 3:
+            return "CUSTOM"
+        if (lo.quantity > 0) != (hi.quantity > 0) or (lo.quantity > 0) == (mid.quantity > 0):
+            return "CUSTOM"
+        if lo.quantity + mid.quantity + hi.quantity != 0:
+            return "CUSTOM"
+        return "BUTTERFLY" if lo.quantity == hi.quantity else "UNBALANCED_BUTTERFLY"
+    if n != 4:
         return "CUSTOM"
-    return COMPLEX_TYPES.get(strategy_name(t), "CUSTOM")
+    kinds = {x.put_call for x in legs}
+    exps = {x.expiration for x in legs}
+    if len(kinds) == 1 and len(exps) == 1 and len({x.strike for x in legs}) == 4:
+        q = [x.quantity for x in sorted(legs, key=lambda x: x.strike)]
+        wings_same = (q[0] > 0) == (q[3] > 0)
+        body_same = (q[1] > 0) == (q[2] > 0) and (q[1] > 0) != (q[0] > 0)
+        if wings_same and body_same and sum(q) == 0:
+            return "CONDOR" if len({abs(v) for v in q}) == 1 else "UNBALANCED_CONDOR"
+    if len(kinds) == 2 and len(exps) == 1:
+        puts = sorted((x for x in legs if x.put_call == "P"), key=lambda x: x.strike)
+        calls = sorted((x for x in legs if x.put_call == "C"), key=lambda x: x.strike)
+        if (
+            len(puts) == 2
+            and _vertical(*puts)
+            and _vertical(*calls)
+            and abs(puts[0].quantity) == abs(puts[1].quantity)
+            and abs(calls[0].quantity) == abs(calls[1].quantity)
+            and puts[1].strike <= calls[0].strike
+            and (puts[1].quantity > 0) == (calls[0].quantity > 0)
+        ):
+            balanced = abs(puts[0].quantity) == abs(calls[0].quantity)
+            return "IRON_CONDOR" if balanced else "UNBALANCED_IRON_CONDOR"
+    if len(kinds) == 1:
+        # Two verticals: rolling one vertical to another.
+        for p1, p2 in _pairs(legs):
+            if (
+                _vertical(*p1)
+                and _vertical(*p2)
+                and abs(p1[0].quantity) == abs(p1[1].quantity)
+                and abs(p2[0].quantity) == abs(p2[1].quantity)
+                and (
+                    p1[0].expiration != p2[0].expiration
+                    or {x.effect for x in p1} != {x.effect for x in p2}
+                )
+            ):
+                same = abs(p1[0].quantity) == abs(p2[0].quantity)
+                return "VERTICAL_ROLL" if same else "UNBALANCED_VERTICAL_ROLL"
+    if len(kinds) == 2:
+        # A put calendar or diagonal with a call calendar or diagonal: double calendar,
+        # double diagonal, or a straddle/strangle rolled to another expiration.
+        puts = [x for x in legs if x.put_call == "P"]
+        calls = [x for x in legs if x.put_call == "C"]
+        if (
+            len(puts) == 2
+            and all(
+                (a.quantity > 0) != (b.quantity > 0) and a.expiration != b.expiration
+                for a, b in (puts, calls)
+            )
+            and len({abs(x.quantity) for x in legs}) == 1
+        ):
+            return "DOUBLE_DIAGONAL"
+    return "CUSTOM"
 
 
 def schwab_order(t: Ticket) -> dict:
