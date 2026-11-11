@@ -1,0 +1,14 @@
+{
+	auto_https disable_redirects
+	# Browsers send no server name when connecting by IP address, so name the
+	# certificate to use in that case.
+	default_sni {$NAS_HOST}
+}
+
+{$SITE_ADDRESS} {
+	# Certificate from Caddy's own local authority. Browsers warn until its root
+	# certificate is trusted on the device; see docs/DEPLOY-TRUENAS.md.
+	tls internal
+	encode zstd gzip
+	reverse_proxy backend:8000
+}

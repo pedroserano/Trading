@@ -25,12 +25,22 @@ These shape the design more than any framework choice.
 | The API has no IV rank field. | Compute IV rank ourselves from a stored daily IV history per underlying (section 6). |
 | The API has no paper trading and no historical option prices. | Build a simulated broker for dry runs. Backtesting is out of scope. |
 | Schwab's order JSON for multi-leg orders is intricate, and library templates cover only singles and verticals. | Write our own strategy-to-order builder with heavy unit tests, and run every order through Schwab's preview endpoint before sending. |
-| Rate limits are not publicly documented. Third-party sources mostly cite about 120 requests per minute, and they disagree. | Central rate limiter in the Schwab client, streaming preferred over polling, and limits kept in config. Confirm the real figures in the developer portal. |
-| TrueNAS 25.04 and later run apps as plain Docker Compose ("Install via YAML"). 25.10 and later require a top-level `services` key. | Ship a standard compose file. No Kubernetes or Helm work. |
+| Order requests (place, replace, cancel) are throttled per account at a figure set on the app registration, from 0 to 120 a minute. Reading orders is unthrottled. No market data limit is stated. | Central rate limiter in the Schwab client, streaming preferred over polling, limits kept in config. Check the app's order throttle is above zero before phase 4. |
+| Order entry through the API covers only the `EQUITY` and `OPTION` asset types. | Matches the chosen scope. Whether cash-settled index options such as SPX are accepted as `OPTION` is untested and gets checked with a preview call before any index product is added. |
+| The target NAS runs TrueNAS 25.10.7, which runs apps as plain Docker Compose ("Install via YAML") and requires a top-level `services` key. | Ship a standard compose file. No Kubernetes or Helm work. |
 
-Unverified items to confirm in the Schwab developer portal before building: exact rate
-limits, streamer symbol cap, streamer session limit, and whether the app registration
-needs thinkorswim enabled on the account for order placement (Schwabdev's docs say it does).
+Confirmed from Schwab's own portal documentation (OAuth guide, order samples, both API
+specifications, streamer guide): the 30-minute and 7-day token lifetimes, the HTTPS callback
+rule, the limit of one streamer connection per user, the order throttle above, and the
+existence of a preview-order endpoint. The registered app has both products, shows
+"Ready For Use", and uses the callback `https://127.0.0.1:8182`.
+
+Still not documented in what has been reviewed, and to be settled by testing in phase 0:
+the streamer's symbol limit (the guide confirms one exists, error code 19, without a number),
+the streamer field numbering for options and account activity, and the order JSON for
+strangles, iron condors and rolls. The portal's samples stop at a two-leg vertical, sent as
+`NET_DEBIT` or `NET_CREDIT` with an `orderLegCollection`. schwab-py's source covers the field
+numbering, and its order-capture script covers the JSON.
 
 ## 3. What others have built
 
@@ -76,12 +86,32 @@ the token and the stream.
 Client library recommendation: **schwab-py**, wrapped behind our own `BrokerClient`
 interface so it can be swapped. It is the thinner wrapper, built on httpx with a separate
 async streaming client, which suits an asyncio service. Schwabdev is the fallback and has
-better stream lifecycle handling out of the box. This is a close call; a one-day spike in
-phase 0 should settle it.
+better stream lifecycle handling out of the box. The phase 0 spike confirmed schwab-py 1.5.1 covers what the
+backend needs: sign-in from a pasted redirect address, custom token storage (used for
+encryption at rest), and an async client.
 
 The `BrokerClient` interface gets two implementations: `SchwabBroker` and `SimBroker`.
 `SimBroker` uses live market data and fills simulated orders at mid minus a configurable
 slippage. It is what the app runs against until live trading is deliberately switched on.
+
+### Account targeting
+
+The Schwab login may hold several accounts; the app trades exactly one. Two layers enforce that:
+
+1. At the Schwab consent screen during sign-in, tick only the account the app should see. Schwab then issues a token that cannot reach the others at all. This is the strong control, and it is repeated at each weekly re-login.
+2. On first run the app lists the accounts the token can see (`GET /accounts/accountNumbers`, which returns each number with the hashed value the API uses in URLs), and the user picks one. That hash is stored, every order and account call goes through one function that uses only it, and the server refuses to start in LIVE mode if the token exposes more accounts than the one selected unless an explicit override is set.
+
+The header shows the last four digits of the active account at all times.
+
+### Weekly Schwab sign-in
+
+The 7-day refresh token cannot be extended, so the aim is a 30-second sign-in that never lapses by surprise.
+
+- **One-tap flow.** A second callback URL pointing at the NAS (for example `https://trading.lan/auth/callback`) is added to the Schwab app alongside `https://127.0.0.1:8182`; Schwab accepts several, comma-separated, within 255 characters. Schwab redirects the browser to that address and the backend captures the code, checks the `state` value it issued, and exchanges it for tokens. The address only needs to resolve on the home network.
+- **Fallback.** The paste-the-redirect-URL page stays, using the `127.0.0.1` callback. It is the only flow until the new callback is approved, since editing the app may put it back through Schwab's approval, and until the NAS address has a certificate the browser trusts (Caddy's internal CA installed on the phone and computer, or a real certificate through a DNS challenge on an owned domain).
+- **Scheduled reminder.** A sign-in at any time restarts the 7-day clock. The app sends a notification with a sign-in link at a chosen weekly time (default Sunday 18:00 Eastern), again at 48 and 24 hours before expiry if still not done, and immediately if a refresh fails, which is what a Schwab password change causes.
+- **Lapse behaviour.** If the token expires, the app shows a full-width banner, disables order entry, and keeps the last known positions marked stale. Orders already resting at Schwab, including GTC profit-taking orders, are unaffected.
+- **Not done.** No automated login with stored Schwab credentials.
 
 ### Database: PostgreSQL
 
@@ -113,6 +143,7 @@ expert will have their own.
 - Strike selection by delta: 16 delta for strangles, 30 delta shorts for defined risk, 20 delta shorts with wings for iron condors. Collect about one third of the width on verticals and condors.
 - Liquidity filter: bid-ask width, open interest, and volume on the chosen strikes.
 - Earnings and ex-dividend dates flagged inside the trade window.
+- Assignment risk: SPY options are American-style and physically settled, so short in-the-money calls are flagged ahead of the quarterly ex-dividend date, and any short option in the money near expiration is flagged. An assignment that arrives as a stock position is recognised and attached to the strategy it came from.
 
 **Management**
 - Profit target: 50% of max profit for strangles, verticals and condors; 25% for straddles. Offer a GTC closing order at the target the moment the opening order fills.
@@ -133,7 +164,14 @@ out. That makes it testable and keeps it from ever touching orders directly.
 
 ## 6. Derived data we must compute
 
-- **IV rank and percentile.** Nightly job stores a 30-day constant-maturity ATM IV for every watchlist and held underlying, interpolated from the two expirations bracketing 30 days. Rank is (current minus 52-week low) over (high minus low). A year of history has to accumulate, so seed it: for index products use the public vol indices (VIX, VXN, RVX, and the CBOE single-stock vol indices where they exist); for others show "building, N days" until enough history exists. A paid IV history source is an optional later shortcut.
+- **IV rank and percentile.** Nightly job stores a 30-day constant-maturity ATM IV for every watchlist and held underlying, interpolated from the two expirations bracketing 30 days. Rank is (current minus 52-week low) over (high minus low). A year of history has to accumulate, so seed it: for index products use the public vol indices (VIX, VXN, RVX, and the CBOE single-stock vol indices where they exist); for others show "building, N days" until enough history exists. The IV source sits behind an `IvProvider` interface so an external source can fill the gap (options below).
+
+  Schwab is the only IV source in v1. No tastytrade account and no paid feed. How the one-year gap is handled:
+
+  - Index and ETF underlyings (SPX, SPY, QQQ, IWM, and others with a CBOE vol index) get a true IV rank from day one, because Schwab serves price history for the vol indices (VIX, VXN, RVX and similar).
+  - Single stocks start collecting on the day they join the watchlist, so the watchlist should be loaded in phase 1, well before trading starts. Until 252 trading days exist the app shows the rank over the history it has, labelled with the day count, alongside two measures available immediately from Schwab data: IV against 30-day historical volatility (from Schwab price history), and the IV percentile within the current chain's term structure.
+  - Optional later shortcut, only if the wait proves annoying: a one-month backfill from a paid source. [IVolatility](https://stockmarketstack.com/tools/ivolatility-api) (from $79 a month, history to 2005) is the candidate; [ORATS](https://orats.com/data-api) ($199 a month listed) is more than needed. The IV store sits behind an `IvProvider` interface so a backfill is an import, not a redesign.
+
 - **Greeks.** Use Schwab's per-contract Greeks from the chain and the `LEVELONE_OPTIONS` stream. Recompute with our own model (Black-Scholes, with an American approximation for equity options) as a cross-check and for what-if analysis. One researcher found Schwab's reported IV inconsistent with its prices, so the cross-check has real value.
 - **Probability of profit, expected move, breakevens** from the chain.
 - **Beta weighting.** Betas computed from daily price history against SPY, refreshed weekly.
@@ -178,28 +216,29 @@ This app can move real money and holds credentials that can too.
 **Security**
 - The app has its own login (single user, strong password hashed with argon2, TOTP second factor, short session lifetime). schwab-gateway and edge-trader both ship with no login, which is not acceptable for something that places orders.
 - Schwab app key, secret and tokens are encrypted at rest with a key supplied as a Docker secret, stored on an encrypted ZFS dataset.
-- Never port-forward the app to the internet. Remote access through Tailscale or WireGuard.
+- Never port-forward the app to the internet. v1 is reachable on the home network only. Remote access is a later, optional step: Tailscale is the simplest route (free personal tier, an official TrueNAS app, and a phone app), and adding it needs no change to this app.
 - TLS from Caddy with an internal certificate authority or a DNS-challenge certificate.
 - Secret scanning in pre-commit and CI, and no credentials in the repository.
 
 ## 9. Deployment on TrueNAS
 
-- Target TrueNAS 25.04 or later (Docker-based apps). On older Kubernetes-based SCALE releases, upgrade first.
+- Target: TrueNAS 25.10.7 (Docker-based apps). The compose file uses the top-level `services` key that 25.10 requires.
 - Three containers: `backend`, `postgres`, `caddy`. Images built by GitHub Actions and published to GHCR, so the NAS only pulls.
 - Datasets: `apps/trading/postgres`, `apps/trading/config`, `apps/trading/backups`, with a ZFS snapshot task on each and a nightly `pg_dump` into `backups`.
-- Install through Apps, Discover, Custom App, Install via YAML. On 25.10 and later the compose file can stay on a dataset and be pulled in with `include:`, which keeps it under version control.
+- Install through Apps, Discover, Custom App, Install via YAML. The custom app holds a two-line stub that pulls in the real compose file from a dataset with `include:`, which keeps the real file under version control.
 - Health checks on all three containers, container time zone set to US Eastern, market calendar (including holidays and early closes) from `pandas_market_calendars` or `exchange_calendars`.
-- Notifications through ntfy, Pushover or email: token expiring, rule flags, fills, stream down.
+- Notifications: Pushover as the default (one-time app purchase of about $5, one HTTPS call to send, works away from home with no extra setup), with email over SMTP as a second channel. Events: token expiring, rule flags, fills, stream down. Messages carry symbols and flags but no account numbers or balances, since they pass through a third party. The notifier is an interface, so ntfy or others can be added.
 
 ## 10. Phases
 
 | Phase | Scope | Exit test |
 |---|---|---|
 | 0. Setup | Register the Schwab developer app (approval takes days and status must read "Ready For Use"), repo scaffold, CI, compose skeleton, library spike. | Container on TrueNAS completes OAuth and prints account balances. |
-| 1. Read-only portfolio | Token lifecycle and re-auth page, accounts and positions, streaming quotes relayed to the browser, strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
-| 2. Analysis | Chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
+| 1. Read-only portfolio | Token lifecycle, paste-URL and one-tap sign-in with weekly reminder, accounts and positions, quotes refreshed every 5 seconds and pushed to the browser (Schwab streaming deferred to phase 2, once the REST path is proven on real data), strategy grouping, Positions screen, header metrics, app login. | Positions screen matches thinkorswim for P/L, delta and theta across a full trading day. |
+| 2. Analysis | Schwab streaming for quotes and account activity, chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
 | 3. Simulated trading | Order builder for all listed strategies, preview against Schwab, `SimBroker`, order and roll tickets, journal, roll chains. | Two weeks of simulated trading with builder output checked against orders built by hand in thinkorswim. |
 | 4. Live trading | Guards, audit log, reconciliation, GTC profit-taking orders, cancel and replace. Start with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches. |
+| 4a. SPY-only first year | LIVE mode restricted to SPY by an allowlist setting, one-lot default and a low per-order buying power cap. Other underlyings stay available in SIM. | A year of SPY trading reviewed in the journal before the allowlist is widened. |
 | 5. Refinement | Portfolio screen, performance stats, mobile layout, earnings data, optional one-click "manage at 21 DTE" batch tickets. | Ongoing. |
 
 Automation beyond one-click tickets (for example auto-closing at 50%) is deliberately left
@@ -207,11 +246,23 @@ out. A resting GTC limit order at Schwab does that job without the app needing t
 
 ## 11. Open questions
 
-1. Which TrueNAS version is the NAS on? Below 25.04 changes the deployment section.
-2. One Schwab account or several under the login? Any IRAs, where undefined-risk strategies are not permitted and the strategy list should adapt?
-3. Futures options: Schwab's API coverage for futures orders is limited. Is equity and index options scope acceptable?
-4. Is a paid IV history source acceptable to avoid the year-long wait for IV rank on single stocks?
-5. Preferred notification channel, and remote access method (Tailscale already in use)?
+Decided:
+
+- First year of live trading is small size in SPY only. The app enforces this with an underlying allowlist rather than relying on discipline. SPY also sidesteps the IV rank wait, since VIX history gives its rank from day one.
+- The app targets one chosen account out of several under the Schwab login (section 4, account targeting).
+
+- TrueNAS 25.10.7.
+- One Schwab brokerage account. The data model still keys everything by account so more can be added.
+- Equity and index options only. No futures options.
+- Notifications by Pushover and email. Home-network access only at first.
+
+- Margin account at the highest options approval level, so undefined-risk strategies (strangles, straddles, ratios, naked puts and calls) are in the builders.
+- No tastytrade account. IV rank comes from Schwab data only.
+- A Schwab developer app already exists. Reuse it rather than recreating it: the key and secret are shown in the app's details in the portal, and a new app waits for approval again.
+
+Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 complete: running on real Schwab data and checked against thinkorswim. Phase 2 built (streaming, watchlist with thinkorswim import, trade screen with payoff analysis, editable rules, flag notifications) and awaiting its exit test on real data.
+
+Still open: nothing blocks phase 1. The remaining unknowns are listed at the end of section 2 and are resolved by testing against the live API.
 
 ## Sources
 

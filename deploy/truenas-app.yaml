@@ -1,0 +1,89 @@
+# Paste into TrueNAS: Apps > Discover Apps > Custom App menu > Install via YAML.
+# Self-contained: the only other file needed on the NAS is /mnt/apps/trading/.env
+# (copy deploy/.env.example). Adjust the three marked values for your network.
+networks:
+  # The macvlan network that already exists for Homebridge. Docker allows one macvlan
+  # network per parent interface, so this app joins it instead of creating another.
+  lan:
+    external: true
+    name: ix-homebridge_homebridge_net   # <-- confirm with: sudo docker network ls
+  internal: {}
+
+configs:
+  caddyfile:
+    content: |
+      {
+        auto_https disable_redirects
+        default_sni 192.168.4.102
+      }
+      https://192.168.4.102 {
+        tls internal
+        encode zstd gzip
+        reverse_proxy backend:8000
+      }
+
+services:
+  caddy:
+    container_name: trading-caddy
+    image: caddy:2
+    restart: unless-stopped
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    networks:
+      lan:
+        ipv4_address: 192.168.4.102     # <-- a free address outside your router's DHCP range
+      internal: {}
+    volumes:
+      - /mnt/apps/trading/caddy:/data
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  backend:
+    container_name: trading-backend
+    image: ghcr.io/pedroserano/trading-backend:claude-ecstatic-newton-usvk97
+    restart: unless-stopped
+    env_file: /mnt/apps/trading/.env
+    environment:
+      TZ: America/New_York
+    networks:
+      - internal
+    volumes:
+      - /mnt/apps/trading/config:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+  postgres:
+    container_name: trading-postgres
+    image: postgres:17
+    restart: unless-stopped
+    env_file: /mnt/apps/trading/.env
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trading
+      TZ: America/New_York
+    networks:
+      - internal
+    volumes:
+      - /mnt/apps/trading/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d trading"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
