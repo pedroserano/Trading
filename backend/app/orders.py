@@ -98,9 +98,16 @@ class Ticket:
         return [leg.quantity // u for leg in self.legs]
 
 
+# Schwab and thinkorswim accept at most four legs in one order.
+MAX_LEGS = 4
+
+
 def validate_shape(t: Ticket) -> None:
-    if not 1 <= len(t.legs) <= 8:
-        raise TicketError("An order needs between 1 and 8 legs")
+    if not 1 <= len(t.legs) <= MAX_LEGS:
+        raise TicketError(
+            f"An order can have 1 to {MAX_LEGS} legs (Schwab's limit); this one has "
+            f"{len(t.legs)}. Roll or close the put and call sides as separate orders."
+        )
     if len({leg.symbol for leg in t.legs}) != len(t.legs):
         raise TicketError("The same contract appears twice")
     if len({leg.underlying for leg in t.legs}) != 1:

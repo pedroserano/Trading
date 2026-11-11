@@ -423,6 +423,12 @@ How an automatic order is worked:
   and notify. Never a market order.
 - **Checks.** Every order passes the same guards and Schwab preview as a manual one. A rejection
   stops automation for that position and notifies you.
+- **Four legs per order.** Schwab and thinkorswim accept at most four legs in one order. A roll
+  closes and reopens every leg, so an iron condor is rolled one side at a time (two 4-leg
+  orders); positions with more than four legs are closed by side.
+- **One closing order per contract.** A new closing or rolling order replaces any working
+  closing order on the same contracts, such as a resting profit target. Live, this uses
+  Schwab's replace-order call; the simulated account marks the old order Replaced.
 - **Explanation.** Each automatic action is logged with the rule, the numbers that triggered it,
   the quotes used and every price change, and appears in the position's History panel.
 

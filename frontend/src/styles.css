@@ -282,7 +282,7 @@ table.orders { min-width: 820px; }
 td.legs-cell { font-size: 12px; line-height: 1.5; }
 td.status.filled { color: var(--ok); }
 td.status.working { color: var(--accent); }
-td.status.canceled, td.status.expired { color: var(--dim); }
+td.status.canceled, td.status.expired, td.status.replaced { color: var(--dim); }
 
 /* Trade chain timeline */
 .ticket.history { max-width: 760px; }

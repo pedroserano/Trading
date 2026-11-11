@@ -19,22 +19,51 @@ function netLabel(v: number | null): string {
   return `${Math.abs(v).toFixed(2)} ${v > 0 ? "cr" : v < 0 ? "db" : ""}`.trim();
 }
 
-/** Close every leg of a strategy. */
-export function closeSpec(st: StrategyView, underlying: string, account: "sim" | "live"): TicketSpec {
+/** Schwab and thinkorswim accept at most four legs in one order. */
+export const MAX_LEGS = 4;
+
+export type Side = "P" | "C" | null;
+
+function sideLegs(st: StrategyView, side: Side) {
+  return st.legs.filter((l) => l.kind === "OPTION" && (side === null || l.put_call === side));
+}
+
+function sideName(side: Side): string {
+  return side === "P" ? " puts" : side === "C" ? " calls" : "";
+}
+
+/** Close the option legs of a strategy, or of one side of it. */
+export function closeSpec(st: StrategyView, underlying: string, account: "sim" | "live", side: Side = null): TicketSpec {
   return {
-    title: `Close ${underlying} ${st.name}`,
+    title: `Close ${underlying} ${st.name}${sideName(side)}`,
     account,
     intent: "close",
     underlying,
     tradeId: st.trade_id,
-    legs: st.legs
-      .filter((l) => l.kind === "OPTION")
-      .map((l) => ({ symbol: l.symbol, quantity: -l.quantity, effect: "close" as const })),
+    legs: sideLegs(st, side).map((l) => ({ symbol: l.symbol, quantity: -l.quantity, effect: "close" as const })),
   };
 }
 
-export function rollSpec(st: StrategyView, underlying: string, account: "sim" | "live"): TicketSpec {
-  return { ...closeSpec(st, underlying, account), title: `Roll ${underlying} ${st.name}`, intent: "roll", roll: st };
+/** Roll the option legs of a strategy, or of one side of it (closing and opening legs count toward the limit). */
+export function rollSpec(st: StrategyView, underlying: string, account: "sim" | "live", side: Side = null): TicketSpec {
+  return {
+    ...closeSpec(st, underlying, account, side),
+    title: `Roll ${underlying} ${st.name}${sideName(side)}`,
+    intent: "roll",
+    roll: { ...st, legs: sideLegs(st, side) },
+  };
+}
+
+/** Which close and roll actions fit within the four-leg limit for a strategy. */
+export function actionsFor(st: StrategyView): { close: Side[]; roll: Side[] } {
+  const all = sideLegs(st, null).length;
+  const puts = sideLegs(st, "P").length;
+  const calls = sideLegs(st, "C").length;
+  const close: Side[] = all <= MAX_LEGS ? [null] : ([puts && puts <= MAX_LEGS ? "P" : null, calls && calls <= MAX_LEGS ? "C" : null].filter(Boolean) as Side[]);
+  // A roll closes and reopens every leg, so it doubles the leg count.
+  const roll: Side[] =
+    all * 2 <= MAX_LEGS ? [null] : ([puts && puts * 2 <= MAX_LEGS ? "P" : null, calls && calls * 2 <= MAX_LEGS ? "C" : null].filter(Boolean) as Side[]);
+  return { close, roll };
 }
 
 function occ(underlying: string, exp: string, pc: string, k: number): string {

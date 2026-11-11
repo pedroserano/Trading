@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { TicketContext } from "./context";
+import { MAX_LEGS } from "./OrderTicket";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, signed, strike, tone } from "./format";
 import PayoffChart from "./PayoffChart";
@@ -234,7 +235,13 @@ export default function Trade({ symbol }: { symbol: string }) {
   const toggleLeg = useCallback((leg: BuildLeg) => {
     setLegs((prev) => {
       const i = prev.findIndex((l) => l.symbol === leg.symbol);
-      if (i < 0) return prev.length >= 8 ? prev : [...prev, leg];
+      if (i < 0) {
+        if (prev.length >= MAX_LEGS) {
+          setAnaError(`An order can have at most ${MAX_LEGS} legs (Schwab's limit).`);
+          return prev;
+        }
+        return [...prev, leg];
+      }
       const cur = prev[i];
       if (Math.sign(cur.quantity) === Math.sign(leg.quantity)) return prev.filter((_, j) => j !== i);
       return prev.map((l, j) => (j === i ? { ...l, quantity: -l.quantity } : l));

@@ -94,6 +94,23 @@ class SimBroker:
             leg["symbol"] for o in st["orders"] if o["status"] == "WORKING" for leg in o["legs"]
         }
 
+    async def replaceable(self, trade_id, symbols: set[str]) -> list[dict]:
+        """Working closing orders of a trade that a new closing order for these legs replaces.
+
+        Two closing orders for the same contracts cannot both stand (the broker would reject
+        the second), so the new one replaces the old. Orders for other legs of the trade,
+        such as the other side of an iron condor, are left alone.
+        """
+        st = await self.load()
+        return [
+            copy.deepcopy(o)
+            for o in st["orders"]
+            if o["status"] == "WORKING"
+            and o["trade_id"] == trade_id
+            and o["intent"] in ("close", "roll")
+            and symbols & {leg["symbol"] for leg in o["legs"]}
+        ]
+
     async def snapshot(self) -> dict:
         return copy.deepcopy(await self.load())
 
@@ -140,6 +157,19 @@ class SimBroker:
                 # Conditions when the order was placed, for the dashboard.
                 "entry": entry,
             }
+            if t.intent in ("close", "roll"):
+                symbols = {x.symbol for x in t.legs}
+                for o in st["orders"]:
+                    if (
+                        o["status"] == "WORKING"
+                        and o["trade_id"] == t.trade_id
+                        and o["intent"] in ("close", "roll")
+                        and symbols & {leg["symbol"] for leg in o["legs"]}
+                    ):
+                        o["status"] = "REPLACED"
+                        o["reason"] = f"Replaced by #{order['id']}"
+                        order["replaces"] = (order.get("replaces") or []) + [o["id"]]
+                        self._audit("replace", order_id=o["id"], by=order["id"])
             st["orders"].append(order)
             self._audit("place", order_id=order["id"], order=order["schwab_json"])
             await self._try_fill(order, quotes)

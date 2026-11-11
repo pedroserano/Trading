@@ -89,6 +89,7 @@ class OrderIn(BaseModel):
     account: Literal["sim", "live"] = "sim"
     intent: Literal["open", "close", "roll", "adjust"] = "open"
     trade_id: int | str | None = None
+    # Schwab's four-leg limit is checked with a clear message in validate_shape.
     legs: list[OrderLegIn] = Field(min_length=1, max_length=8)
     limit_net: float | None = None
     duration: Literal["DAY", "GTC"] = "DAY"
@@ -768,6 +769,13 @@ def create_app(
             bp_used_after=after,
             bp_ceiling=acct.get("bp_ceiling_pct"),
         )
+        if body.account == "sim" and t.intent in ("close", "roll") and t.trade_id is not None:
+            for o in await broker.replaceable(t.trade_id, {x.symbol for x in t.legs}):
+                price = f"{abs(o['limit_net']):.2f} {'credit' if o['limit_net'] > 0 else 'debit'}"
+                warnings.append(
+                    f"Replaces working order #{o['id']} ({o['intent']} at {price}, "
+                    f"{o['duration']}); it will be cancelled when this one is placed"
+                )
         body_json = None
         try:
             body_json = schwab_order(t)

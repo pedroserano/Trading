@@ -497,7 +497,8 @@ async def test_roll_cancels_the_old_profit_target_and_closes_are_named_for_the_t
     order = await b.place(roll, quotes)
     assert order["status"] == "FILLED" and order["strategy"] == "Strangle"
     old = next(o for o in b.state["orders"] if o["id"] == target["id"])
-    assert old["status"] == "CANCELED" and f"roll #{order['id']}" in old["reason"]
+    assert old["status"] == "REPLACED" and old["reason"] == f"Replaced by #{order['id']}"
+    assert order["replaces"] == [old["id"]]
     assert [o for o in b.state["orders"] if o["status"] == "WORKING"] == []
 
 
@@ -512,3 +513,99 @@ def test_stats_count_short_trades_as_one_day():
         }
     ]
     assert stats(trades)[0]["pl_per_day"] == 50.0
+
+
+def test_orders_are_limited_to_four_legs():
+    five = [
+        (sym("P", 560), 1, "open"),
+        (sym("P", 565), -1, "open"),
+        (sym("C", 615), -1, "open"),
+        (sym("C", 620), 1, "open"),
+        (sym("C", 630), 1, "open"),
+    ]
+    from app.orders import validate_shape
+
+    with pytest.raises(TicketError, match="1 to 4 legs"):
+        validate_shape(ticket(five))
+    validate_shape(ticket(five[:4]))
+
+
+def test_api_refuses_an_eight_leg_iron_condor_roll(client):
+    legs = [
+        {"symbol": sym("P", k), "quantity": q, "effect": "close"} for k, q in ((560, -1), (565, 1))
+    ]
+    legs += [
+        {"symbol": sym("C", k), "quantity": q, "effect": "close"} for k, q in ((615, 1), (620, -1))
+    ]
+    legs += [
+        {"symbol": sym(pc, k, NEXT), "quantity": q, "effect": "open"}
+        for pc, k, q in (("P", 560, 1), ("P", 565, -1), ("C", 615, -1), ("C", 620, 1))
+    ]
+    r = client.post(
+        "/api/orders/preview",
+        json={"account": "sim", "intent": "roll", "trade_id": 1, "legs": legs},
+    )
+    assert r.status_code == 400 and "4 legs" in r.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_a_second_closing_order_replaces_the_first_but_not_other_legs():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock())
+    quotes = {**QUOTES, sym("P", 550): q(2.00, 2.20), sym("C", 615): q(1.80, 2.00)}
+    ic = [
+        (sym("P", 550), 1, "open"),
+        (sym("P", 555), -1, "open"),
+        (sym("C", 610), -1, "open"),
+        (sym("C", 615), 1, "open"),
+    ]
+    await b.place(ticket(ic, limit_net=1.80), quotes)  # the mid
+    tid = b.state["trades"][0]["id"]
+    put_close = ticket(
+        [(sym("P", 550), -1, "close"), (sym("P", 555), 1, "close")],
+        intent="close",
+        trade_id=tid,
+        limit_net=-0.50,
+    )
+    first = await b.place(put_close, quotes)
+    assert first["status"] == "WORKING"
+    call_close = ticket(
+        [(sym("C", 610), 1, "close"), (sym("C", 615), -1, "close")],
+        intent="close",
+        trade_id=tid,
+        limit_net=-0.40,
+    )
+    other_side = await b.place(call_close, quotes)
+    assert len(await b.replaceable(tid, {sym("P", 555)})) == 1
+    again = await b.place(
+        ticket(
+            [(sym("P", 550), -1, "close"), (sym("P", 555), 1, "close")],
+            intent="close",
+            trade_id=tid,
+            limit_net=-0.60,
+        ),
+        quotes,
+    )
+    status = {o["id"]: o["status"] for o in b.state["orders"]}
+    assert status[first["id"]] == "REPLACED" and status[again["id"]] == "WORKING"
+    assert status[other_side["id"]] == "WORKING"  # the call side is not touched
+    assert again["replaces"] == [first["id"]]
+
+
+def test_preview_warns_which_order_a_close_replaces(client):
+    put = first_put(client)
+    body = {
+        "account": "sim",
+        "intent": "open",
+        "legs": [{"symbol": put, "quantity": -1, "effect": "open"}],
+    }
+    pv = client.post("/api/orders/preview", json=body).json()
+    client.post("/api/orders", json={**body, "limit_net": pv["limit_net"], "profit_target": 0.5})
+    tid = client.get("/api/activity?account=sim").json()["trades"][0]["id"]
+    close = {
+        "account": "sim",
+        "intent": "close",
+        "trade_id": tid,
+        "legs": [{"symbol": put, "quantity": 1, "effect": "close"}],
+    }
+    warn = client.post("/api/orders/preview", json=close).json()["warnings"]
+    assert any(w.startswith("Replaces working order #") and "GTC" in w for w in warn)

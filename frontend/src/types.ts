@@ -253,7 +253,7 @@ export interface Preview {
 export interface SimOrder {
   id: number;
   created_at: number;
-  status: "WORKING" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED";
+  status: "WORKING" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED" | "REPLACED";
   intent: string;
   trade_id: number | null;
   underlying: string;

@@ -3,7 +3,7 @@ import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
-import OrderTicket, { closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
+import OrderTicket, { actionsFor, closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
@@ -602,15 +602,25 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
   const account = useContext(AccountContext);
   const [history, setHistory] = useState(false);
   if (!under) return null;
+  const acts = actionsFor(st);
   return (
     <tr className="leg actions">
       <td className="l" colSpan={cols}>
-        <button type="button" className="small" onClick={() => open(closeSpec(st, under, account))}>
-          Close
-        </button>
-        <button type="button" className="small" onClick={() => open(rollSpec(st, under, account))}>
-          Roll
-        </button>
+        {acts.close.map((side) => (
+          <button key={`c${side}`} type="button" className="small" onClick={() => open(closeSpec(st, under, account, side))}>
+            Close{side === "P" ? " puts" : side === "C" ? " calls" : ""}
+          </button>
+        ))}
+        {acts.roll.map((side) => (
+          <button key={`r${side}`} type="button" className="small" onClick={() => open(rollSpec(st, under, account, side))}>
+            Roll{side === "P" ? " puts" : side === "C" ? " calls" : ""}
+          </button>
+        ))}
+        {acts.roll.length === 0 ? (
+          <span className="sub" title="Schwab accepts at most four legs in one order">
+            No roll: it would need more than four legs.{" "}
+          </span>
+        ) : null}
         {st.trade_id !== null ? (
           <button type="button" className="small" onClick={() => setHistory(true)}>
             History{st.rolls ? ` · ${st.rolls} roll${st.rolls > 1 ? "s" : ""}` : ""}
