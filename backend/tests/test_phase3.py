@@ -671,3 +671,15 @@ def test_hard_limits_per_underlying_and_over_the_ceiling():
         underlying_cap=0.15,
     )
     assert not any("ceiling" in x or "would use" in x for x in e)
+
+
+def test_chart_gives_candles_strikes_and_the_year_range(client):
+    r = client.get("/api/trade/SPY/chart?account=live").json()
+    c = r["candles"]
+    assert len(c) > 200 and c[0]["date"] < c[-1]["date"]
+    assert all(
+        x["low"] <= min(x["open"], x["close"]) <= max(x["open"], x["close"]) <= x["high"] for x in c
+    )
+    assert r["high52"] == max(x["close"] for x in c)
+    # Positions load in the background, which tests do not run: none to draw yet.
+    assert r["strikes"] == [] and "earnings" in r

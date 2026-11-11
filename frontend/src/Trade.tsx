@@ -1,10 +1,14 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+
 import { TicketContext } from "./context";
 import { MAX_LEGS } from "./OrderTicket";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, signed, strike, tone } from "./format";
 import PayoffChart from "./PayoffChart";
 import type { Analysis, BuildLeg, Chain, ChainRow, Contract, Expiration } from "./types";
+
+// The chart library is large: load it only when the Trade screen opens.
+const PriceChart = lazy(() => import("./PriceChart"));
 
 type Side = "call" | "put";
 
@@ -314,6 +318,9 @@ export default function Trade({ symbol }: { symbol: string }) {
         </div>
       </div>
       {error ? <div className="banner warn">{error}</div> : null}
+      <Suspense fallback={<div className="price-chart chart-loading">Loading chart…</div>}>
+        <PriceChart symbol={symbol} spot={spot} expiration={exp} expectedMove={chain?.expected_move ?? null} />
+      </Suspense>
       <div className="exps" role="tablist" aria-label="Expiration">
         {exps.map((e) => (
           <button

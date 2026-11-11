@@ -808,6 +808,44 @@ def create_app(
             "default": chain_mod.default_expiration(exps),
         }
 
+    candle_cache: dict[tuple[str, date], list[dict]] = {}
+
+    @app.get("/api/trade/{symbol:path}/chart", dependencies=[Depends(require_login)])
+    async def api_chart(symbol: str, account: Literal["live", "sim"] = "live"):
+        """A year of daily candles, with what the chart draws over them: the account's
+        option strikes in this underlying, the next earnings report, the 52-week range."""
+        symbol = _check_symbol(symbol)
+        today = portfolio.clock().date()
+        key = (symbol, today)
+        if key not in candle_cache:
+            try:
+                candles = await source.daily_candles(symbol, 370)
+            except SchwabError as e:
+                raise _schwab_errors(e) from e
+            if len(candle_cache) > 200:
+                candle_cache.clear()
+            candle_cache[key] = candles
+        candles = candle_cache[key]
+        strikes = [
+            {
+                "strike": leg.strike,
+                "put_call": leg.put_call,
+                "quantity": leg.quantity,
+                "expiration": leg.expiration.isoformat() if leg.expiration else None,
+            }
+            for leg in portfolios[account].legs
+            if leg.underlying == symbol and leg.is_option
+        ]
+        closes = [c["close"] for c in candles]
+        return {
+            "symbol": symbol,
+            "candles": [{**c, "date": c["date"].isoformat()} for c in candles],
+            "strikes": strikes,
+            "earnings": earnings.info(symbol),
+            "high52": max(closes) if closes else None,
+            "low52": min(closes) if closes else None,
+        }
+
     @app.get("/api/trade/{symbol:path}/chain", dependencies=[Depends(require_login)])
     async def api_chain(symbol: str, expiration: date, strikes: int = 0):
         """strikes: how many either side of the money; 0 returns every strike."""

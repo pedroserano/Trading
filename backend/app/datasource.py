@@ -16,6 +16,7 @@ class DataSource(Protocol):
     async def account(self, account_hash: str) -> dict: ...
     async def quotes(self, symbols: list[str]) -> dict: ...
     async def daily_closes(self, symbol: str, days: int) -> list[tuple[date, float]]: ...
+    async def daily_candles(self, symbol: str, days: int) -> list[dict]: ...
     async def option_chain(
         self, symbol: str, from_date: date, to_date: date, strike_count: int | None = 6
     ) -> dict: ...
@@ -43,6 +44,24 @@ class SchwabDataSource:
         # Keep each request modest in size.
         for i in range(0, len(symbols), 200):
             out.update(await self.schwab.call("get_quotes", symbols[i : i + 200]) or {})
+        return out
+
+    async def daily_candles(self, symbol: str, days: int) -> list[dict]:
+        """Daily bars, oldest first: {date, open, high, low, close, volume}."""
+        start = datetime.now(UTC) - timedelta(days=days)
+        raw = await self.schwab.call("get_price_history_every_day", symbol, start_datetime=start)
+        out = []
+        for c in (raw or {}).get("candles", []):
+            out.append(
+                {
+                    "date": datetime.fromtimestamp(c["datetime"] / 1000, UTC).date(),
+                    "open": float(c["open"]),
+                    "high": float(c["high"]),
+                    "low": float(c["low"]),
+                    "close": float(c["close"]),
+                    "volume": int(c.get("volume") or 0),
+                }
+            )
         return out
 
     async def daily_closes(self, symbol: str, days: int) -> list[tuple[date, float]]:
@@ -269,6 +288,26 @@ class DemoDataSource:
                 }
             elif parse_option_symbol(sym):
                 out[sym] = self._option_quote(sym)
+        return out
+
+    async def daily_candles(self, symbol: str, days: int) -> list[dict]:
+        rng = random.Random(sum(map(ord, symbol)) + 1)  # noqa: S311 - simulated prices
+        closes = await self.daily_closes(symbol, days)
+        out, prev = [], None
+        for d, c in closes:
+            o = prev if prev is not None else c
+            span = abs(c - o) + c * rng.uniform(0.002, 0.012)
+            out.append(
+                {
+                    "date": d,
+                    "open": round(o, 2),
+                    "high": round(max(o, c) + span / 2, 2),
+                    "low": round(min(o, c) - span / 2, 2),
+                    "close": c,
+                    "volume": 0,
+                }
+            )
+            prev = c
         return out
 
     async def daily_closes(self, symbol: str, days: int) -> list[tuple[date, float]]:

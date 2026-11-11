@@ -455,3 +455,13 @@ td .earn { margin-left: 0; }
 .range-pct { font-size: 12px; color: var(--dim); min-width: 30px; text-align: right; }
 .range.near .range-dot { background: var(--warn); }
 .range.near .range-pct { color: var(--warn); }
+
+/* Price chart on the Trade screen */
+.price-chart { margin: 8px 0 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--panel); }
+.chart-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.chart-legend { font-size: 11px; }
+.chart-legend .key-short { color: var(--warn); }
+.chart-legend .key-cone { color: var(--accent); }
+.chart-box { height: 280px; }
+@media (max-width: 700px) { .chart-box { height: 220px; } }
+.chart-loading { height: 318px; color: var(--dim); font-size: 12px; }
