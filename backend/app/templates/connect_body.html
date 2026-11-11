@@ -178,8 +178,8 @@
   <p class="dim">The scanner looks once a day, at the scan time, for premium worth selling: a
      strangle when IV rank is high, an iron condor otherwise, in the monthly expiration nearest the
      target DTE. What it finds follows the level below: Notify, Propose (waits for your tap) or Auto
-     (simulated account only; live stops at Propose). Single stocks are skipped until an earnings
-     date source is added, so the earnings buffer can be checked; ETFs and indexes are not affected.</p>
+     (simulated account only; live stops at Propose). Single stocks open only when their next
+     earnings report is known and further away than the buffer; ETFs and indexes have no earnings.</p>
   <form method="post" action="/scanner/settings">
     <input type="hidden" name="_form" value="scanner">
     {% for acct, label in (("sim", "Simulated account"), ("live", "Schwab account")) %}
@@ -214,6 +214,24 @@
     <p><label><input type="checkbox" name="automanage_new" {% if scan.automanage_new %}checked{% endif %}>
        Switch automanage on for trades the scanner opens</label></p>
     <p><button class="primary" type="submit">Save scanner settings</button></p>
+  </form>
+</section>
+
+<section id="earnings">
+  <h2>Earnings dates</h2>
+  <p class="dim">Used by the scanner's earnings buffer, the automanage earnings rule, and the
+     earnings flags on Watchlist and Positions. Source: <b>{{ "Finnhub" if earnings.provider == "Finnhub" else "demo dates" if earnings.provider == "demo" else "only the dates below" }}</b>{% if earnings.provider == "manual" %}
+     (for dates looked up automatically, get a free key at finnhub.io and add
+     <code>FINNHUB_API_KEY=...</code> to <code>.env</code>){% endif %}.
+     {% if earnings.refreshed_at %}Dates known for {{ earnings.known }} stocks.{% endif %}
+     Refreshed every six hours.</p>
+  {% if earnings.error %}<p class="error">{{ earnings.error }}</p>{% endif %}
+  <form method="post" action="/earnings/refresh"><p><button type="submit">Refresh now</button></p></form>
+  <form method="post" action="/earnings/manual">
+    <p class="dim">Dates you set win over the source. One line each:
+       <code>SYMBOL YYYY-MM-DD bmo</code> (before the open) or <code>amc</code> (after the close).</p>
+    <p><textarea name="text" rows="4" placeholder="AAPL 2027-01-28 amc">{{ earnings_manual }}</textarea></p>
+    <p><button class="primary" type="submit">Save earnings dates</button></p>
   </form>
 </section>
 

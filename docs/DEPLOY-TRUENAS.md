@@ -166,6 +166,7 @@ so the container picks them up.
 | `SIM_START_CASH` | Starting cash of the simulated account. Default 100000. Resetting the simulated account from the Activity page can set a different amount. |
 | `SIM_COMMISSION` | Commission per contract for the simulated account. Default 0.45. |
 | `LIVE_TRADING` | `true` lets the app send live orders to Schwab. It is the server's half of two switches: live orders also need the Live trading switch in Settings. Leave unset (off) to keep the app preview-only for the Schwab account. |
+| `FINNHUB_API_KEY` | Optional. A free key from finnhub.io lets the app look up earnings dates (date, and before the open or after the close) for single stocks. Without it, only the dates you enter under Settings, Earnings dates are known, and the scanner skips stocks with no date. |
 | `MAX_CONTRACTS_PER_LEG` | Hard limit on contracts per leg in any order, simulated or live. Default 10. |
 
 ## One-tap Schwab sign-in (optional)

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getJson } from "./api";
+import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
 import type { WatchRow } from "./types";
@@ -97,6 +98,9 @@ export default function Watchlist() {
               <th>Exp</th>
               <th title="At-the-money bid-ask spread as a share of the mark">Spread</th>
               <th title="Open interest at the money, call plus put">ATM OI</th>
+              <th className="l" title="Next earnings report: date, and before the open or after the close">
+                Earnings
+              </th>
               <th title="Your position delta and theta in this underlying">Position</th>
             </tr>
           </thead>
@@ -142,6 +146,9 @@ export default function Watchlist() {
                   {pct(r.spread_pct, 1)}
                 </td>
                 <td>{r.atm_oi === null ? "–" : r.atm_oi.toLocaleString("en-US")}</td>
+                <td className="l">
+                  <EarningsFlag e={r.earnings} />
+                </td>
                 <td>
                   {r.held ? (
                     <>

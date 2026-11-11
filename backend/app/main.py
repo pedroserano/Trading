@@ -39,6 +39,7 @@ from .automation import (
 from .chain_service import REVIEW_KEY, SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
+from .earnings import EarningsService
 from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
 from .live import LiveBroker
@@ -353,6 +354,23 @@ def create_app(
     portfolios = {"live": portfolio, "sim": sim_portfolio}
     limits = guards.Limits(max_contracts=settings.max_contracts_per_leg)
     watchlist = WatchlistService(source, store, portfolio, preferences)
+
+    async def earnings_symbols() -> set[str]:
+        out = set(await preferences.watchlist())
+        for pf in (portfolio, sim_portfolio):
+            out |= {u["symbol"] for u in (pf.snapshot or {}).get("underlyings", [])}
+        out |= set((await live_broker.config())["symbols"])
+        return out
+
+    earnings = EarningsService(
+        store,
+        source,
+        earnings_symbols,
+        finnhub_key=settings.finnhub_api_key,
+        clock=lambda: portfolio.clock(),
+        demo=demo,
+    )
+    portfolio.earnings = sim_portfolio.earnings = watchlist.earnings = earnings.info
     health: dict[str, str | None] = {}
     jobs = DailyJobs(source, store, portfolio, settings)
     reminders = ReminderService(notifier, store, connection_status, settings, demo)
@@ -361,6 +379,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         await store.open()
         await broker.load()
+        await earnings.load()
         schwab.load()
         log.info("Started. Demo: %s. Schwab connected: %s", demo, schwab.status().connected)
         tasks = []
@@ -373,6 +392,7 @@ def create_app(
                 "watchlist": watchlist.run,
                 "simulated account": sim_portfolio.run,
                 "trade chains": chain_service.run,
+                "earnings dates": earnings.run,
                 "order check": order_check.run,
                 "live orders": live_broker.run,
                 "price history": prices_service.run,
@@ -508,6 +528,8 @@ def create_app(
                 "live": await live_broker.status(),
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
                 "scan_fields": scan_mod.FIELDS,
+                "earnings": earnings.status(),
+                "earnings_manual": await earnings.manual_text(),
                 "auto_rules": RULES,
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
@@ -612,6 +634,30 @@ def create_app(
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
         return RedirectResponse(settings_url("watchlist"), status_code=303)
+
+    @app.post("/earnings/manual", dependencies=[Depends(require_login)])
+    async def earnings_manual_save(request: Request, text: str = Form("")):
+        bad = await earnings.set_manual(text[:20000])
+        portfolio.refresh_soon()
+        sim_portfolio.refresh_soon()
+        if bad:
+            request.session["flash"] = (
+                "Could not read: "
+                + "; ".join(bad[:5])
+                + (". Use one line each: SYMBOL YYYY-MM-DD bmo|amc")
+            )
+        else:
+            request.session["notice"] = "Earnings dates saved."
+        return RedirectResponse(settings_url("earnings"), status_code=303)
+
+    @app.post("/earnings/refresh", dependencies=[Depends(require_login)])
+    async def earnings_refresh(request: Request):
+        try:
+            n = await earnings.refresh()
+            request.session["notice"] = f"Earnings dates refreshed: {n} found."
+        except Exception as e:
+            request.session["flash"] = f"Earnings refresh failed: {type(e).__name__}: {e}"
+        return RedirectResponse(settings_url("earnings"), status_code=303)
 
     @app.post("/scanner/settings", dependencies=[Depends(require_login)])
     async def scanner_settings_save(request: Request):
@@ -845,7 +891,7 @@ def create_app(
             "iv": a["vol"] if a else None,
             "bp": bp,
             "bp_share": (bp / acct["net_liq"]) if (bp and acct.get("net_liq")) else None,
-            "earnings_days": None,
+            "earnings_days": (earnings.info(t.underlying) or {}).get("days"),
         }
         nl, maint = acct.get("net_liq"), acct.get("maintenance")
         after = (maint + bp) / nl if (bp is not None and nl and maint is not None) else None

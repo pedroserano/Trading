@@ -57,7 +57,14 @@ FIELDS = [
     ("short_delta", "Strangle short strikes at", 0.05, 0.5, "delta", "Δ"),
     ("ic_short_delta", "Iron condor short strikes at", 0.05, 0.5, "delta", "Δ"),
     ("min_ic_credit", "Iron condor credit, at least", 10, 60, "percent", "% of width"),
-    ("earnings_days", "Earnings buffer for single stocks", 0, 60, "int", "days"),
+    (
+        "earnings_days",
+        "Single stocks: open only if earnings are more than",
+        0,
+        60,
+        "int",
+        "sessions away",
+    ),
     ("max_spread", "At-the-money bid/ask spread, at most", 1, 50, "percent", "% of mark"),
     ("min_oi", "At-the-money open interest, at least", 0, 1_000_000, "int", "contracts"),
     ("max_bp_share", "Buying power for one trade, at most", 0.5, 50, "percent", "% net liq"),
@@ -189,6 +196,7 @@ class Scanner:
         preferences,
         live_broker,
         clock=lambda: datetime.now(ET),
+        earnings=None,
     ):
         self.store = store
         self.source = source
@@ -198,6 +206,7 @@ class Scanner:
         self.preferences = preferences
         self.live_broker = live_broker
         self.clock = clock
+        self.earnings = earnings
         self.lock = asyncio.Lock()
 
     async def settings(self) -> dict:
@@ -375,12 +384,23 @@ class Scanner:
             return f"IV rank {ivr:.0f}, under {s['min_ivr']}"
         q = quotes.get(sym) or {}
         kind = {q.get("assetMainType"), q.get("assetSubType"), q.get("assetType")}
-        if not kind & FUNDS and not sym.startswith("$"):
-            # The earnings buffer: no earnings dates source yet, so stocks are not opened.
-            return (
-                f"single stock: its earnings date is not known, so the {s['earnings_days']}-day "
-                "earnings buffer cannot be checked"
-            )
+        fund = bool(kind & FUNDS) or sym.startswith("$")
+        if not fund and self.earnings is not None and self.earnings.is_fund(sym):
+            fund = True
+        if not fund:
+            # The earnings buffer: a stock opens only when its next report is known and far
+            # enough away.
+            info = self.earnings.info(sym) if self.earnings is not None else None
+            if info is None:
+                return (
+                    "single stock with no earnings date found, so the earnings buffer cannot "
+                    "be checked (add it under Settings, Earnings dates)"
+                )
+            if info["sessions_left"] <= s["earnings_days"]:
+                return (
+                    f"earnings {info['date']} {info['label']}: within the "
+                    f"{s['earnings_days']}-session buffer"
+                )
         today = self.clock().astimezone(ET).date()
         exps = chain_mod.expirations(await self.source.expirations(sym), today)
         exp = pick_expiration(exps, s)

@@ -67,6 +67,7 @@ class PortfolioService:
         self.mode = mode
         self.rules = rules or Rules()
         self.clock = clock
+        self.earnings = None  # symbol -> next earnings report, set by the app
         self.preferences = preferences
         self.notifier = notifier
         self.include_watchlist = include_watchlist
@@ -480,6 +481,7 @@ class PortfolioService:
                     "change_pct": _num(q.get("netPercentChange")),
                     "beta": None if beta is None else round(beta, 2),
                     "ivr": ivr,
+                    "earnings": self.earnings(u) if self.earnings else None,
                     "pl": None if u_missing["pl"] else round(u_tot["pl"], 2),
                     "delta": None if u_missing["delta"] else round(u_tot["delta"], 1),
                     "delta_bw": None if delta_bw is None else round(delta_bw, 1),

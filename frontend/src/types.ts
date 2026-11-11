@@ -63,6 +63,7 @@ export interface UnderlyingView {
   change_pct: number | null;
   beta: number | null;
   ivr: IvRank | null;
+  earnings?: EarningsInfo | null;
   pl: number | null;
   delta: number | null;
   delta_bw: number | null;
@@ -122,6 +123,7 @@ export interface WatchRow {
   dte: number | null;
   spread_pct: number | null;
   atm_oi: number | null;
+  earnings?: EarningsInfo | null;
   error: string | null;
   held: boolean;
   position_delta: number | null;
@@ -381,4 +383,14 @@ export interface LiveStatus {
   on: boolean;
   refreshed_at: number | null;
   error: string | null;
+}
+
+export interface EarningsInfo {
+  date: string;
+  time: "bmo" | "amc" | null;
+  label: string;
+  source: string | null;
+  days: number;
+  exit_by: string;
+  sessions_left: number;
 }

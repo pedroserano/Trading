@@ -26,6 +26,7 @@ class WatchlistService:
         self.store = store
         self.portfolio = portfolio
         self.cache: dict[str, dict] = {}
+        self.earnings = None  # symbol -> next earnings report, set by the app
 
     async def run(self) -> None:
         while True:
@@ -118,6 +119,7 @@ class WatchlistService:
                     "dte": c.get("dte"),
                     "spread_pct": c.get("spread_pct"),
                     "atm_oi": c.get("atm_oi"),
+                    "earnings": self.earnings(sym) if self.earnings else None,
                     "error": c.get("error"),
                     "held": u is not None,
                     "position_delta": None if u is None else u["delta"],

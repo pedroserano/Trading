@@ -252,3 +252,32 @@ async def test_daily_scan_runs_once_after_the_scan_time():
     early = harness()[0]
     early.clock = lambda: datetime(2026, 11, 11, 9, 50, tzinfo=ET)
     assert await early.tick() == []
+
+
+class Earnings:
+    def __init__(self, dates):
+        self.dates = dates
+
+    def is_fund(self, symbol):
+        return False
+
+    def info(self, symbol):
+        from app.earnings import describe
+
+        d = self.dates.get(symbol)
+        return describe({"date": d, "time": "amc"}, NOW.date()) if d else None
+
+
+@pytest.mark.anyio
+async def test_single_stocks_open_when_earnings_are_known_and_far_enough():
+    scanner, _, _ = harness()
+    scanner.earnings = Earnings({"AAPL": "2027-01-28"})
+    r = await scanner.scan("sim", act=False)
+    assert "AAPL" in [c["symbol"] for c in r["candidates"]]
+    scanner.earnings = Earnings({"AAPL": "2026-11-17"})  # 4 sessions away, buffer 7
+    r = await scanner.scan("sim", act=False)
+    reasons = {x["symbol"]: x["reason"] for x in r["skipped"]}
+    assert "within the 7-session buffer" in reasons["AAPL"]
+    scanner.earnings = Earnings({})
+    r = await scanner.scan("sim", act=False)
+    assert "no earnings date found" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]

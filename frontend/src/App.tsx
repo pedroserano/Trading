@@ -1,13 +1,14 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
+import EarningsFlag from "./Earnings";
 import { AutoBadge, AutoBar, AutomationContext, AutoPanel, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
 import Settings from "./Settings";
 import OrderTicket, { actionsFor, closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
-import type { Snapshot, StrategyView, UnderlyingView } from "./types";
+import type { EarningsInfo, Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
 import Trade from "./Trade";
 import Watchlist from "./Watchlist";
@@ -398,6 +399,7 @@ function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedO
                   id={`${r.under.symbol}-${r.st.name}-${r.st.numbers.expiration}-${i}`}
                   st={r.st}
                   under={r.under.symbol}
+                  earnings={r.under.earnings}
                   open={open}
                   toggle={toggle}
                   compact={compact}
@@ -442,6 +444,7 @@ function UnderGroup(props: {
             ) : null}
           </span>
           <span className="beta">β {u.beta === null ? "–" : u.beta.toFixed(2)}</span>
+          <EarningsFlag e={u.earnings} />
         </td>
         <td className={tone(u.pl)}>{signed(u.pl)}</td>
         <td />
@@ -496,6 +499,7 @@ function StrategyRows(props: {
   toggle: (k: string) => void;
   compact: boolean;
   underSymbol?: string;
+  earnings?: EarningsInfo | null;
 }) {
   const { st, id, compact } = props;
   const n = st.numbers;
@@ -520,6 +524,7 @@ function StrategyRows(props: {
           <span className="caret">{expanded ? "▾" : "▸"}</span>
           {props.under ? <span className="sym-inline">{props.under}</span> : null}
           {st.name}
+          {props.under && !compact ? <EarningsFlag e={props.earnings} /> : null}
           {compact ? (
             <span className="sub">
               {" "}

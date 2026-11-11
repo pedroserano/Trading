@@ -29,6 +29,7 @@ RULES = {
     "tested": "Tested short strike",
     "loss": "Loss at a multiple of credit",
     "expiry": "Expiration day, short in the money",
+    "earnings": "Earnings ahead (single stocks)",
 }
 DEFAULT_SETTINGS = {
     "levels": {
@@ -37,6 +38,7 @@ DEFAULT_SETTINGS = {
         "tested": "notify",
         "loss": "notify",
         "expiry": "propose",
+        "earnings": "notify",
     },
     "dte_defined_action": "close",  # or "roll"
     "roll_target_dte": 45,
@@ -44,6 +46,9 @@ DEFAULT_SETTINGS = {
     "min_roll_ivr": 25,
     "max_rolls": 0,  # 0: no limit
     "allow_inverted": False,  # rolling the untested side past the tested strike
+    # Close single-stock trades this many sessions before the last one before the report
+    # (0: on that last session itself).
+    "earnings_close_sessions": 1,
     "min_roll_credit": 0.0,  # per unit; a roll for less is replaced by a close
     "step_cents": 1,
     "step_minutes": 3,
@@ -58,6 +63,14 @@ SETTING_FIELDS = [
     ("roll_target_dte", "Roll out to about", 14, 120, "int", "DTE"),
     ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
     ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
+    (
+        "earnings_close_sessions",
+        "Close before earnings, sessions ahead of the report (0: the last session)",
+        0,
+        20,
+        "int",
+        "sessions",
+    ),
     ("min_roll_credit", "Least credit to roll for, per unit", 0.0, 50.0, "float", "$"),
     ("step_cents", "Price step", 1, 25, "int", "cents"),
     ("step_minutes", "Step every", 1, 60, "int", "min"),
@@ -139,7 +152,13 @@ class Action:
 
 
 def decide(
-    st: dict, spot: float | None, rules, settings: dict, levels: dict, ivr: float | None = None
+    st: dict,
+    spot: float | None,
+    rules,
+    settings: dict,
+    levels: dict,
+    ivr: float | None = None,
+    earnings: dict | None = None,
 ) -> list[Action]:
     """What the rules call for on one strategy (the Positions snapshot's JSON), by priority.
 
@@ -161,6 +180,19 @@ def decide(
     )
     if levels.get("expiry", "off") != "off" and dte == 0 and itm:
         out.append(Action("expiry", "close", "Expiration day with a short strike in the money"))
+    if (
+        levels.get("earnings", "off") != "off"
+        and earnings
+        and 0 <= earnings["sessions_left"] <= settings.get("earnings_close_sessions", 1)
+        and date.fromisoformat(earnings["date"]) <= _exp(st)
+    ):
+        out.append(
+            Action(
+                "earnings",
+                "close",
+                f"Earnings {earnings['date']} {earnings['label']}: close by {earnings['exit_by']}",
+            )
+        )
     if levels.get("loss", "off") != "off" and "loss" in flags:
         out.append(Action("loss", "close", f"Loss reached {rules.loss_multiple:g}x the credit"))
     if levels.get("dte", "off") != "off" and dte is not None and 0 < dte <= rules.manage_dte:
@@ -188,6 +220,12 @@ def decide(
         elif "profit" in flags:
             out.append(Action("profit", "close", "Profit target reached"))
     return out
+
+
+def _exp(st: dict) -> date:
+    """The latest option expiration in the strategy: a report after it does not matter."""
+    days = [x["expiration"] for x in st["legs"] if x["kind"] == "OPTION" and x["expiration"]]
+    return date.fromisoformat(max(days)) if days else date.max
 
 
 def profit_target(st: dict, rules) -> float:
@@ -381,7 +419,8 @@ class AutomationService:
                         continue
                     levels = self.levels(settings)
                     ivr = (u.get("ivr") or {}).get("rank")
-                    for action in decide(s, u["price"], rules, settings, levels, ivr):
+                    acts = decide(s, u["price"], rules, settings, levels, ivr, u.get("earnings"))
+                    for action in acts:
                         await self._handle(s, u, action, levels[action.rule], settings, rules, done)
             # Proposals for trades that have closed no longer apply; the scanner's new
             # trades last for the day they were found.
