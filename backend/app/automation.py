@@ -383,9 +383,16 @@ class AutomationService:
                     ivr = (u.get("ivr") or {}).get("rank")
                     for action in decide(s, u["price"], rules, settings, levels, ivr):
                         await self._handle(s, u, action, levels[action.rule], settings, rules, done)
-            # Proposals for trades that have closed no longer apply.
+            # Proposals for trades that have closed no longer apply; the scanner's new
+            # trades last for the day they were found.
+            today = now.date().isoformat()
             for p in st["proposals"]:
-                if p["status"] == "pending" and p["trade_id"] not in open_ids:
+                if p["status"] != "pending":
+                    continue
+                if p["rule"] == "scan":
+                    if not p["key"].endswith(today):
+                        p["status"] = "expired"
+                elif p["trade_id"] not in open_ids:
                     p["status"] = "expired"
             await self._save()
             return done
@@ -397,7 +404,7 @@ class AutomationService:
     def _working(self, trade_id) -> list[dict]:
         return [
             o
-            for o in self.broker.state["orders"]
+            for o in (self.broker.state or {}).get("orders", [])
             if o["status"] == "WORKING" and str(o["trade_id"]) == str(trade_id)
         ]
 
@@ -502,11 +509,14 @@ class AutomationService:
                 settings,
                 done,
                 manual=True,
+                automanage=p.get("automanage", False),
             )
             await self._save()
             return done
 
-    async def _place_all(self, tid, action, bodies, settings, done, manual=False) -> None:
+    async def _place_all(
+        self, tid, action, bodies, settings, done, manual=False, automanage=False
+    ) -> None:
         today = self.clock().date().isoformat()
         for body in bodies:
             if not manual and self.state["counts"].get(today, 0) >= settings["daily_cap"]:
@@ -568,6 +578,8 @@ class AutomationService:
                 "natural": natural,
                 "placed_at": time.time(),
                 "stepped_at": time.time(),
+                # A new trade from the scanner: switch automanage on once it fills.
+                "automanage_on_fill": automanage,
             }
             self._log(
                 tid,
@@ -640,6 +652,16 @@ class AutomationService:
             if order is None or order["status"] != "WORKING":
                 self.state["orders"].pop(oid)
                 if order is not None and order["status"] == "FILLED":
+                    if info.get("automanage_on_fill"):
+                        new_id = order.get("trade_id")
+                        if (
+                            self.account == "live"
+                            or new_id is None
+                            or str(new_id).startswith("new:")
+                        ):
+                            new_id = f"c-{order['id']}"  # live trades are named by order
+                        self.state["trades"][str(new_id)] = {"enabled": True}
+                        self._log(new_id, info["rule"], "New trade filled; automanage on")
                     fill = order.get("fill_net")
                     self._log(
                         info["trade_id"],

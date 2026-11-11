@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getJson } from "./api";
+import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
 import type { WatchRow } from "./types";
 
@@ -73,6 +74,7 @@ export default function Watchlist() {
   }
   return (
     <>
+      <Scanner />
       <div className="toolbar">
         <span className="dim-text">
           IV and liquidity refresh every 15 minutes. Click a row to open it on the Trade screen.

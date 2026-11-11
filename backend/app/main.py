@@ -24,6 +24,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import chain as chain_mod
 from . import dashboard as dash
 from . import guards, sheet_import
+from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
 from .automation import (
@@ -378,6 +379,7 @@ def create_app(
                 "simulated publisher": sim_portfolio.publisher,
                 "automation": automations["sim"].run,
                 "live automation": automations["live"].run,
+                "scanner": scanner.run,
             }
             if stream is not None:
                 services["streaming"] = stream.run
@@ -504,6 +506,8 @@ def create_app(
                 "rule_fields": RULE_FIELDS,
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
+                "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
+                "scan_fields": scan_mod.FIELDS,
                 "auto_rules": RULES,
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
@@ -608,6 +612,17 @@ def create_app(
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
         return RedirectResponse(settings_url("watchlist"), status_code=303)
+
+    @app.post("/scanner/settings", dependencies=[Depends(require_login)])
+    async def scanner_settings_save(request: Request):
+        form = dict(await request.form())
+        try:
+            new = scan_mod.parse_form(form, await store.get_setting(scan_mod.SETTINGS_KEY))
+            await store.set_setting(scan_mod.SETTINGS_KEY, new)
+            request.session["notice"] = "Scanner settings saved."
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("scanner"), status_code=303)
 
     @app.post("/live/settings", dependencies=[Depends(require_login)])
     async def live_settings_save(request: Request):
@@ -1030,6 +1045,29 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e)) from e
         portfolios[account].refresh_soon()
         return await automations[account].view()
+
+    scanner = scan_mod.Scanner(
+        store,
+        source,
+        portfolios,
+        automations,
+        watchlist,
+        preferences,
+        live_broker,
+        clock=lambda: portfolio.clock(),
+    )
+
+    @app.get("/api/scanner", dependencies=[Depends(require_login)])
+    async def api_scanner(account: Acct = "sim"):
+        return await scanner.view(account)
+
+    @app.post("/api/scanner/run", dependencies=[Depends(require_login)])
+    async def api_scanner_run(account: Acct = "sim", act: bool = True):
+        try:
+            await scanner.scan(account, act=act)
+        except SchwabError as e:
+            raise _schwab_errors(e) from e
+        return await scanner.view(account)
 
     @app.get("/api/live", dependencies=[Depends(require_login)])
     async def api_live():

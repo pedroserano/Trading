@@ -165,6 +165,7 @@ so the container picks them up.
 | `DEMO_MODE` | `true` shows a simulated account. Leave `false` for real use. |
 | `SIM_START_CASH` | Starting cash of the simulated account. Default 100000. Resetting the simulated account from the Activity page can set a different amount. |
 | `SIM_COMMISSION` | Commission per contract for the simulated account. Default 0.45. |
+| `LIVE_TRADING` | `true` lets the app send live orders to Schwab. It is the server's half of two switches: live orders also need the Live trading switch in Settings. Leave unset (off) to keep the app preview-only for the Schwab account. |
 | `MAX_CONTRACTS_PER_LEG` | Hard limit on contracts per leg in any order, simulated or live. Default 10. |
 
 ## One-tap Schwab sign-in (optional)

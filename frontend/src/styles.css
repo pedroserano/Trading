@@ -426,3 +426,10 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .json-pair pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 11px;
   overflow-x: auto; max-height: 360px; margin: 4px 0 0; }
 @media (max-width: 700px) { .json-pair { grid-template-columns: 1fr; } }
+
+/* Scanner */
+.scanner { margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.scanner .toolbar { justify-content: space-between; flex-wrap: wrap; }
+.scanner button.link { background: none; border: 0; color: var(--accent); padding: 0; cursor: pointer; font: inherit; }
+.scanner .skipped { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--dim); }
+.scanner .skipped li { padding: 2px 0; }

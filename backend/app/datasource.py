@@ -256,6 +256,8 @@ class DemoDataSource:
                 p = self._price_of(sym)
                 out[sym] = {
                     "assetMainType": "EQUITY",
+                    # As Schwab marks funds; AAPL is a single stock.
+                    "assetSubType": "ETF" if sym in ("SPY", "QQQ", "IWM") else None,
                     "quote": {
                         "mark": round(p, 2),
                         "lastPrice": round(p, 2),
