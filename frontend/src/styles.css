@@ -37,14 +37,14 @@ header.top {
 .stats { display: flex; gap: 8px 16px; flex-wrap: nowrap; flex: 1; }
 /* Too narrow for the stats beside the menu bar: they take a line of their own below it. */
 header.top.stacked .stats { order: 3; flex-basis: 100%; flex-wrap: wrap; }
-header.top.stacked .right { margin-left: auto; }
 .stat-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
 .stat-value { font-size: 15px; font-weight: 500; white-space: nowrap; }
 .sub { color: var(--dim); font-weight: 400; font-size: 12px; }
 .meter { display: block; height: 3px; margin-top: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--accent); }
 .meter span.over { background: var(--warn); }
-.right { display: flex; align-items: center; gap: 16px; font-size: 13px; }
+.right { display: inline-flex; align-items: center; gap: 16px; font-size: 13px; margin-left: 12px; }
+.tabs { align-items: center; }
 .light { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }

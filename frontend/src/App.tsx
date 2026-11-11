@@ -183,7 +183,7 @@ function Stat(props: { label: string; children: React.ReactNode; title?: string 
   );
 }
 
-function Nav({ route }: { route: Route }) {
+function Nav({ route, children }: { route: Route; children?: React.ReactNode }) {
   const tab = (page: Route["page"], href: string, label: string) => (
     <a href={href} className={route.page === page ? "active" : ""} aria-current={route.page === page ? "page" : undefined}>
       {label}
@@ -197,6 +197,7 @@ function Nav({ route }: { route: Route }) {
       {tab("activity", "#/activity", "Activity")}
       {tab("dashboard", "#/dashboard", "Dashboard")}
       {tab("settings", "#/settings", "Settings")}
+      {children}
     </nav>
   );
 }
@@ -266,7 +267,21 @@ function Header(props: {
             …{a.last4} {a.type ? a.type.toLowerCase() : ""}
           </span>
         ) : null}
-        <Nav route={route} />
+        <Nav route={route}>
+          {/* Right after Settings at every width, wrapping with the menu. */}
+          <span className="right">
+            <DataLight s={s} link={link} />
+            {s.mode === "live" ? (
+              <a
+                href="#/settings"
+                className={`signin ${exp !== null && exp < 2 ? "warn-text" : ""}`}
+                title="Days until the Schwab sign-in expires"
+              >
+                Schwab {exp === null ? "–" : `${exp.toFixed(1)}d`}
+              </a>
+            ) : null}
+          </span>
+        </Nav>
       </div>
       <div className="stats" ref={stacked.stats}>
         <Stat label="Net liq">{money(a?.net_liq)}</Stat>
@@ -300,18 +315,6 @@ function Header(props: {
         >
           {spyIvr && spyIvr.rank !== null ? Math.round(spyIvr.rank) : "–"}
         </Stat>
-      </div>
-      <div className="right">
-        <DataLight s={s} link={link} />
-        {s.mode === "live" ? (
-          <a
-            href="#/settings"
-            className={`signin ${exp !== null && exp < 2 ? "warn-text" : ""}`}
-            title="Days until the Schwab sign-in expires"
-          >
-            Schwab {exp === null ? "–" : `${exp.toFixed(1)}d`}
-          </a>
-        ) : null}
       </div>
     </header>
   );
