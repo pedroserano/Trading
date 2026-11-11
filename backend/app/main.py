@@ -1051,17 +1051,28 @@ def create_app(
         return {"ok": True}
 
     @app.get("/api/activity", dependencies=[Depends(require_login)])
-    async def api_activity(account: Literal["live", "sim"] = "live"):
+    async def api_activity(
+        account: Literal["live", "sim"] = "live",
+        source: Literal["all", "sheet", "schwab"] = "all",
+        limit: int = 300,
+    ):
+        limit = max(1, min(limit, 20000))
         if account == "live":
             chs = chain_service.result["chains"]
+            counts = {"all": len(chs)}
+            for c in chs:
+                counts[c.get("source") or "schwab"] = counts.get(c.get("source") or "schwab", 0) + 1
+            shown = [c for c in chs if source == "all" or (c.get("source") or "schwab") == source]
             return {
                 "account": "live",
                 "orders": [],
                 "trades": sorted(
-                    chs,
+                    shown,
                     # Open chains first, then the most recently closed.
                     key=lambda c: (c["status"] != "open", -(c["closed_at"] or c["opened_at"] or 0)),
-                )[:300],
+                )[:limit],
+                "trade_counts": counts,
+                "trades_shown_of": len(shown),
                 "stats": stats(chs),
                 "proposals": chain_service.result["proposals"],
                 "mismatches": chain_service.result["mismatches"],

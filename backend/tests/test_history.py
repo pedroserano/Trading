@@ -423,6 +423,12 @@ def test_import_dashboard_review_and_export_endpoints(client):
     assert again.status_code == 303 and "8 unchanged" in client.get("/connect").text
     h = client.get("/api/history").json()
     assert h["rows"] == 8 and len(h["problems"]) == 1
+    act = client.get("/api/activity").json()
+    counts = act["trade_counts"]
+    assert counts["sheet"] >= 4 and counts["all"] == counts["sheet"] + counts.get("schwab", 0)
+    only = client.get("/api/activity?source=sheet&limit=2").json()
+    assert len(only["trades"]) == 2 and only["trades_shown_of"] == counts["sheet"]
+    assert {t["source"] for t in only["trades"]} == {"sheet"}
     dash = client.get("/api/dashboard?futures=true").json()
     assert dash["count"] >= 4 and dash["overview"]["total"] > 0
     assert client.get("/api/dashboard?account=sim").json()["count"] == 0

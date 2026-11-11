@@ -326,6 +326,8 @@ export interface Activity {
   error?: string | null;
   orders: SimOrder[];
   trades: SimTrade[];
+  trade_counts?: Record<string, number>;
+  trades_shown_of?: number;
   stats: StatRow[];
 }
 

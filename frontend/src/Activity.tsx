@@ -16,15 +16,17 @@ export default function Activity() {
   const [data, setData] = useState<ActivityData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [source, setSource] = useState<"all" | "sheet" | "schwab">("all");
+  const [limit, setLimit] = useState(300);
 
   const load = useCallback(async () => {
     try {
-      setData(await getJson<ActivityData>(`/api/activity?account=${account}`));
+      setData(await getJson<ActivityData>(`/api/activity?account=${account}&source=${source}&limit=${limit}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [account]);
+  }, [account, source, limit]);
 
   useEffect(() => {
     setData(null);
@@ -144,6 +146,34 @@ export default function Activity() {
       ) : null}
 
       <h3>Trades</h3>
+      {live && data.trade_counts ? (
+        <div className="toolbar">
+          <div className="seg" role="group" aria-label="Trades from">
+            {(
+              [
+                ["all", "All"],
+                ["sheet", "Spreadsheet"],
+                ["schwab", "Schwab"],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                aria-pressed={source === k}
+                onClick={() => {
+                  setSource(k);
+                  setLimit(300);
+                }}
+              >
+                {label} ({(data.trade_counts?.[k] ?? 0).toLocaleString("en-US")})
+              </button>
+            ))}
+          </div>
+          <span className="dim-text">
+            Showing {data.trades.length.toLocaleString("en-US")} of {(data.trades_shown_of ?? 0).toLocaleString("en-US")}: open
+            trades first, then the most recently closed.
+          </span>
+        </div>
+      ) : null}
       {data.trades.length ? (
         <div className="table-wrap">
           <table className="positions">
@@ -183,6 +213,13 @@ export default function Activity() {
       ) : (
         <p className="dim-text">{live ? "No trades found in the Schwab history yet." : "No trades yet."}</p>
       )}
+      {live && data.trades_shown_of && data.trades.length < data.trades_shown_of ? (
+        <p>
+          <button type="button" className="small" onClick={() => setLimit(limit + 500)}>
+            Show 500 more
+          </button>
+        </p>
+      ) : null}
 
       <h3>Results by strategy</h3>
       {data.stats.length ? (
