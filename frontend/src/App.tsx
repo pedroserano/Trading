@@ -2,6 +2,7 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
+import MarketStrip from "./MarketStrip";
 import { AutoBadge, AutoBar, AutomationContext, AutoPanel, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
@@ -114,6 +115,7 @@ export default function App() {
         {route.page === "trade" ? <Trade symbol={route.symbol} /> : null}
         {route.page === "positions" ? (
           <>
+        <MarketStrip />
         <div className="toolbar">
           <div className="seg" role="group" aria-label="Group positions">
             <button aria-pressed={view === "underlying"} onClick={() => setView("underlying")}>

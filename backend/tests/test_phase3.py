@@ -683,3 +683,11 @@ def test_chart_gives_candles_strikes_and_the_year_range(client):
     assert r["high52"] == max(x["close"] for x in c)
     # Positions load in the background, which tests do not run: none to draw yet.
     assert r["strikes"] == [] and "earnings" in r
+
+
+def test_market_strip_in_demo(client):
+    r = client.get("/api/market").json()
+    labels = [i["label"] for i in r["items"]]
+    assert labels[:4] == ["S&P", "Nasdaq", "Russell", "Dow"] and "Bitcoin" in labels
+    es = r["items"][0]
+    assert es["contract"] == "/ESZ26" and es["price"] > 1000 and es["change_pct"] is not None

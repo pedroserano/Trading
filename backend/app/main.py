@@ -45,6 +45,7 @@ from .extremes import compute as compute_extreme
 from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
 from .live import LiveBroker
+from .market import MarketService
 from .notify import PushoverNotifier, ReminderService
 from .order_check import OrderCheckService
 from .orders import (
@@ -393,6 +394,7 @@ def create_app(
     )
     portfolio.earnings = sim_portfolio.earnings = watchlist.earnings = earnings.info
     history = PriceHistory(store, source, earnings_symbols, clock=lambda: portfolio.clock())
+    market = MarketService(source, clock=lambda: portfolio.clock())
 
     async def watch_extreme(sym, price, change, iv30):
         closes = history.get(sym)
@@ -425,6 +427,7 @@ def create_app(
                 "trade chains": chain_service.run,
                 "earnings dates": earnings.run,
                 "price extremes": history.run,
+                "market strip": market.run,
                 "order check": order_check.run,
                 "live orders": live_broker.run,
                 "price history": prices_service.run,
@@ -787,6 +790,15 @@ def create_app(
         if isinstance(e, SchwabNotConnected):
             return HTTPException(status_code=409, detail="Schwab is not connected")
         return HTTPException(status_code=502, detail=str(e))
+
+    @app.get("/api/market", dependencies=[Depends(require_login)])
+    async def api_market():
+        if market.at is None:
+            try:
+                await market.refresh()
+            except Exception as e:
+                market.error = f"{type(e).__name__}: {e}"
+        return market.view()
 
     @app.get("/api/watchlist", dependencies=[Depends(require_login)])
     async def api_watchlist():

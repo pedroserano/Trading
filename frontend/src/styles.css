@@ -465,3 +465,18 @@ td .earn { margin-left: 0; }
 .chart-box { height: 280px; }
 @media (max-width: 700px) { .chart-box { height: 220px; } }
 .chart-loading { height: 318px; color: var(--dim); font-size: 12px; }
+
+/* Market strip on Positions */
+.market-strip { display: flex; flex-wrap: wrap; margin: 0 0 10px; padding: 2px 0;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.mkt { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 10px; white-space: nowrap;
+  font-size: 12px; font-variant-numeric: tabular-nums; cursor: default; }
+.mkt + .mkt { border-left: 1px solid var(--line); }
+/* Phones: one line that scrolls sideways. */
+@media (max-width: 700px) {
+  .market-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+}
+.mkt-label { color: var(--dim); }
+.mkt-price { color: var(--text); font-weight: 500; }
+.mkt-chg.pos { color: var(--pos); }
+.mkt-chg.neg { color: var(--neg); }

@@ -131,6 +131,21 @@ class SchwabDataSource:
 
 # Demo simulator ---------------------------------------------------------------------------
 
+_DEMO_FUTURES = {
+    "/ES": 5905.0,
+    "/NQ": 21020.0,
+    "/RTY": 2251.0,
+    "/YM": 43480.0,
+    "/CL": 71.2,
+    "/GC": 2652.0,
+    "/SI": 31.2,
+    "/ZB": 117.5,
+    "/ZN": 109.8,
+    "/6E": 1.084,
+    "/6J": 0.00655,
+    "/BTC": 91000.0,
+}
+
 _DEMO_UNDERLYINGS = {
     # symbol: (price, base IV as fraction, beta)
     "SPY": (590.0, 0.15, 1.0),
@@ -275,6 +290,15 @@ class DemoDataSource:
                 out[sym] = {"assetMainType": "INDEX", "quote": {"lastPrice": round(self.vix, 2)}}
             elif sym in self.prices or not parse_option_symbol(sym):
                 p = self._price_of(sym)
+                if sym in _DEMO_FUTURES:
+                    prev = self.prev_close[sym]
+                    out[sym] = {
+                        "assetMainType": "FUTURE",
+                        "symbol": sym,
+                        "reference": {"futureActiveSymbol": f"{sym}Z26"},
+                        "quote": {"lastPrice": round(p, 6), "netChange": round(p - prev, 6)},
+                    }
+                    continue
                 out[sym] = {
                     "assetMainType": "EQUITY",
                     # As Schwab marks funds; AAPL is a single stock.
@@ -329,9 +353,15 @@ class DemoDataSource:
 
     def _price_of(self, symbol: str) -> float:
         if symbol not in self.prices:
-            # Unknown demo symbols get a stable made-up price.
-            self.prices[symbol] = 50.0 + sum(map(ord, symbol)) % 250
-            self.prev_close[symbol] = self.prices[symbol]
+            # Demo futures at plausible levels, a little off yesterday's settlement; other
+            # unknown symbols get a stable made-up price.
+            base = _DEMO_FUTURES.get(symbol)
+            if base is not None:
+                self.prices[symbol] = base * (1 + self.rng.uniform(-0.012, 0.012))
+                self.prev_close[symbol] = base
+            else:
+                self.prices[symbol] = 50.0 + sum(map(ord, symbol)) % 250
+                self.prev_close[symbol] = self.prices[symbol]
         return self.prices[symbol]
 
     def _demo_expirations(self, until: date) -> list[date]:
