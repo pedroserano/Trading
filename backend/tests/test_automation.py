@@ -87,9 +87,10 @@ def test_decide_follows_the_rules():
     assert ("dte", "close") in kinds(low) and "IV rank 12" in low[0].reason
     assert ("dte", "roll") in kinds(decide(strat(dte=20), 590, r, s, ALL, ivr=40))
     assert ("tested", "roll_untested") in kinds(decide(strat(flags=["tested"]), 590, r, s, ALL))
-    assert ("tested", "notify") in kinds(
-        decide(strat(name="Iron condor", flags=["tested"], defined=True), 590, r, s, ALL)
-    )
+    ic = strat(name="Iron condor", flags=["tested"], defined=True)
+    assert ("tested", "roll_untested_vertical") in kinds(decide(ic, 590, r, s, ALL))
+    no_ic = {**s, "roll_ic_untested": False}
+    assert ("tested", "notify") in kinds(decide(ic, 590, r, no_ic, ALL))
     assert kinds(decide(strat(flags=["loss"]), 590, r, s, ALL))[0] == ("loss", "close")
     assert kinds(decide(strat(dte=0), 620, r, s, ALL))[0] == ("expiry", "close")
     assert not any(a.rule == "expiry" for a in decide(strat(dte=0), 580, r, s, ALL))
@@ -376,3 +377,144 @@ async def test_daily_cap_pauses_automation():
 
 def test_action_is_a_plain_record():
     assert Action("loss", "close", "x").kind == "close"
+
+
+class WideSource(Source):
+    """A chain every $5 from 540 to 640 around 590, deltas moving 0.012 a dollar."""
+
+    async def option_chain(self, symbol, start, end, strike_count=None):
+        exp = start
+        key = f"{exp.isoformat()}:{(exp - NOW.date()).days}"
+        puts, calls = {}, {}
+        for k in range(540, 645, 5):
+            pd = -max(0.02, min(0.98, 0.5 - (590 - k) * 0.012))
+            cd = max(0.02, min(0.98, 0.5 - (k - 590) * 0.012))
+            puts[f"{k:.1f}"] = [{"symbol": sym("P", k, exp), "bid": 1.0, "ask": 1.1, "delta": pd}]
+            calls[f"{k:.1f}"] = [{"symbol": sym("C", k, exp), "bid": 1.0, "ask": 1.1, "delta": cd}]
+        return {
+            "underlyingPrice": 590,
+            "putExpDateMap": {key: puts},
+            "callExpDateMap": {key: calls},
+        }
+
+
+def make_tested_svc():
+    h = Harness([], QUOTES)
+    h.svc.source = WideSource()
+    return h.svc
+
+
+def opened(body):
+    return sorted(x["symbol"] for x in body["legs"] if x["effect"] == "open")
+
+
+@pytest.mark.anyio
+async def test_untested_side_rolls_to_the_tested_delta_or_a_fixed_one():
+    svc = make_tested_svc()
+    await svc.load()
+    st = strat(legs=[leg("P", 555, -1, -0.08), leg("C", 600, -1, 0.38)], flags=["tested"])
+    u = {"symbol": "SPY", "price": 596}
+    base = {"account": "sim", "trade_id": 1, "duration": "DAY"}
+    act = Action("tested", "roll_untested", "x")
+    (b,) = await svc._untested_bodies(st, u, act, merged_settings({}), base)
+    assert opened(b) == [sym("P", 580)]  # 0.38 delta, matching the tested call
+    (b,) = await svc._untested_bodies(
+        st, u, act, merged_settings({"untested_target": "fixed"}), base
+    )
+    assert opened(b) == [sym("P", 575)]  # nearest 0.30
+
+
+@pytest.mark.anyio
+async def test_iron_condor_rolls_its_untested_vertical_at_the_same_width():
+    svc = make_tested_svc()
+    await svc.load()
+    st = strat(
+        name="Iron condor",
+        defined=True,
+        flags=["tested"],
+        legs=[
+            leg("P", 545, 1, -0.04),
+            leg("P", 555, -1, -0.08),
+            leg("C", 600, -1, 0.38),
+            leg("C", 610, 1, 0.26),
+        ],
+    )
+    u = {"symbol": "SPY", "price": 596}
+    base = {"account": "sim", "trade_id": 1, "duration": "DAY"}
+    (b,) = await svc._untested_bodies(
+        st, u, Action("tested", "roll_untested_vertical", "x"), merged_settings({}), base
+    )
+    assert len(b["legs"]) == 4 and opened(b) == sorted([sym("P", 570), sym("P", 580)])
+    closed = {x["symbol"]: x["quantity"] for x in b["legs"] if x["effect"] == "close"}
+    assert closed == {sym("P", 555): 1, sym("P", 545): -1}
+
+
+@pytest.mark.anyio
+async def test_untested_rolls_stop_at_the_limit_for_the_expiration():
+    svc = make_tested_svc()
+    await svc.load()
+    st = strat(legs=[leg("P", 555, -1, -0.08), leg("C", 600, -1, 0.38)], flags=["tested"])
+    svc.state["untested"] = {f"1:{EXP.isoformat()}": 2}
+    done = []
+    await svc._handle(
+        st,
+        {"symbol": "SPY", "price": 596},
+        Action("tested", "roll_untested", "x"),
+        "auto",
+        merged_settings({}),
+        Rules(),
+        done,
+    )
+    assert done == [] and any("roll limit" in x["text"] for x in svc.state["log"])
+
+
+def test_a_lone_short_option_in_the_money_rolls_out_only_when_switched_on():
+    s = merged_settings({})
+    put = strat(name="Short put", legs=[leg("P", 595, -1, -0.55)], flags=["tested"])
+    assert ("tested", "notify") in kinds(decide(put, 590, Rules(), s, ALL))
+    on = {**s, "roll_single_itm": True}
+    assert ("tested", "roll") in kinds(decide(put, 590, Rules(), on, ALL))
+    # Tested by delta but not in the money: no roll out yet.
+    otm = strat(name="Short put", legs=[leg("P", 585, -1, -0.35)], flags=["tested"])
+    assert ("tested", "notify") in kinds(decide(otm, 590, Rules(), on, ALL))
+
+
+@pytest.mark.anyio
+async def test_placing_an_untested_roll_counts_toward_the_limit():
+    h = Harness([], QUOTES)
+    tid = await h.open_strangle()
+    await h.svc.load()
+    body = {
+        "account": "sim",
+        "trade_id": tid,
+        "duration": "DAY",
+        "intent": "roll",
+        "_expiration": EXP.isoformat(),
+        "legs": [
+            {"symbol": sym("P", 555), "quantity": 1, "effect": "close"},
+            {"symbol": sym("P", 555, NEXT), "quantity": -1, "effect": "open"},
+        ],
+    }
+    done = []
+    await h.svc._place_all(
+        tid, Action("tested", "roll_untested", "x"), [body], merged_settings({}), done
+    )
+    assert done == ["place tested"]
+    assert h.svc.state["untested"] == {f"{tid}:{EXP.isoformat()}": 1}
+
+
+def test_tested_side_settings_from_the_form():
+    from app import automation as a
+
+    s = a.parse_settings(
+        {
+            "_form": "automation",
+            "untested_target": "fixed",
+            "roll_single_itm": "on",
+            "max_untested_rolls": "3",
+        },
+        None,
+    )
+    assert s["untested_target"] == "fixed" and s["roll_single_itm"] is True
+    assert s["roll_ic_untested"] is False  # unticked on that form
+    assert s["max_untested_rolls"] == 3

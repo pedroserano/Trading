@@ -172,6 +172,21 @@
         </span>
       </div>
     {% endfor %}
+    <div class="rule">
+      <label for="a-ut">Tested side: roll the untested side to</label>
+      <span class="rule-input">
+        <select id="a-ut" name="untested_target">
+          <option value="match" {% if auto.untested_target == "match" %}selected{% endif %}>Tested side's delta</option>
+          <option value="fixed" {% if auto.untested_target == "fixed" %}selected{% endif %}>Fixed delta ({{ rules.tested_delta }})</option>
+        </select>
+      </span>
+    </div>
+    <p class="dim">Rolling the untested side closer collects more credit and brings the trade back
+       toward neutral; matching the tested side's delta re-centres it.</p>
+    <p><label><input type="checkbox" name="roll_ic_untested" {% if auto.roll_ic_untested %}checked{% endif %}>
+       Iron condors too: roll the untested vertical closer at the same width</label></p>
+    <p><label><input type="checkbox" name="roll_single_itm" {% if auto.roll_single_itm %}checked{% endif %}>
+       A lone short put or call in the money: roll it out in time for a credit</label></p>
     <p><label><input type="checkbox" name="allow_inverted" {% if auto.allow_inverted %}checked{% endif %}>
        Let a tested strangle go inverted (roll the untested side past the tested strike)</label></p>
     <div class="rule">

@@ -36,10 +36,11 @@ RULE_NOTES = {
     "max_underlying_bp": "Hard limit: an opening order that would take one underlying's buying "
     "power above this share of net liq is refused, for you, automanage and the scanner.",
     "max_index_bp": "The same limit for SPY, QQQ, IWM, DIA and the SPX, XSP, NDX and RUT indexes.",
-    "margin_type": "Choosing one saves at once and resets the buying-power limits to the margin type's defaults: "
-    "under portfolio margin each one is half the Reg T figure (one underlying 7.5%, an index "
-    "25%, one scanner or live trade 2.5%, the VIX ceiling and the ticket's size guides halved), "
-    "because the same buying power carries about twice the exposure. You can adjust them after.",
+    "margin_type": "Choosing one saves at once and resets the buying-power limits to the "
+    "margin type's defaults: under portfolio margin each one is half the Reg T figure (one "
+    "underlying 7.5%, an index 25%, one scanner or live trade 2.5%, the VIX ceiling and the "
+    "ticket's size guides halved), because the same buying power carries about twice the "
+    "exposure. You can adjust them after.",
     "block_over_ceiling": "Hard limit: an opening order that would take total buying power in "
     "use above the ceiling for the current VIX is refused. Unticked, it is only a warning.",
 }

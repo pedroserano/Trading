@@ -46,6 +46,11 @@ DEFAULT_SETTINGS = {
     "min_roll_ivr": 25,
     "max_rolls": 0,  # 0: no limit
     "allow_inverted": False,  # rolling the untested side past the tested strike
+    # A tested side, the tastytrade way: roll the untested side closer for a credit.
+    "untested_target": "match",  # "match": the tested side's delta; "fixed": the tested delta
+    "roll_ic_untested": True,  # iron condors roll their untested vertical, same width
+    "max_untested_rolls": 2,  # per expiration; then the DTE rule takes over
+    "roll_single_itm": False,  # a lone short put or call in the money rolls out for a credit
     # Close single-stock trades this many sessions before the last one before the report
     # (0: on that last session itself).
     "earnings_close_sessions": 1,
@@ -63,6 +68,7 @@ SETTING_FIELDS = [
     ("roll_target_dte", "Roll out to about", 14, 120, "int", "DTE"),
     ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
     ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
+    ("max_untested_rolls", "Untested-side rolls per expiration, at most", 0, 10, "int", "rolls"),
     (
         "earnings_close_sessions",
         "Close before earnings, sessions ahead of the report (0: the last session)",
@@ -105,6 +111,10 @@ def parse_settings(form: dict, current: dict) -> dict:
         out["dte_defined_action"] = form["dte_defined_action"]
     if form.get("_form") == "automation":  # checkboxes are only sent when ticked
         out["allow_inverted"] = form.get("allow_inverted") in ("on", "true", "1")
+        out["roll_ic_untested"] = form.get("roll_ic_untested") in ("on", "true", "1")
+        out["roll_single_itm"] = form.get("roll_single_itm") in ("on", "true", "1")
+    if form.get("untested_target") in ("match", "fixed"):
+        out["untested_target"] = form["untested_target"]
     for key, label, lo, hi, kind, _unit in SETTING_FIELDS:
         if key not in form:
             continue
@@ -212,8 +222,33 @@ def decide(
         else:
             out.append(Action("dte", "roll", f"{dte} DTE: roll out for a credit"))
     if levels.get("tested", "off") != "off" and "tested" in flags:
-        kind = "roll_untested" if st["name"] in STRANGLES else "notify"
-        out.append(Action("tested", kind, "A short strike is tested"))
+        name = st["name"]
+        if name in STRANGLES:
+            out.append(
+                Action(
+                    "tested",
+                    "roll_untested",
+                    "A short strike is tested: roll the untested side closer",
+                )
+            )
+        elif name == "Iron condor" and settings.get("roll_ic_untested", True):
+            out.append(
+                Action(
+                    "tested",
+                    "roll_untested_vertical",
+                    "A short strike is tested: roll the untested vertical closer",
+                )
+            )
+        elif name in ("Short put", "Short call") and itm and settings.get("roll_single_itm"):
+            out.append(
+                Action(
+                    "tested",
+                    "roll",
+                    "The short strike is in the money: roll out in time for a credit",
+                )
+            )
+        else:
+            out.append(Action("tested", "notify", "A short strike is tested"))
     if levels.get("profit", "off") != "off" and n["open_value"] > 0:
         if levels["profit"] == "auto":
             out.append(Action("profit", "target", "Profit target order resting at the broker"))
@@ -458,6 +493,19 @@ class AutomationService:
         if action.kind == "target":
             await self._ensure_target(s, u, rules, done)
             return
+        if action.kind.startswith("roll_untested"):
+            made = self.state.setdefault("untested", {}).get(
+                f"{tid}:{s['numbers']['expiration']}", 0
+            )
+            if made >= settings.get("max_untested_rolls", 2):
+                if await self._notify(
+                    f"untested-cap:{tid}:{s['numbers']['expiration']}",
+                    f"{u['symbol']} {s['name']}",
+                    f"Still tested after {made} untested-side rolls this expiration; "
+                    "no more rolls until the DTE rule acts",
+                ):
+                    self._log(tid, action.rule, "Untested-side roll limit reached; notified")
+                return
         # Close, roll and roll-untested act once per key (trade, rule, expiration, rolls),
         # and only when no automatic order is already working on the trade.
         if self._busy(tid):
@@ -609,6 +657,12 @@ class AutomationService:
                 await self._notify(f"refused:{tid}:{today}", "Automatic order refused", str(e))
                 return
             self.state["counts"][today] = self.state["counts"].get(today, 0) + 1
+            if action.kind.startswith("roll_untested"):
+                exp_key = body.get("_expiration")
+                if exp_key:
+                    k = f"{tid}:{exp_key}"
+                    u = self.state.setdefault("untested", {})
+                    u[k] = u.get(k, 0) + 1
             self.state["orders"][str(order["id"])] = {
                 "trade_id": str(tid),
                 "rule": action.rule,
@@ -809,54 +863,72 @@ class AutomationService:
                     )
                 out.append({**base, "intent": "roll", "legs": body_legs})
             return out
-        if action.kind == "roll_untested":
-            shorts = [x for x in s["legs"] if x["kind"] == "OPTION" and x["quantity"] < 0]
-            if len(shorts) != 2 or any(x["delta"] is None for x in shorts):
-                return []
-            untested = min(shorts, key=lambda x: abs(x["delta"]))
-            exp = date.fromisoformat(untested["expiration"])
-            chain = chain_mod.chain_rows(
-                await self.source.option_chain(u["symbol"], exp, exp, strike_count=None) or {}
-            )
-            side = "call" if untested["put_call"] == "C" else "put"
-            rules = await self.preferences.rules()
-            cands = [r for r in chain["rows"] if r[side] and r[side]["delta"] is not None]
-            if not settings.get("allow_inverted"):
-                # Keep the put below the call: never roll the untested side past the tested.
-                tested = next(x for x in shorts if x is not untested)
-                cands = [
-                    r
-                    for r in cands
-                    if (
-                        r["strike"] <= tested["strike"]
-                        if side == "put"
-                        else r["strike"] >= tested["strike"]
-                    )
-                ]
-            if not cands:
-                return []
-            best = min(cands, key=lambda r: abs(abs(r[side]["delta"]) - rules.tested_delta))
-            if best[side]["symbol"] == untested["symbol"]:
-                return []
-            return [
-                {
-                    **base,
-                    "intent": "roll",
-                    "legs": [
-                        {
-                            "symbol": untested["symbol"],
-                            "quantity": -int(untested["quantity"]),
-                            "effect": "close",
-                        },
-                        {
-                            "symbol": best[side]["symbol"],
-                            "quantity": int(untested["quantity"]),
-                            "effect": "open",
-                        },
-                    ],
-                }
-            ]
+        if action.kind in ("roll_untested", "roll_untested_vertical"):
+            return await self._untested_bodies(s, u, action, settings, base)
         return []
+
+    async def _untested_bodies(self, s, u, action: Action, settings: dict, base: dict) -> list:
+        """Rolls the untested side closer for a credit: a strangle's untested short, or an
+        iron condor's untested vertical at the same width. The target is the tested side's
+        delta (re-centring the trade) or the fixed tested delta, and the untested short never
+        crosses the tested strike unless going inverted is allowed."""
+        opts = [x for x in s["legs"] if x["kind"] == "OPTION"]
+        shorts = [x for x in opts if x["quantity"] < 0]
+        if len(shorts) != 2 or any(x["delta"] is None for x in shorts):
+            return []
+        untested = min(shorts, key=lambda x: abs(x["delta"]))
+        tested = next(x for x in shorts if x is not untested)
+        rules = await self.preferences.rules()
+        target = (
+            min(abs(tested["delta"]), 0.5)
+            if settings.get("untested_target", "match") == "match"
+            else rules.tested_delta
+        )
+        exp = date.fromisoformat(untested["expiration"])
+        chain = chain_mod.chain_rows(
+            await self.source.option_chain(u["symbol"], exp, exp, strike_count=None) or {}
+        )
+        side = "call" if untested["put_call"] == "C" else "put"
+        rows = {r["strike"]: r for r in chain["rows"] if r[side] and r[side].get("symbol")}
+        cands = [r for r in rows.values() if r[side]["delta"] is not None]
+        if not settings.get("allow_inverted"):
+            cands = [
+                r
+                for r in cands
+                if (
+                    r["strike"] <= tested["strike"]
+                    if side == "put"
+                    else r["strike"] >= tested["strike"]
+                )
+            ]
+        if not cands:
+            return []
+        best = min(cands, key=lambda r: abs(abs(r[side]["delta"]) - target))
+        if best[side]["symbol"] == untested["symbol"]:
+            return []
+        n = int(untested["quantity"])
+        legs = [
+            {"symbol": untested["symbol"], "quantity": -n, "effect": "close"},
+            {"symbol": best[side]["symbol"], "quantity": n, "effect": "open"},
+        ]
+        if action.kind == "roll_untested_vertical":
+            long_leg = next(
+                (x for x in opts if x["quantity"] > 0 and x["put_call"] == untested["put_call"]),
+                None,
+            )
+            if long_leg is None:
+                return []
+            width = abs(untested["strike"] - long_leg["strike"])
+            k = best["strike"] - width if side == "put" else best["strike"] + width
+            wing = rows.get(k)
+            if wing is None:
+                return []  # no strike at the same width
+            m = int(long_leg["quantity"])
+            legs += [
+                {"symbol": long_leg["symbol"], "quantity": -m, "effect": "close"},
+                {"symbol": wing[side]["symbol"], "quantity": m, "effect": "open"},
+            ]
+        return [{**base, "intent": "roll", "legs": legs, "_expiration": s["numbers"]["expiration"]}]
 
     async def _notify(self, key: str, title: str, message: str) -> bool:
         """Sends a notification once per key. Returns whether it was new."""
