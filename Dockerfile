@@ -1,5 +1,6 @@
-# Frontend: static files only, no Node at runtime.
-FROM node:22-slim AS frontend
+# Frontend: static files only, no Node at runtime. Built once on the build machine's own
+# platform: the output is the same for every target, and emulating ARM for npm is slow.
+FROM --platform=$BUILDPLATFORM node:22-slim AS frontend
 WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
