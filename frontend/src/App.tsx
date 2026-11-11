@@ -3,6 +3,7 @@ import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
+import Settings from "./Settings";
 import OrderTicket, { actionsFor, closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Snapshot, StrategyView, UnderlyingView } from "./types";
@@ -15,6 +16,7 @@ type Route =
   | { page: "watchlist" }
   | { page: "activity" }
   | { page: "dashboard" }
+  | { page: "settings"; section: string | null }
   | { page: "trade"; symbol: string };
 
 
@@ -24,6 +26,7 @@ function parseRoute(hash: string): Route {
   if (parts[0] === "watchlist") return { page: "watchlist" };
   if (parts[0] === "activity") return { page: "activity" };
   if (parts[0] === "dashboard") return { page: "dashboard" };
+  if (parts[0] === "settings") return { page: "settings", section: parts[1] || null };
   if (parts[0] === "trade") return { page: "trade", symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase() };
   return { page: "positions" };
 }
@@ -103,6 +106,7 @@ export default function App() {
         {route.page === "watchlist" ? <Watchlist /> : null}
         {route.page === "activity" ? <Activity /> : null}
         {route.page === "dashboard" ? <Dashboard /> : null}
+        {route.page === "settings" ? <Settings section={route.section} /> : null}
         {route.page === "trade" ? <Trade symbol={route.symbol} /> : null}
         {route.page === "positions" ? (
           <>
@@ -186,7 +190,7 @@ function Nav({ route }: { route: Route }) {
       {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
       {tab("activity", "#/activity", "Activity")}
       {tab("dashboard", "#/dashboard", "Dashboard")}
-      <a href="/connect">Settings</a>
+      {tab("settings", "#/settings", "Settings")}
     </nav>
   );
 }
@@ -261,7 +265,7 @@ function Header(props: {
         <DataLight s={s} link={link} />
         {s.mode === "live" ? (
           <a
-            href="/connect"
+            href="#/settings"
             className={`signin ${exp !== null && exp < 2 ? "warn-text" : ""}`}
             title="Days until the Schwab sign-in expires"
           >
@@ -288,7 +292,7 @@ function Banner({ s }: { s: Snapshot }) {
     return (
       <div className="banner bad">
         {s.needs.message}{" "}
-        <a href="/connect">
+        <a href="#/settings">
           {s.needs.what === "connect" ? "Connect to Schwab" : "Choose account"}
         </a>
       </div>
@@ -298,7 +302,7 @@ function Banner({ s }: { s: Snapshot }) {
     return (
       <div className="banner warn">
         The Schwab sign-in can see {s.connection.visible_accounts} accounts. Live trading will
-        require it to see only the trading account. <a href="/connect">Details</a>
+        require it to see only the trading account. <a href="#/settings">Details</a>
       </div>
     );
   }

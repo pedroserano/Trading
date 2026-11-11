@@ -468,6 +468,14 @@ trades that follow the entry mechanics:
 - **Ranking.** Candidates are scored on IV rank, credit per dollar of buying power, probability
   of profit, liquidity and how much they improve the portfolio's delta and theta.
 
+**Settings.** Every number the scanner and automation use is adjustable on the Settings
+page under Management rules, next to the existing management thresholds: entry IV rank,
+DTE window and target, short-strike deltas per strategy, spread widths, minimum credit
+and probability of profit, liquidity thresholds, the earnings buffer, buying power and
+delta limits, which strategies are enabled, scan frequency and trading window, daily caps
+and the daily loss limit, the price-stepping rules, and each automanage default. You will
+add further settings of your own when phase 5 starts.
+
 Modes, chosen per account:
 
 - **Ideas.** A ranked list on a Scanner screen; each idea opens a ready ticket.

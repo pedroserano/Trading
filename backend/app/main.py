@@ -414,8 +414,18 @@ def create_app(
 
     # Connection and settings page ------------------------------------------------------
 
+    def settings_url(section: str = "") -> str:
+        """Where the Settings page lives: inside the app when the app is built."""
+        if (static_dir / "index.html").exists():
+            return f"/#/settings/{section}" if section else "/#/settings"
+        return f"/connect#{section}" if section else "/connect"
+
     @app.get("/connect", response_class=HTMLResponse, dependencies=[Depends(require_login)])
-    async def connect_page(request: Request):
+    async def connect_page(request: Request, fragment: bool = False):
+        # The app shows Settings inside its own page, with the same menu as every other
+        # page; /connect on its own is only for when the app's front end is not built.
+        if not fragment and (static_dir / "index.html").exists():
+            return RedirectResponse("/#/settings", status_code=303)
         status = connection_status()
         error = request.session.pop("flash", None)
         notice = request.session.pop("notice", None)
@@ -427,7 +437,7 @@ def create_app(
                 error = error or str(e)
         return templates.TemplateResponse(
             request,
-            "connect.html",
+            "connect_body.html" if fragment else "connect.html",
             {
                 "demo": demo,
                 "status": status,
@@ -471,7 +481,7 @@ def create_app(
             request.session["notice"] = "Schwab sign-in renewed."
         except SchwabError as e:
             request.session["flash"] = str(e)
-        return RedirectResponse("/connect", status_code=303)
+        return RedirectResponse(settings_url(), status_code=303)
 
     @app.post("/schwab/complete", dependencies=[Depends(require_login)])
     async def schwab_complete(request: Request, received_url: str = Form()):
@@ -487,7 +497,7 @@ def create_app(
     @app.post("/schwab/disconnect", dependencies=[Depends(require_login)])
     async def schwab_disconnect():
         await schwab.disconnect()
-        return RedirectResponse("/connect", status_code=303)
+        return RedirectResponse(settings_url(), status_code=303)
 
     @app.post("/account/select", dependencies=[Depends(require_login)])
     async def account_select(request: Request, number: str = Form()):
@@ -497,7 +507,7 @@ def create_app(
             request.session["notice"] = f"Using the account ending {number[-4:]}."
         except (ValueError, SchwabError) as e:
             request.session["flash"] = str(e)
-        return RedirectResponse("/connect", status_code=303)
+        return RedirectResponse(settings_url(), status_code=303)
 
     @app.post("/notify/test", dependencies=[Depends(require_login)])
     async def notify_test(request: Request):
@@ -508,7 +518,7 @@ def create_app(
             request.session["notice"] = "Test notification sent."
         except Exception as e:
             request.session["flash"] = f"Test notification failed: {e}"
-        return RedirectResponse("/connect", status_code=303)
+        return RedirectResponse(settings_url(), status_code=303)
 
     @app.post("/watchlist/import", dependencies=[Depends(require_login)])
     async def watchlist_import(
@@ -524,7 +534,7 @@ def create_app(
         symbols, skipped = parse_symbols(content)
         if not symbols:
             request.session["flash"] = "No symbols found in that file or text."
-            return RedirectResponse("/connect#watchlist", status_code=303)
+            return RedirectResponse(settings_url("watchlist"), status_code=303)
         unknown = []
         try:
             quotes = await source.quotes(symbols)
@@ -545,7 +555,7 @@ def create_app(
         if unknown:
             msg += f" Not recognised by Schwab: {', '.join(unknown[:12])}."
         request.session["notice"] = msg
-        return RedirectResponse("/connect#watchlist", status_code=303)
+        return RedirectResponse(settings_url("watchlist"), status_code=303)
 
     @app.post("/watchlist/remove", dependencies=[Depends(require_login)])
     async def watchlist_remove(request: Request, symbol: str = Form()):
@@ -553,7 +563,7 @@ def create_app(
         await preferences.set_watchlist([s for s in current if s != symbol])
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
-        return RedirectResponse("/connect#watchlist", status_code=303)
+        return RedirectResponse(settings_url("watchlist"), status_code=303)
 
     @app.post("/rules", dependencies=[Depends(require_login)])
     async def rules_save(request: Request):
@@ -564,7 +574,7 @@ def create_app(
             request.session["notice"] = "Rules saved."
         except ValueError as e:
             request.session["flash"] = str(e)
-        return RedirectResponse("/connect#rules", status_code=303)
+        return RedirectResponse(settings_url("rules"), status_code=303)
 
     # API -------------------------------------------------------------------------------
 
@@ -974,12 +984,12 @@ def create_app(
         data = await file.read(25 * 1024 * 1024 + 1)
         if len(data) > 25 * 1024 * 1024:
             request.session["flash"] = "That file is larger than 25 MB."
-            return RedirectResponse("/connect#history", status_code=303)
+            return RedirectResponse(settings_url("history"), status_code=303)
         try:
             rows, counts = sheet_import.read_workbook(data, SHEET_ACCOUNT)
         except sheet_import.SheetError as e:
             request.session["flash"] = str(e)
-            return RedirectResponse("/connect#history", status_code=303)
+            return RedirectResponse(settings_url("history"), status_code=303)
         result = await store.upsert_sheet_rows(rows)
         await chain_service.rebuild()
         portfolio.refresh_soon()
@@ -991,7 +1001,7 @@ def create_app(
             f"{len(h['problems'])} rows need a look and {len(h['review'])} differences "
             "with Schwab are listed on the Dashboard's Review tab."
         )
-        return RedirectResponse("/connect#history", status_code=303)
+        return RedirectResponse(settings_url("history"), status_code=303)
 
     @app.get("/api/history", dependencies=[Depends(require_login)])
     async def api_history():

@@ -67,7 +67,7 @@ export default function Watchlist() {
   if (!rows.length) {
     return (
       <div className="empty">
-        The watchlist is empty. <a href="/connect#watchlist">Import from thinkorswim or add symbols</a>
+        The watchlist is empty. <a href="#/settings/watchlist">Import from thinkorswim or add symbols</a>
       </div>
     );
   }
@@ -77,7 +77,7 @@ export default function Watchlist() {
         <span className="dim-text">
           IV and liquidity refresh every 15 minutes. Click a row to open it on the Trade screen.
         </span>
-        <a href="/connect#watchlist" className="toolbar-link">
+        <a href="#/settings/watchlist" className="toolbar-link">
           Edit watchlist
         </a>
       </div>

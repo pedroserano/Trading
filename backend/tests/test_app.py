@@ -305,3 +305,20 @@ def test_db_password_accepts_postgres_variable_name(monkeypatch):
         schwab_app_secret="s",
     )
     assert s.db_password == "from-postgres-name"
+
+
+def test_settings_live_inside_the_app_when_it_is_built(settings, tmp_path):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<div id=root></div>")
+    with make_client(settings, FakeSchwab(connected=True), static_dir=static) as c:
+        login(c)
+        r = c.get("/connect")
+        assert r.status_code == 303 and r.headers["location"] == "/#/settings"
+        frag = c.get("/connect?fragment=1")
+        assert frag.status_code == 200 and "<html" not in frag.text and "Watchlist" in frag.text
+        r = c.post("/watchlist/remove", data={"symbol": "SPY"})
+        assert r.headers["location"] == "/#/settings/watchlist"
+        r = c.post("/rules", data={"manage_dte": "999"})
+        assert r.headers["location"] == "/#/settings/rules"
+        assert "must be between" in c.get("/connect?fragment=1").text
