@@ -77,6 +77,24 @@ def _check_symbol(symbol: str) -> str:
     return symbol
 
 
+async def supervise(name: str, fn, health: dict, restart_delay: float = 10.0) -> None:
+    """Runs a background service forever, restarting it if it crashes.
+
+    `health[name]` holds the last crash for the Settings page; None while running cleanly.
+    """
+    health[name] = None
+    while True:
+        try:
+            await fn()
+            log.warning("Background service %s stopped; restarting", name)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.exception("Background service %s crashed; restarting in %ss", name, restart_delay)
+            health[name] = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {type(e).__name__}: {e}"[:300]
+        await asyncio.sleep(restart_delay)
+
+
 class LoginThrottle:
     """Slows password guessing. Single user, so one global counter is enough."""
 
@@ -162,7 +180,8 @@ def create_app(
             schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
         )
         portfolio.stream = stream
-    watchlist = WatchlistService(source, store, portfolio)
+    watchlist = WatchlistService(source, store, portfolio, preferences)
+    health: dict[str, str | None] = {}
     jobs = DailyJobs(source, store, portfolio, settings)
     reminders = ReminderService(notifier, store, connection_status, settings, demo)
 
@@ -173,15 +192,19 @@ def create_app(
         log.info("Started. Demo: %s. Schwab connected: %s", demo, schwab.status().connected)
         tasks = []
         if start_background:
-            tasks = [
-                asyncio.create_task(portfolio.run(), name="portfolio"),
-                asyncio.create_task(jobs.run(), name="jobs"),
-                asyncio.create_task(reminders.run(), name="reminders"),
-                asyncio.create_task(portfolio.publisher(), name="publisher"),
-                asyncio.create_task(watchlist.run(), name="watchlist"),
-            ]
+            services = {
+                "portfolio": portfolio.run,
+                "daily jobs": jobs.run,
+                "reminders": reminders.run,
+                "publisher": portfolio.publisher,
+                "watchlist": watchlist.run,
+            }
             if stream is not None:
-                tasks.append(asyncio.create_task(stream.run(), name="stream"))
+                services["streaming"] = stream.run
+            tasks = [
+                asyncio.create_task(supervise(name, fn, health), name=name)
+                for name, fn in services.items()
+            ]
         yield
         for t in tasks:
             t.cancel()
@@ -290,6 +313,7 @@ def create_app(
                 "rules": await preferences.rules(),
                 "rule_fields": RULE_FIELDS,
                 "stream": None if stream is None else (stream.status, stream.detail),
+                "health": health,
             },
         )
 
@@ -370,6 +394,7 @@ def create_app(
             symbols if mode == "replace" else current + [s for s in symbols if s not in current]
         )
         await preferences.set_watchlist(merged)
+        portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
         msg = f"Watchlist now has {len(merged)} symbols."
         if skipped:
@@ -383,6 +408,7 @@ def create_app(
     async def watchlist_remove(request: Request, symbol: str = Form()):
         current = await preferences.watchlist()
         await preferences.set_watchlist([s for s in current if s != symbol])
+        portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
         return RedirectResponse("/connect#watchlist", status_code=303)
 

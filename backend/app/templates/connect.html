@@ -47,6 +47,14 @@
       {% if stream[1] %}<span class="dim">{{ stream[1] }}</span>{% endif %}{% endif %}
   </p>
   {% endif %}
+  {% if health %}
+  {% set crashed = health|dictsort|selectattr(1)|list %}
+  <p>
+    {% if crashed %}<span class="dot bad"></span>Background services restarted after an error:
+      {% for name, err in crashed %}<br><span class="dim">{{ name }}: {{ err }}</span>{% endfor %}
+    {% else %}<span class="dot ok"></span>Background services running.{% endif %}
+  </p>
+  {% endif %}
   {% if pushover %}
   <form method="post" action="/notify/test"><button>Send a test notification</button></form>
   {% endif %}

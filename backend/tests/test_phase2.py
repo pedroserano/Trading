@@ -413,3 +413,63 @@ async def test_flag_notifications_once_each_and_respect_switch():
     await prefs.set_rules({})  # checkbox absent = notifications off
     await p.tick()
     assert len(n.sent) == count
+
+
+def test_import_shows_on_watchlist_screen_immediately(client):
+    before = [r["symbol"] for r in client.get("/api/watchlist").json()["rows"]]
+    client.post("/watchlist/import", data={"text": "GLD XLE", "mode": "add"})
+    after = [r["symbol"] for r in client.get("/api/watchlist").json()["rows"]]
+    assert after == before + ["GLD", "XLE"]
+    client.post("/watchlist/remove", data={"symbol": "GLD"})
+    assert "GLD" not in [r["symbol"] for r in client.get("/api/watchlist").json()["rows"]]
+
+
+@pytest.mark.anyio
+async def test_supervisor_restarts_a_crashed_service_and_reports_it():
+    from app.main import supervise
+
+    runs = []
+
+    async def flaky():
+        runs.append(1)
+        if len(runs) == 1:
+            raise RuntimeError("boom")
+        await asyncio.sleep(3600)
+
+    health = {}
+    task = asyncio.create_task(supervise("svc", flaky, health, restart_delay=0.01))
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if len(runs) == 2:
+            break
+    task.cancel()
+    assert len(runs) == 2
+    assert "RuntimeError: boom" in health["svc"]
+
+
+@pytest.mark.anyio
+async def test_refresh_requested_during_a_tick_is_not_lost():
+    p = PortfolioService(
+        DemoDataSource(today=TODAY),
+        MemoryStore(),
+        settings(),
+        lambda: {},
+        _demo_resolver,
+        "demo",
+        clock=lambda: datetime(2026, 11, 14, 11, tzinfo=ET),
+    )  # closed: 60s wait
+    ticks = []
+
+    async def tick():
+        ticks.append(1)
+        if len(ticks) == 1:
+            p.refresh_soon()  # e.g. a watchlist import landing mid-refresh
+
+    p.tick = tick
+    task = asyncio.create_task(p.run())
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if len(ticks) >= 2:
+            break
+    task.cancel()
+    assert len(ticks) >= 2
