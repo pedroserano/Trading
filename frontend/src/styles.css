@@ -502,3 +502,6 @@ td .earn { margin-left: 0; }
 .calendar .week.due { border-color: var(--warn); }
 .calendar .week-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
 .calendar .week-trade { overflow-wrap: anywhere; }
+
+.pause-switch { margin-left: 6px; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--ok); cursor: pointer; white-space: nowrap; }
+.pause-switch.held { color: var(--warn); border-color: var(--warn); }

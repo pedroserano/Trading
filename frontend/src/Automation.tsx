@@ -71,6 +71,7 @@ export function AutoBar() {
         <span className="dim-text">
           {managed} trade{managed === 1 ? "" : "s"} · {view.orders_today}/{view.settings.daily_cap} orders today ·{" "}
           {view.in_window ? "in" : "outside"} its window {view.settings.window_start}–{view.settings.window_end} ET
+          {view.early_close ? " (early close: stops at 12:30)" : ""}
           {live ? " · live: proposes only, every order waits for your tap" : ""}
         </span>
         <a href="#/settings/automation" className="toolbar-link">
@@ -78,6 +79,9 @@ export function AutoBar() {
         </a>
       </div>
       {error ? <div className="banner warn">{error}</div> : null}
+      {view.blocked && !view.paused ? (
+        <div className="banner warn">Automation is holding: {view.blocked}.</div>
+      ) : null}
       {view.proposals.map((p) => (
         <div key={p.id} className="banner proposal">
           <div>
@@ -167,5 +171,37 @@ export function AutoPanel({ st }: { st: StrategyView }) {
       ) : null}
       {error ? <span className="warn-text"> {error}</span> : null}
     </span>
+  );
+}
+
+/** The header's kill switch: pauses or resumes automation for the account on screen. */
+export function PauseSwitch() {
+  const { view, update } = useContext(AutomationContext);
+  const [busy, setBusy] = useState(false);
+  if (!view) return null;
+  const held = view.paused || !!view.blocked;
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      update(
+        await postJson<AutomationView>(`/api/automation/pause?account=${view.account}`, {
+          paused: !view.paused,
+        }),
+      );
+    } catch {
+      /* the next poll shows the real state */
+    } finally {
+      setBusy(false);
+    }
+  };
+  const title = view.paused
+    ? "Automation is paused for this account. Click to resume."
+    : view.blocked
+      ? `Automation is holding: ${view.blocked}. Click to pause it too.`
+      : "Automation is running for this account. Click to pause it.";
+  return (
+    <button type="button" className={`pause-switch ${held ? "held" : ""}`} disabled={busy} onClick={toggle} title={title}>
+      {view.paused ? "Auto paused" : view.blocked ? "Auto holding" : "Auto on"}
+    </button>
   );
 }

@@ -548,6 +548,9 @@ class Scanner:
             if level == "auto" and c.get("delta_push"):
                 # Against the portfolio's delta band: never opened without your tap.
                 level = "propose"
+            if level == "auto" and auto.blocked():
+                # Paused, stopped by the daily loss limit, or the sign-in is lapsing.
+                level = "propose"
             title = f"{c['symbol']} {c['strategy']}"
             reason = (
                 f"IV rank {c['ivr']:.0f}: {c['label']}, {c['expiration']} ({c['dte']} DTE), "
@@ -588,7 +591,7 @@ class Scanner:
             # Auto (simulated account only).
             st["acted"][key] = time.time()
             done: list[str] = []
-            await auto._place_all(
+            wide = await auto._place_all(
                 f"new:{c['symbol']}",
                 Action("scan", "open", reason),
                 [c["body"]],
@@ -596,5 +599,7 @@ class Scanner:
                 done,
                 automanage=s["automanage_new"],
             )
+            if wide == "wide":
+                st["acted"].pop(key, None)  # the next scan may try again
             await auto._save()
             return f"place {c['symbol']}" if done else None

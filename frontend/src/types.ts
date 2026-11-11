@@ -391,6 +391,10 @@ export interface AutomationView {
   log: AutoLogEntry[];
   orders_today: number;
   in_window: boolean;
+  early_close?: boolean;
+  /** Why nothing is placed automatically right now, if anything stops it. */
+  blocked?: string | null;
+  halted?: boolean;
 }
 
 export interface LiveStatus {

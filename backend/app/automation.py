@@ -13,7 +13,7 @@ import copy
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
@@ -69,6 +69,12 @@ DEFAULT_SETTINGS = {
     "max_concession": 0.25,  # share of the distance from mid to natural
     "grace_minutes": 0,
     "daily_cap": 10,  # automatic orders per day
+    # Stop all automation for the rest of the day once net liq is down this share since the
+    # day began (0: off).
+    "daily_loss_limit": 0.02,
+    # Skip an automatic order, and try again later, while its bid/ask is wider than this
+    # share of its mid (and more than 10 cents).
+    "max_order_spread": 0.25,
     "window_start": "09:45",
     "window_end": "15:30",
 }
@@ -117,7 +123,24 @@ SETTING_FIELDS = [
     ("max_concession", "Chase from mid toward natural, at most", 0, 100, "percent", "%"),
     ("grace_minutes", "Wait before an automatic order", 0, 120, "int", "min"),
     ("daily_cap", "Automatic orders per day, at most", 1, 100, "int", "orders"),
+    (
+        "daily_loss_limit",
+        "Stop for the day once net liq is down (0: off)",
+        0,
+        20,
+        "percent",
+        "%",
+    ),
+    (
+        "max_order_spread",
+        "Skip while the order's bid/ask is wider than",
+        1,
+        200,
+        "percent",
+        "% of mid",
+    ),
 ]
+EARLY_CLOSE_STOP = (12, 30)  # the market closes at 13:00 ET on early-close days
 MAX_LEGS = 4
 STRANGLES = ("Strangle", "Straddle")
 
@@ -179,12 +202,34 @@ def _hm(text: str) -> tuple[int, int]:
     return int(h), int(m)
 
 
+def _thanksgiving(year: int) -> date:
+    d = date(year, 11, 1)
+    first_thu = d + timedelta(days=(3 - d.weekday()) % 7)
+    return first_thu + timedelta(weeks=3)
+
+
+def early_close(d: date) -> bool:
+    """NYSE's regular early closes (13:00 ET): the day before Independence Day, the day after
+    Thanksgiving, and Christmas Eve, when they are trading days."""
+    if d.weekday() >= 5:
+        return False
+    if d == _thanksgiving(d.year) + timedelta(days=1):
+        return True
+    if (d.month, d.day) == (12, 24):
+        return True
+    # July 3, unless it is the observed holiday itself (July 4 on a Saturday).
+    return (d.month, d.day) == (7, 3) and date(d.year, 7, 4).weekday() != 5
+
+
 def in_window(now: datetime, settings: dict) -> bool:
     et = now.astimezone(ET)
     if et.weekday() >= 5:
         return False
     t = (et.hour, et.minute)
-    return _hm(settings["window_start"]) <= t < _hm(settings["window_end"])
+    end = _hm(settings["window_end"])
+    if early_close(et.date()):
+        end = min(end, EARLY_CLOSE_STOP)
+    return _hm(settings["window_start"]) <= t < end
 
 
 @dataclass
@@ -491,6 +536,9 @@ class AutomationService:
             "log": st["log"][-150:][::-1],
             "orders_today": st["counts"].get(today, 0),
             "in_window": in_window(self.clock(), settings),
+            "early_close": early_close(self.clock().astimezone(ET).date()),
+            "blocked": self.blocked(),
+            "halted": st.get("halted_on") == today,
         }
 
     # Loop ------------------------------------------------------------------------------
@@ -528,6 +576,10 @@ class AutomationService:
                 )
                 await self._save()
                 return ["paused: stale"]
+            hold = await self._hold(snap, settings, now)
+            if hold:
+                await self._save()
+                return [f"held: {hold}"]
             rules = await self.preferences.rules()
             await self._step_orders(settings, done)
             open_ids = set()
@@ -557,6 +609,60 @@ class AutomationService:
                     p["status"] = "expired"
             await self._save()
             return done
+
+    def blocked(self) -> str | None:
+        """Why nothing may be placed automatically right now: paused, stopped for the day by
+        the loss limit, or held while the Schwab sign-in is about to lapse."""
+        st = self.state or {}
+        if st.get("paused"):
+            return "automation is paused"
+        if st.get("halted_on") == self.clock().date().isoformat():
+            return "stopped for the day: the daily loss limit was reached"
+        days = ((self.portfolio.snapshot or {}).get("connection") or {}).get("expires_in_days")
+        if days is not None and days < 1:
+            return "the Schwab sign-in has less than a day left"
+        return None
+
+    async def _hold(self, snap: dict, settings: dict, now: datetime) -> str | None:
+        """Checks the daily loss limit and the sign-in, once per tick. Returns a reason to act
+        on nothing this tick, or None."""
+        st = self.state
+        today = now.date().isoformat()
+        nl = (snap.get("account") or {}).get("net_liq")
+        start = st.get("day_start") or {}
+        if nl and start.get("day") != today:
+            st["day_start"] = start = {"day": today, "net_liq": nl}
+        limit = settings.get("daily_loss_limit") or 0
+        if st.get("halted_on") == today:
+            return "daily loss limit"
+        if limit and nl and start.get("net_liq"):
+            loss = start["net_liq"] - nl
+            if loss > limit * start["net_liq"]:
+                st["halted_on"] = today
+                self._log(
+                    None,
+                    None,
+                    f"Automation stopped for the day: net liq down {loss:,.0f} "
+                    f"({loss / start['net_liq']:.1%}), over the {limit:.1%} daily loss limit",
+                )
+                await self._notify(
+                    f"loss-limit:{today}",
+                    "Automation stopped for the day",
+                    f"Net liq is down {loss / start['net_liq']:.1%} today, over the "
+                    f"{limit:.1%} daily loss limit. It starts again tomorrow.",
+                )
+                return "daily loss limit"
+        days = (snap.get("connection") or {}).get("expires_in_days")
+        if days is not None and days < 1:
+            if await self._notify(
+                f"signin-hold:{today}",
+                "Automation on hold",
+                "The Schwab sign-in has less than a day left, so automation is holding until "
+                "you sign in again (Settings).",
+            ):
+                self._log(None, None, "Automation on hold: the Schwab sign-in is about to lapse")
+            return "sign-in"
+        return None
 
     def levels(self, settings: dict) -> dict:
         cap = LEVELS.index(self.max_level)
@@ -609,7 +715,9 @@ class AutomationService:
             ):
                 existing["status"] = "placed"
                 acted[key] = time.time()
-                await self._place_all(tid, action, existing["bodies"], settings, done)
+                if await self._place_all(tid, action, existing["bodies"], settings, done) == "wide":
+                    existing["status"] = "pending"
+                    acted.pop(key, None)
             return
         bodies = await self._bodies(s, u, action, settings)
         if not bodies:
@@ -654,7 +762,8 @@ class AutomationService:
             return
         if level == "auto":
             acted[key] = time.time()
-            await self._place_all(tid, action, bodies, settings, done)
+            if await self._place_all(tid, action, bodies, settings, done) == "wide":
+                acted.pop(key, None)  # tried again on a later tick
 
     def _busy(self, tid) -> bool:
         return any(
@@ -690,7 +799,9 @@ class AutomationService:
 
     async def _place_all(
         self, tid, action, bodies, settings, done, manual=False, automanage=False
-    ) -> None:
+    ) -> str | None:
+        """Places each body at mid. Returns "wide" when an automatic order was skipped for
+        its bid/ask spread, so the caller can try again later."""
         today = self.clock().date().isoformat()
         for body in bodies:
             if not manual and self.state["counts"].get(today, 0) >= settings["daily_cap"]:
@@ -708,6 +819,24 @@ class AutomationService:
                     raise ValueError("; ".join(preview["errors"]))
                 mid = preview["prices"]["mid"]
                 natural = preview["prices"]["natural"]
+                far = preview["prices"].get("far")
+                if not manual and mid is not None and natural is not None and far is not None:
+                    spread = abs(far - natural)
+                    cap = settings.get("max_order_spread", 0.25)
+                    if spread > 0.10 + 1e-9 and spread > cap * abs(mid) + 1e-9:
+                        self._log(
+                            tid,
+                            action.rule,
+                            f"Skipped for now: bid/ask {spread:.2f} is wider than "
+                            f"{cap:.0%} of the {abs(mid):.2f} mid; trying again later",
+                        )
+                        await self._notify(
+                            f"wide:{tid}:{action.rule}:{today}",
+                            "Automatic order waiting",
+                            f"{action.reason}, but the bid/ask ({spread:.2f}) is too wide "
+                            "for now; it will try again.",
+                        )
+                        return "wide"
                 if body.get("_max_debit") is not None:
                     # Buying the guts costs a debit; only up to their in-the-money value plus a
                     # little.

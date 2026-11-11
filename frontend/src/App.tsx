@@ -3,7 +3,7 @@ import { AccountContext, TicketContext, type Account } from "./context";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
 import MarketStrip from "./MarketStrip";
-import { AutoBadge, AutoBar, AutomationContext, AutoPanel, useAutomation } from "./Automation";
+import { AutoBadge, AutoBar, AutomationContext, AutoPanel, PauseSwitch, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
 import Portfolio from "./Portfolio";
@@ -297,6 +297,7 @@ function Header(props: {
             Simulated
           </button>
         </div>
+        <PauseSwitch />
         {a ? (
           <span className="acct">
             …{a.last4} {a.type ? a.type.toLowerCase() : ""}
