@@ -173,9 +173,9 @@ def complex_type(t: Ticket) -> str:
     if len(t.legs) == 1:
         return "NONE"
     if t.intent == "roll":
-        # thinkorswim labels a one-option roll by its shape: a later expiration at the same
-        # strike is a CALENDAR (checked against a real thinkorswim order), at another strike a
-        # DIAGONAL. Rolls of more than one option stay CUSTOM until checked the same way.
+        # thinkorswim labels a one-option roll by its shape: another expiration at the same
+        # strike is a CALENDAR, at another strike a DIAGONAL (both checked against real
+        # thinkorswim orders). Rolls of more than one option stay CUSTOM until checked.
         if len(t.legs) == 2:
             a, b = t.legs
             if a.put_call == b.put_call and a.expiration != b.expiration:

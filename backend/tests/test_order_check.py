@@ -189,3 +189,44 @@ def test_a_real_thinkorswim_roll_matches():
     entry = oc.check(order)
     assert entry["result"] == "match", entry["diffs"]
     assert entry["diffs"] == []
+
+
+def test_a_real_thinkorswim_roll_to_another_strike_is_a_diagonal():
+    """A roll to another strike and an earlier expiration, as Schwab returned it."""
+
+    def leg(symbol, instruction):
+        return {
+            "quantity": 4,
+            "instruction": instruction,
+            "orderLegType": "OPTION",
+            "instrument": {
+                "symbol": symbol,
+                "putCall": "CALL",
+                "assetType": "OPTION",
+                "underlyingSymbol": "GLD",
+            },
+        }
+
+    order = {
+        "tag": "API_TOS:IPHONE",
+        "price": 0.18,
+        "status": "CANCELED",
+        "orderId": 2,
+        "session": "NORMAL",
+        "duration": "DAY",
+        "quantity": 4,
+        "orderType": "NET_CREDIT",
+        "closeTime": "2026-11-06T14:32:15+0000",
+        "enteredTime": "2026-11-06T12:56:59+0000",
+        "orderStrategyType": "SINGLE",
+        "complexOrderStrategyType": "DIAGONAL",
+        "destinationLinkName": "CDRG",
+        "requestedDestination": "AUTO",
+        "orderActivityCollection": [{"activityType": "EXECUTION", "executionType": "CANCELED"}],
+        "orderLegCollection": [
+            leg("GLD   261109C00380000", "BUY_TO_CLOSE"),
+            leg("GLD   261106C00375000", "SELL_TO_OPEN"),
+        ],
+    }
+    entry = oc.check(order)
+    assert entry["result"] == "match", entry["diffs"]
