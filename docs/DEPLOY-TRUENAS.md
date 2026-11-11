@@ -81,7 +81,7 @@ Edit `.env`:
 | `SECRET_KEY`, `POSTGRES_PASSWORD` | The two generated values |
 | `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET` | From the app's details in the Schwab developer portal |
 | `SCHWAB_CALLBACK_URL` | `https://127.0.0.1:8182`, matching the Schwab app exactly |
-| `IMAGE_TAG` | `latest` once the work is merged to `main`; a branch name before that |
+| `IMAGE_TAG` | `main`: the image built from the main branch |
 
 The Schwab key and secret exist only in this file. They are never entered in the TrueNAS UI
 and never committed.
