@@ -44,15 +44,6 @@ export default function Activity() {
     }
   };
 
-  const link = async (group: string, chain: string) => {
-    try {
-      await postJson("/api/chains/link", { group, chain });
-      load();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
   const reset = async () => {
     const amount = window.prompt("Reset the simulated account. Starting cash:", String(data?.start_cash ?? 100000));
     if (amount === null) return;
@@ -71,7 +62,6 @@ export default function Activity() {
   const working = data.orders.filter((o) => o.status === "WORKING");
   const done = data.orders.filter((o) => o.status !== "WORKING").slice(0, 50);
   const realized = data.trades.reduce((a, t) => a + (t.realized_pl ?? 0), 0);
-  const byId = new Map(data.trades.map((t) => [String(t.id), t]));
 
   return (
     <div className="activity">
@@ -116,21 +106,6 @@ export default function Activity() {
         <div className="msg warn">
           The trade history does not fully explain what Schwab holds now:{" "}
           {data.mismatches.map((m) => `${legText(m.symbol, m.schwab)} (history says ${signed(m.chains)})`).join("; ")}. It usually settles after the next sync.
-        </div>
-      ) : null}
-      {live && data.proposals?.length ? (
-        <div className="msg">
-          {data.proposals.map((p) => {
-            const c = byId.get(p.chain);
-            return (
-              <div key={p.group} className="proposal">
-                Order {p.group}: {p.reason.toLowerCase()} {c ? `(${c.underlying} ${c.strategy})` : ""}. Was it a roll?{" "}
-                <button type="button" className="small" onClick={() => link(p.group, p.chain)}>
-                  Link as a roll
-                </button>
-              </div>
-            );
-          })}
         </div>
       ) : null}
 

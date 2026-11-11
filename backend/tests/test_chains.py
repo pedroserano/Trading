@@ -111,14 +111,44 @@ def test_roll_as_two_orders_is_linked_and_can_be_split_or_linked_by_hand():
     assert c["events"][-1]["auto_linked"] and "15 minutes" in c["events"][-1]["note"]
     split = chains.build(groups(*txns), pos, {"split": ["30"]})
     assert [x["status"] for x in split["chains"]] == ["closed", "open"]
-    # Placed hours later: not linked automatically, but proposed.
+    # Hours later the same day, closed at 66 DTE for a profit: a finished trade, a new one.
     late = (txns[0], txns[1], _demo_txn(3, at(180), [(sym("P", 545, NEXT), -1, 3.4, "open")]))
     r = chains.build(groups(*late), pos)
-    assert len(r["chains"]) == 2 and r["proposals"][0]["group"] == "30"
+    assert len(r["chains"]) == 2 and r["proposals"] == []
     first = r["chains"][0]["id"]
     linked = chains.build(groups(*late), pos, {"link": {"30": first}})
     (c,) = linked["chains"]
     assert c["events"][-1]["note"] == "Linked by you" and c["status"] == "open"
+
+
+def test_rolls_are_decided_without_asking():
+    near = date(2026, 10, 16)  # 15 DTE on the day of the close
+
+    def case(close_price, open_legs, minutes=180, exp=near):
+        txns = (
+            _demo_txn(1, at(0), [(sym("P", 545, exp), -1, 3.10, "open")]),
+            _demo_txn(2, at(60), [(sym("P", 545, exp), 1, close_price, "close")]),
+            _demo_txn(3, at(minutes), open_legs),
+        )
+        held = {symbol: {"quantity": n} for symbol, n, _, _ in open_legs}
+        return chains.build(groups(*txns), held)
+
+    new_put = [(sym("P", 540, NEXT), -2, 3.4, "open")]
+    # Closed inside 21 DTE, a short put reopened that afternoon (other strike, size): a roll.
+    (c,) = case(1.20, new_put)["chains"]
+    assert c["events"][-1]["kind"] == "roll" and "15 DTE" in c["events"][-1]["note"]
+    # Closed at a loss, far from expiration, reopened the same day: a roll.
+    (c,) = case(5.00, new_put, exp=EXP)["chains"]
+    assert "at a loss" in c["events"][-1]["note"]
+    # A different position (a short call) is a new trade, whatever the timing.
+    r = case(1.20, [(sym("C", 600, NEXT), -1, 2.0, "open")], minutes=65)
+    assert len(r["chains"]) == 2
+    # The next day: a new trade.
+    assert len(case(1.20, new_put, minutes=60 * 24 + 60)["chains"]) == 2
+    # Within 15 minutes, a winner far from expiration still counts: same position, a roll.
+    (c,) = case(1.20, new_put, minutes=70, exp=EXP)["chains"]
+    assert "15 minutes" in c["events"][-1]["note"]
+    assert case(1.20, new_put)["proposals"] == []
 
 
 def test_expiration_and_partial_close():

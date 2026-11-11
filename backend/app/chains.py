@@ -26,11 +26,16 @@ transactions are kept.
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from .options import Leg, parse_option_symbol
 from .strategies import group
 
 LINK_WINDOW_S = 15 * 60
+# A close at or inside this DTE, or at a loss, is a management close: reopening the same
+# position later that day is a roll. A winner closed earlier is a finished trade.
+MANAGE_DTE = 21
+ET = ZoneInfo("America/New_York")
 LEG_TYPES = {"OPTION", "EQUITY", "COLLECTIVE_INVESTMENT", "ETF"}
 
 
@@ -152,8 +157,53 @@ def merge(groups: list[Group]) -> list[Group]:
     return sorted(by_key.values(), key=lambda g: g.time)
 
 
-def _shape(fills: list[Fill]) -> tuple:
-    return tuple(sorted((f.put_call or "S", round(abs(f.quantity))) for f in fills))
+def _sides(pairs) -> frozenset:
+    """What a position is made of, ignoring size and strikes: (put/call/stock, long or
+    short). pairs: (fill, quantity as held by the position)."""
+    return frozenset((f.put_call or "S", 1 if q > 0 else -1) for f, q in pairs)
+
+
+def _day(t: float):
+    return datetime.fromtimestamp(t, ET).date()
+
+
+def _close_dte(fills, t: float) -> int | None:
+    days = []
+    for f in fills:
+        occ = parse_option_symbol(f.symbol)
+        if occ is not None:
+            days.append((occ.expiration - _day(t)).days)
+    return min(days) if days else None
+
+
+def _roll_target(g, opens, unders, recent_closes, chains):
+    """The closed chain an opening order continues as a roll, decided without asking.
+
+    A roll reopens the same kind of position (same option types, same long or short side;
+    size and strikes may change) on the same underlying, either within 15 minutes of the
+    close, or later the same day when the close was a management close: at or inside 21
+    DTE, or at a loss. Anything else starts a new trade; Split undoes a wrong link.
+    """
+    sides = _sides([(f, f.quantity) for f in opens])
+    for rc in reversed(recent_closes):
+        if rc["underlying"] not in unders or chains[rc["chain"]].open:
+            continue
+        if rc["sides"] != sides:
+            continue
+        gap = g.time - rc["time"]
+        if gap <= LINK_WINDOW_S:
+            return rc["chain"], "Linked as a roll: the same position reopened within 15 minutes"
+        if _day(g.time) == _day(rc["time"]):
+            if rc["dte"] is not None and rc["dte"] <= MANAGE_DTE:
+                return rc["chain"], (
+                    f"Linked as a roll: closed at {rc['dte']} DTE and the same position "
+                    "reopened the same day"
+                )
+            if rc["loss"]:
+                return rc["chain"], (
+                    "Linked as a roll: closed at a loss and the same position reopened the same day"
+                )
+    return None, None
 
 
 def _name(fills: list[Fill], opening: bool = True) -> str:
@@ -291,8 +341,8 @@ def build(
                 )
             )
 
-    recent_closes: list[tuple[float, str, str, tuple]] = []  # time, underlying, chain, shape
-    proposals: list[dict] = []
+    recent_closes: list[dict] = []  # chains closed by a trade, for linking rolls
+    assigned: list[dict] = []  # chains closed by assignment, exercise or expiry
     unmatched: list[dict] = []
 
     for g in groups:
@@ -329,6 +379,7 @@ def build(
 
         target = None
         auto_linked = False
+        link_note = None
         if opens:
             unders = {f.underlying for f in opens}
             if g.key in links and links[g.key] in chains:
@@ -339,7 +390,8 @@ def build(
                     target = max(same, key=lambda c: len(touched[c]))
                 elif g.kind == "assign" or any(f.put_call is None for f in opens):
                     # Shares from an assignment join the assigned option's chain.
-                    for t_, under, cid, _ in reversed(recent_closes):
+                    for rc in reversed(recent_closes + assigned):
+                        t_, under, cid = rc["time"], rc["underlying"], rc["chain"]
                         if (
                             under in unders
                             and g.time - t_ < 3 * 86400
@@ -348,20 +400,8 @@ def build(
                             target = cid
                             break
                 if target is None:
-                    shape = _shape(opens)
-                    for t_, under, cid, sh in reversed(recent_closes):
-                        if under in unders and g.time - t_ <= LINK_WINDOW_S and sh == shape:
-                            target, auto_linked = cid, True
-                            break
-                        if under in unders and g.time - t_ <= 4 * 3600:
-                            proposals.append(
-                                {
-                                    "group": g.key,
-                                    "chain": cid,
-                                    "reason": "Opened soon after this chain closed",
-                                }
-                            )
-                            break
+                    target, link_note = _roll_target(g, opens, unders, recent_closes, chains)
+                    auto_linked = target is not None
             if target is None:
                 target = new_chain(f"c-{g.key}", opens[0].underlying, _name(opens), g.time).id
 
@@ -390,7 +430,7 @@ def build(
                 kind = "close"
             note = None
             if auto_linked and cid == target:
-                note = "Linked as a roll: opened within 15 minutes of closing this chain"
+                note = link_note
             elif cid == target and links.get(g.key) == cid:
                 note = "Linked by you"
             c.events.append(
@@ -407,7 +447,22 @@ def build(
             )
             if not c.open:
                 c.closed_at = g.time
-                recent_closes.append((g.time, c.underlying, cid, _shape([f for f, _ in legs])))
+                if g.kind == "trade":
+                    closed = touched.get(cid, [])
+                    realized = sum(e["net"] - e["commission"] for e in c.events)
+                    recent_closes.append(
+                        {
+                            "time": g.time,
+                            "underlying": c.underlying,
+                            "chain": cid,
+                            # The closing fills reverse the position: flip them back.
+                            "sides": _sides([(f, -q) for f, q in closed]),
+                            "dte": _close_dte([f for f, _ in closed], g.time),
+                            "loss": realized < 0,
+                        }
+                    )
+                else:
+                    assigned.append({"time": g.time, "underlying": c.underlying, "chain": cid})
             else:
                 c.closed_at = None
 
@@ -424,7 +479,8 @@ def build(
 
     return {
         "chains": [_chain_json(chains[cid]) for cid in order],
-        "proposals": [p for p in proposals if p["chain"] in chains],
+        # Rolls are linked by rule now; nothing is left to ask about.
+        "proposals": [],
         "unmatched": unmatched,
         "mismatches": sorted(mismatches, key=lambda m: m["symbol"]),
     }
