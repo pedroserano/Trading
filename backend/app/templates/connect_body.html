@@ -187,6 +187,11 @@
        Iron condors too: roll the untested vertical closer at the same width</label></p>
     <p><label><input type="checkbox" name="roll_single_itm" {% if auto.roll_single_itm %}checked{% endif %}>
        A lone short put or call in the money: roll it out in time for a credit</label></p>
+    <p><label><input type="checkbox" name="guts_to_wings" {% if auto.guts_to_wings %}checked{% endif %}>
+       An inverted strangle: buy the guts, sell the wings (close it and sell a new strangle at the
+       wings delta, same expiration) to re-centre it</label></p>
+    <p class="dim">The inverted strangle can never be worth less than its inversion width, so this
+       pays up to that width plus your allowance; the new strangle keeps collecting theta.</p>
     <p><label><input type="checkbox" name="allow_inverted" {% if auto.allow_inverted %}checked{% endif %}>
        Let a tested strangle go inverted (roll the untested side past the tested strike)</label></p>
     <div class="rule">

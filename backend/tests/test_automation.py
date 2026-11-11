@@ -518,3 +518,52 @@ def test_tested_side_settings_from_the_form():
     assert s["untested_target"] == "fixed" and s["roll_single_itm"] is True
     assert s["roll_ic_untested"] is False  # unticked on that form
     assert s["max_untested_rolls"] == 3
+
+
+def test_an_inverted_strangle_buys_the_guts_and_sells_the_wings():
+    s = merged_settings({})
+    inv = strat(legs=[leg("P", 600, -1, -0.62), leg("C", 585, -1, 0.56)], flags=["tested"])
+    assert ("tested", "guts_to_wings") in kinds(decide(inv, 592, Rules(), s, ALL))
+    off = {**s, "guts_to_wings": False}
+    assert ("tested", "roll_untested") in kinds(decide(inv, 592, Rules(), off, ALL))
+    # Not inverted: the untested side rolls as before.
+    plain = strat(legs=[leg("P", 555, -1, -0.08), leg("C", 600, -1, 0.38)], flags=["tested"])
+    assert ("tested", "roll_untested") in kinds(decide(plain, 596, Rules(), s, ALL))
+
+
+@pytest.mark.anyio
+async def test_guts_to_wings_order_and_its_debit_limit():
+    svc = make_tested_svc()
+    await svc.load()
+    inv = strat(legs=[leg("P", 600, -1, -0.62), leg("C", 585, -1, 0.56)], flags=["tested"])
+    base = {"account": "sim", "trade_id": 1, "duration": "DAY"}
+    (b,) = await svc._guts_bodies(inv, {"symbol": "SPY", "price": 592}, merged_settings({}), base)
+    assert opened(b) == sorted([sym("P", 560), sym("C", 620)])  # the 16-delta wings
+    assert len(b["legs"]) == 4 and b["_max_debit"] == 15.25  # width 15 plus 0.25
+
+    placed = []
+
+    async def submit(raw, place, mid=-14.10):
+        if not place:
+            return {"errors": [], "prices": {"mid": submit.mid, "natural": submit.mid - 0.2}}
+        placed.append(raw["limit_net"])
+        return {"id": len(placed)}
+
+    svc.submit = submit
+    act = Action("tested", "guts_to_wings", "x")
+    submit.mid = -16.00  # dearer than the width plus allowance: not placed
+    done = []
+    await svc._place_all(1, act, [b], merged_settings({}), done)
+    assert placed == [] and any("over the 15.25 limit" in x["text"] for x in svc.state["log"])
+    submit.mid = -14.10  # within it: placed at mid, not turned into a close
+    await svc._place_all(1, act, [b], merged_settings({}), done)
+    assert placed == [-14.10] and done == ["place tested"]
+
+
+def test_guts_settings_from_the_form():
+    from app import automation as a
+
+    s = a.parse_settings({"_form": "automation", "guts_extra_debit": "0.5"}, None)
+    assert s["guts_to_wings"] is False and s["guts_extra_debit"] == 0.5
+    s = a.parse_settings({"_form": "automation", "guts_to_wings": "on"}, None)
+    assert s["guts_to_wings"] is True and s["wings_delta"] == 0.16

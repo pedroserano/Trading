@@ -51,6 +51,10 @@ DEFAULT_SETTINGS = {
     "roll_ic_untested": True,  # iron condors roll their untested vertical, same width
     "max_untested_rolls": 2,  # per expiration; then the DTE rule takes over
     "roll_single_itm": False,  # a lone short put or call in the money rolls out for a credit
+    # An inverted strangle (the guts): buy the guts, sell the wings, in the same expiration.
+    "guts_to_wings": True,
+    "wings_delta": 0.16,
+    "guts_extra_debit": 0.25,  # per unit, on top of the inversion width
     # Close single-stock trades this many sessions before the last one before the report
     # (0: on that last session itself).
     "earnings_close_sessions": 1,
@@ -69,6 +73,15 @@ SETTING_FIELDS = [
     ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
     ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
     ("max_untested_rolls", "Untested-side rolls per expiration, at most", 0, 10, "int", "rolls"),
+    ("wings_delta", "Inverted strangle: sell the new wings at", 0.05, 0.5, "delta", "Δ"),
+    (
+        "guts_extra_debit",
+        "Inverted strangle: pay at most the inversion width plus",
+        0.0,
+        10.0,
+        "float",
+        "$ per unit",
+    ),
     (
         "earnings_close_sessions",
         "Close before earnings, sessions ahead of the report (0: the last session)",
@@ -113,6 +126,7 @@ def parse_settings(form: dict, current: dict) -> dict:
         out["allow_inverted"] = form.get("allow_inverted") in ("on", "true", "1")
         out["roll_ic_untested"] = form.get("roll_ic_untested") in ("on", "true", "1")
         out["roll_single_itm"] = form.get("roll_single_itm") in ("on", "true", "1")
+        out["guts_to_wings"] = form.get("guts_to_wings") in ("on", "true", "1")
     if form.get("untested_target") in ("match", "fixed"):
         out["untested_target"] = form["untested_target"]
     for key, label, lo, hi, kind, _unit in SETTING_FIELDS:
@@ -223,7 +237,24 @@ def decide(
             out.append(Action("dte", "roll", f"{dte} DTE: roll out for a credit"))
     if levels.get("tested", "off") != "off" and "tested" in flags:
         name = st["name"]
-        if name in STRANGLES:
+        put = next((x for x in shorts if x["put_call"] == "P"), None)
+        call = next((x for x in shorts if x["put_call"] == "C"), None)
+        if (
+            name == "Strangle"
+            and put
+            and call
+            and put["strike"] > call["strike"]
+            and settings.get("guts_to_wings", True)
+        ):
+            out.append(
+                Action(
+                    "tested",
+                    "guts_to_wings",
+                    f"Inverted by {put['strike'] - call['strike']:g}: buy the guts, sell the "
+                    "wings to re-centre the trade",
+                )
+            )
+        elif name in STRANGLES:
             out.append(
                 Action(
                     "tested",
@@ -621,7 +652,24 @@ class AutomationService:
                     raise ValueError("; ".join(preview["errors"]))
                 mid = preview["prices"]["mid"]
                 natural = preview["prices"]["natural"]
-                if (
+                if body.get("_max_debit") is not None:
+                    # Buying the guts costs a debit; only up to the inversion width plus a little.
+                    if mid is None or -mid > body["_max_debit"] + 1e-9:
+                        cost = "unknown" if mid is None else f"{-mid:.2f}"
+                        self._log(
+                            tid,
+                            action.rule,
+                            f"Guts to wings would cost {cost}, over the "
+                            f"{body['_max_debit']:.2f} limit; not placed",
+                        )
+                        await self._notify(
+                            f"guts-cost:{tid}:{today}",
+                            "Guts to wings too dear",
+                            f"It would cost {cost} a unit, over the {body['_max_debit']:.2f} "
+                            "limit (the inversion width plus your allowance).",
+                        )
+                        return
+                elif (
                     body["intent"] == "roll"
                     and mid is not None
                     and mid < settings["min_roll_credit"]
@@ -865,7 +913,49 @@ class AutomationService:
             return out
         if action.kind in ("roll_untested", "roll_untested_vertical"):
             return await self._untested_bodies(s, u, action, settings, base)
+        if action.kind == "guts_to_wings":
+            return await self._guts_bodies(s, u, settings, base)
         return []
+
+    async def _guts_bodies(self, s, u, settings: dict, base: dict) -> list:
+        """Closes an inverted strangle (the guts) and sells a new strangle at the wings delta in
+        the same expiration, as one four-leg order. The guts can never be worth less than the
+        inversion width, so the order may pay up to that width plus the set allowance."""
+        shorts = [x for x in s["legs"] if x["kind"] == "OPTION" and x["quantity"] < 0]
+        put = next((x for x in shorts if x["put_call"] == "P"), None)
+        call = next((x for x in shorts if x["put_call"] == "C"), None)
+        if not put or not call or put["quantity"] != call["quantity"]:
+            return []
+        exp = date.fromisoformat(put["expiration"])
+        chain = chain_mod.chain_rows(
+            await self.source.option_chain(u["symbol"], exp, exp, strike_count=None) or {}
+        )
+        target = settings.get("wings_delta", 0.16)
+
+        def pick(side):
+            rows = [r for r in chain["rows"] if r[side] and r[side].get("delta") is not None]
+            return min(rows, key=lambda r: abs(abs(r[side]["delta"]) - target)) if rows else None
+
+        new_put, new_call = pick("put"), pick("call")
+        if not new_put or not new_call or new_put["strike"] >= new_call["strike"]:
+            return []
+        if {new_put["put"]["symbol"], new_call["call"]["symbol"]} & {put["symbol"], call["symbol"]}:
+            return []
+        n = int(put["quantity"])
+        width = put["strike"] - call["strike"]
+        return [
+            {
+                **base,
+                "intent": "roll",
+                "legs": [
+                    {"symbol": put["symbol"], "quantity": -n, "effect": "close"},
+                    {"symbol": call["symbol"], "quantity": -n, "effect": "close"},
+                    {"symbol": new_put["put"]["symbol"], "quantity": n, "effect": "open"},
+                    {"symbol": new_call["call"]["symbol"], "quantity": n, "effect": "open"},
+                ],
+                "_max_debit": round(width + settings.get("guts_extra_debit", 0.25), 2),
+            }
+        ]
 
     async def _untested_bodies(self, s, u, action: Action, settings: dict, base: dict) -> list:
         """Rolls the untested side closer for a credit: a strangle's untested short, or an
