@@ -1,0 +1,514 @@
+from datetime import date, datetime
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app import guards
+from app.config import Settings
+from app.datasource import DemoDataSource
+from app.main import create_app, summarize_preview
+from app.notify import ET
+from app.options import option_symbol
+from app.orders import Ticket, TicketError, TicketLeg, apply_quotes, prices, schwab_order
+from app.sim import SimBroker, stats
+from app.store import MemoryStore
+
+TODAY = date(2026, 11, 11)
+EXP = date(2026, 12, 18)
+NEXT = date(2027, 1, 15)
+PASSWORD = "p" * 12
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+def sym(pc, k, exp=EXP, u="SPY"):
+    return option_symbol(u, exp, pc, k)
+
+
+def q(bid, ask, mark=None):
+    return {
+        "quote": {
+            "bidPrice": bid,
+            "askPrice": ask,
+            "mark": mark if mark is not None else round((bid + ask) / 2, 4),
+        }
+    }
+
+
+def ticket(legs, **kw):
+    return Ticket(legs=[TicketLeg.parse(s, n, e) for s, n, e in legs], **kw)
+
+
+# Order JSON -----------------------------------------------------------------------------
+
+
+def test_vertical_matches_schwab_documented_shape():
+    t = ticket([(sym("P", 575), -2, "open"), (sym("P", 570), 2, "open")], limit_net=1.05)
+    body = schwab_order(t)
+    assert body == {
+        "orderType": "NET_CREDIT",
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderStrategyType": "SINGLE",
+        "complexOrderStrategyType": "VERTICAL",
+        "price": "1.05",
+        "quantity": 2,
+        "orderLegCollection": [
+            {
+                "instruction": "SELL_TO_OPEN",
+                "quantity": 2,
+                "instrument": {"symbol": "SPY   261218P00575000", "assetType": "OPTION"},
+            },
+            {
+                "instruction": "BUY_TO_OPEN",
+                "quantity": 2,
+                "instrument": {"symbol": "SPY   261218P00570000", "assetType": "OPTION"},
+            },
+        ],
+    }
+
+
+def test_single_leg_debit_gtc_and_strategy_types():
+    t = ticket([(sym("P", 555), 1, "close")], limit_net=-2.10, duration="GTC")
+    body = schwab_order(t)
+    assert (
+        body["orderType"],
+        body["price"],
+        body["duration"],
+        body["complexOrderStrategyType"],
+    ) == ("LIMIT", "2.10", "GOOD_TILL_CANCEL", "NONE")
+    assert body["orderLegCollection"][0]["instruction"] == "BUY_TO_CLOSE"
+    assert "quantity" not in body
+    ic = ticket(
+        [
+            (sym("P", 565), 1, "open"),
+            (sym("P", 570), -1, "open"),
+            (sym("C", 615), -1, "open"),
+            (sym("C", 620), 1, "open"),
+        ],
+        limit_net=1.5,
+    )
+    assert schwab_order(ic)["complexOrderStrategyType"] == "IRON_CONDOR"
+    strangle = ticket([(sym("P", 555), -1, "open"), (sym("C", 610), -1, "open")], limit_net=8.8)
+    assert schwab_order(strangle)["complexOrderStrategyType"] == "STRANGLE"
+    roll = ticket(
+        [
+            (sym("P", 555), 1, "close"),
+            (sym("C", 610), 1, "close"),
+            (sym("P", 555, NEXT), -1, "open"),
+            (sym("C", 610, NEXT), -1, "open"),
+        ],
+        intent="roll",
+        limit_net=0.85,
+    )
+    body = schwab_order(roll)
+    assert body["complexOrderStrategyType"] == "CUSTOM" and body["orderType"] == "NET_CREDIT"
+    assert [x["instruction"] for x in body["orderLegCollection"]] == [
+        "BUY_TO_CLOSE",
+        "BUY_TO_CLOSE",
+        "SELL_TO_OPEN",
+        "SELL_TO_OPEN",
+    ]
+
+
+def test_ticket_validation():
+    with pytest.raises(TicketError):
+        TicketLeg.parse("SPY", 1, "open")
+    with pytest.raises(TicketError):
+        TicketLeg.parse(sym("P", 555), 0, "open")
+    t = ticket([(sym("P", 555), -1, "open")])
+    with pytest.raises(TicketError, match="limit"):
+        schwab_order(t)
+
+
+def test_prices_natural_mid_far_for_ratio():
+    t = ticket([(sym("P", 575), -2, "open"), (sym("P", 570), 4, "open")])
+    apply_quotes(t, {sym("P", 575): q(5.80, 6.00), sym("P", 570): q(4.40, 4.60)})
+    assert t.units == 2 and t.ratios() == [-1, 2]
+    p = prices(t)
+    # Per unit: sell one 575 and buy two 570.
+    assert p == {
+        "natural": round(5.80 - 2 * 4.60, 2),
+        "mid": round(5.90 - 2 * 4.50, 2),
+        "far": round(6.00 - 2 * 4.40, 2),
+    }
+
+
+# Guards ---------------------------------------------------------------------------------
+
+
+def priced(limit, legs=None, **kw):
+    t = ticket(
+        legs or [(sym("P", 575), -1, "open"), (sym("P", 570), 1, "open")], limit_net=limit, **kw
+    )
+    apply_quotes(
+        t, {sym("P", 575): q(5.80, 6.00), sym("P", 570): q(4.40, 4.60), sym("P", 555): q(3.0, 3.2)}
+    )
+    return t, prices(t)
+
+
+def test_guard_price_band():
+    t, p = priced(1.30)  # natural 1.20, far 1.60
+    assert guards.check(t, p, TODAY, limits=guards.Limits()) == ([], [])
+    t, p = priced(0.20)
+    errors, _ = guards.check(t, p, TODAY, limits=guards.Limits())
+    assert "worse than the natural" in errors[0]
+    t, p = priced(5.00)
+    assert "beyond the far side" in guards.check(t, p, TODAY, limits=guards.Limits())[0][0]
+
+
+def test_guard_contracts_quotes_expiry_and_closing():
+    t, p = priced(1.3, [(sym("P", 575), -20, "open"), (sym("P", 570), 20, "open")])
+    assert "contract limit" in guards.check(t, p, TODAY, limits=guards.Limits())[0][0]
+    t = ticket([(sym("P", 999), -1, "open")], limit_net=1.0)
+    apply_quotes(t, {})
+    assert any(
+        "No live quote" in e for e in guards.check(t, prices(t), TODAY, limits=guards.Limits())[0]
+    )
+    t, p = priced(1.3)
+    assert any(
+        "expired" in e for e in guards.check(t, p, date(2027, 1, 1), limits=guards.Limits())[0]
+    )
+    t, p = priced(-3.1, [(sym("P", 555), 1, "close")], intent="close")
+    errs = guards.check(t, p, TODAY, limits=guards.Limits(), held={sym("P", 555): -1})[0]
+    assert errs == []
+    errs = guards.check(t, p, TODAY, limits=guards.Limits(), held={sym("P", 555): 1})[0]
+    assert "position holds 1" in errs[0]
+
+
+def test_guard_size_warning_and_block():
+    t, p = priced(1.3)
+    _, w = guards.check(
+        t,
+        p,
+        TODAY,
+        limits=guards.Limits(),
+        net_liq=10_000,
+        bp_effect=400,
+        bp_used_after=0.4,
+        bp_ceiling=0.3,
+    )
+    assert any("4.0% of net liq" in x for x in w) and any("ceiling" in x for x in w)
+    e, _ = guards.check(t, p, TODAY, limits=guards.Limits(), net_liq=1_000, bp_effect=400)
+    assert "hard limit" in e[0]
+
+
+# Simulated broker -----------------------------------------------------------------------
+
+
+def clock(h=11, d=11):
+    return lambda: datetime(2026, 11, d, h, 0, tzinfo=ET)
+
+
+QUOTES = {
+    "SPY": {"quote": {"mark": 590.0}},
+    sym("P", 555): q(3.00, 3.20),
+    sym("C", 610): q(2.60, 2.80),
+}
+
+
+@pytest.mark.anyio
+async def test_sim_open_fill_profit_target_and_close():
+    store = MemoryStore()
+    b = SimBroker(store, 10_000, clock=clock())
+    t = ticket(
+        [(sym("P", 555), -1, "open"), (sym("C", 610), -1, "open")],
+        limit_net=5.80,
+        profit_target=0.5,
+    )
+    order = await b.place(t, QUOTES)  # mid 5.80: fills at once
+    assert order["status"] == "FILLED"
+    st = await b.snapshot()
+    assert st["cash"] == pytest.approx(10_000 + 580 - 1.30)
+    trade = st["trades"][0]
+    assert trade["status"] == "open" and trade["strategy"] == "Strangle"
+    assert {p["symbol"]: p["quantity"] for p in st["positions"]} == {
+        sym("P", 555): -1,
+        sym("C", 610): -1,
+    }
+    target = next(o for o in st["orders"] if o["status"] == "WORKING")
+    assert target["limit_net"] == -2.90 and target["duration"] == "GTC"
+    assert target["schwab_json"]["orderType"] == "NET_DEBIT"
+
+    # Not yet: mid debit 4.10 is worse than the 2.90 target.
+    assert await b.on_quotes({**QUOTES}) == 0
+    cheaper = {**QUOTES, sym("P", 555): q(1.40, 1.50), sym("C", 610): q(1.30, 1.40)}
+    assert await b.on_quotes(cheaper) == 1
+    st = await b.snapshot()
+    assert st["positions"] == [] and st["trades"][0]["status"] == "closed"
+    assert st["trades"][0]["realized_pl"] == pytest.approx(580 - 290 - 2.60)
+    assert stats(st["trades"])[0]["win_rate"] == 1.0
+    # Saved to the store, so it survives a restart.
+    again = SimBroker(store, 1, clock=clock())
+    assert (await again.load())["trades"][0]["status"] == "closed"
+
+
+@pytest.mark.anyio
+async def test_sim_limit_better_than_mid_waits_then_day_order_expires():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock(11))
+    t = ticket([(sym("P", 555), -1, "open")], limit_net=3.50)
+    assert (await b.place(t, QUOTES))["status"] == "WORKING"
+    b.clock = clock(16, 11)
+    await b.on_quotes(QUOTES)
+    assert (await b.snapshot())["orders"][0]["status"] == "EXPIRED"
+
+
+@pytest.mark.anyio
+async def test_sim_roll_keeps_one_trade_and_cumulative_credit():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock())
+    await b.place(ticket([(sym("P", 555), -1, "open")], limit_net=3.10), QUOTES)
+    tid = (await b.snapshot())["trades"][0]["id"]
+    quotes = {**QUOTES, sym("P", 555, NEXT): q(4.00, 4.20)}
+    roll = ticket(
+        [(sym("P", 555), 1, "close"), (sym("P", 555, NEXT), -1, "open")],
+        intent="roll",
+        trade_id=tid,
+        limit_net=1.00,
+    )
+    order = await b.place(roll, quotes)
+    assert order["status"] == "FILLED"
+    st = await b.snapshot()
+    assert len(st["trades"]) == 1 and [e["kind"] for e in st["trades"][0]["events"]] == [
+        "open",
+        "roll",
+    ]
+    info = b.trade_info()[tid]
+    assert info["net"] == pytest.approx(310 + 100) and info["rolls"] == 1
+    assert [p["symbol"] for p in st["positions"]] == [sym("P", 555, NEXT)]
+    with pytest.raises(ValueError, match="not open"):
+        await b.place(
+            ticket([(sym("P", 555), 1, "close")], intent="close", trade_id=999, limit_net=-3.1),
+            quotes,
+        )
+
+
+@pytest.mark.anyio
+async def test_sim_settles_expired_options_at_intrinsic():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock())
+    await b.place(
+        ticket([(sym("P", 555), -1, "open"), (sym("C", 610), -1, "open")], limit_net=5.80), QUOTES
+    )
+    b.clock = lambda: datetime(2026, 12, 19, 10, tzinfo=ET)
+    await b.on_quotes({"SPY": {"quote": {"mark": 550.0}}})
+    st = await b.snapshot()
+    assert st["positions"] == []
+    trade = st["trades"][0]
+    assert trade["status"] == "closed"
+    kinds = sorted(e["kind"] for e in trade["events"])
+    assert kinds == ["expire", "open", "settle"]
+    assert trade["realized_pl"] == pytest.approx(580 - 500 - 1.30)
+
+
+@pytest.mark.anyio
+async def test_sim_account_view_is_schwab_shaped():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock())
+    await b.place(
+        ticket([(sym("P", 575), -1, "open"), (sym("P", 570), 1, "open")], limit_net=1.0),
+        {**QUOTES, sym("P", 575): q(5.9, 6.1), sym("P", 570): q(4.9, 5.1)},
+    )
+    acct = b.account({**QUOTES, sym("P", 575): q(5.9, 6.1), sym("P", 570): q(4.9, 5.1)})
+    sa = acct["securitiesAccount"]
+    assert sa["currentBalances"]["maintenanceRequirement"] == 500  # 5-wide
+    assert sa["currentBalances"]["liquidationValue"] == pytest.approx(10_000 + 100 - 1.3 - 100)
+    assert {p["tradeId"] for p in sa["positions"]} == {2}
+
+
+def test_summarize_preview_finds_nested_fields_and_messages():
+    raw = {
+        "orderStrategy": {
+            "orderBalance": {"projectedCommission": 1.3, "projectedBuyingPower": 9000.5}
+        },
+        "orderValidationResult": {
+            "warns": [{"message": "Low volume"}],
+            "rejects": [{"title": "Insufficient funds"}],
+        },
+    }
+    s = summarize_preview(raw)
+    assert s["fields"] == {"projectedCommission": 1.3, "projectedBuyingPower": 9000.5}
+    assert not s["ok"] and {m["level"] for m in s["messages"]} == {"warning", "error"}
+
+
+# API ------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def client(tmp_path):
+    s = Settings(
+        _env_file=None,
+        app_password=PASSWORD,
+        secret_key="s" * 32,
+        demo_mode=True,
+        cookie_secure=False,
+        data_dir=tmp_path,
+    )
+    app = create_app(
+        s,
+        store=MemoryStore(),
+        start_background=False,
+        static_dir=tmp_path / "none",
+        source=DemoDataSource(today=TODAY),
+    )
+    with TestClient(app, follow_redirects=False) as c:
+        c.post("/login", data={"password": PASSWORD})
+        yield c
+
+
+def first_put(client, target=0.3):
+    exps = client.get("/api/trade/SPY/expirations").json()
+    ch = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()
+    row = min(
+        (r for r in ch["rows"] if r["put"]["delta"]),
+        key=lambda r: abs(abs(r["put"]["delta"]) - target),
+    )
+    return row["put"]["symbol"]
+
+
+def test_api_preview_place_activity_cancel(client):
+    put = first_put(client)
+    body = {
+        "account": "sim",
+        "intent": "open",
+        "legs": [{"symbol": put, "quantity": -1, "effect": "open"}],
+    }
+    pv = client.post("/api/orders/preview", json=body).json()
+    assert pv["errors"] == [] and pv["limit_net"] == pv["prices"]["mid"]
+    assert pv["schwab_json"]["orderLegCollection"][0]["instruction"] == "SELL_TO_OPEN"
+    assert pv["schwab_preview"]["simulated"] is True and pv["bp_effect"] > 0
+    # Live placement is not available yet.
+    assert (
+        client.post(
+            "/api/orders", json={**body, "account": "live", "limit_net": pv["limit_net"]}
+        ).status_code
+        == 403
+    )
+    # A far-away limit rests; then cancel it.
+    order = client.post("/api/orders", json={**body, "limit_net": pv["prices"]["far"]}).json()
+    assert order["status"] == "WORKING"
+    assert client.post(f"/api/orders/{order['id']}/cancel").json()["status"] == "CANCELED"
+    # At mid it fills.
+    filled = client.post(
+        "/api/orders", json={**body, "limit_net": pv["limit_net"], "profit_target": 0.5}
+    ).json()
+    assert filled["status"] == "FILLED"
+    act = client.get("/api/activity").json()
+    assert act["trades"][0]["status"] == "open"
+    assert [o["status"] for o in act["orders"]][:2] == ["WORKING", "FILLED"]  # target + open
+    # A fat-finger limit is refused.
+    bad = client.post("/api/orders", json={**body, "limit_net": 0.01})
+    assert bad.status_code == 400 and "natural" in bad.json()["detail"]
+
+
+def test_api_close_needs_trade_and_reset(client):
+    put = first_put(client)
+    r = client.post(
+        "/api/orders/preview",
+        json={
+            "account": "sim",
+            "intent": "close",
+            "legs": [{"symbol": put, "quantity": 1, "effect": "close"}],
+        },
+    )
+    assert r.status_code == 400
+    assert (
+        client.post("/api/sim/reset", json={"start_cash": 50000, "confirm": "nope"}).status_code
+        == 400
+    )
+    assert client.post("/api/sim/reset", json={"start_cash": 50000, "confirm": "RESET"}).json() == {
+        "ok": True
+    }
+    assert client.get("/api/activity").json()["cash"] == 50000
+
+
+@pytest.mark.anyio
+async def test_sim_positions_grouped_by_trade_with_credit_including_rolls():
+    from app.portfolio import PortfolioService
+    from app.sim import SimDataSource
+
+    store = MemoryStore()
+    demo = DemoDataSource(today=TODAY)
+    b = SimBroker(store, 10_000, clock=clock())
+    s = Settings(_env_file=None, app_password=PASSWORD, secret_key="s" * 32, demo_mode=True)
+    src = SimDataSource(demo, b)
+
+    async def resolver():
+        return "SIM"
+
+    pf = PortfolioService(
+        src,
+        store,
+        s,
+        lambda: {},
+        resolver,
+        "sim",
+        clock=clock(),
+        include_watchlist=False,
+        extra_symbols=b.working_symbols,
+        after_quotes=b.on_quotes,
+        trade_info=b.trade_info,
+    )
+    exp = date(2026, 12, 18)
+    legs = [
+        (option_symbol("SPY", exp, "P", 560), -1, "open"),
+        (option_symbol("SPY", exp, "C", 620), -1, "open"),
+    ]
+    t = ticket(legs)
+    quotes = await demo.quotes([x.symbol for x in t.legs] + ["SPY"])
+    apply_quotes(t, quotes)
+    t.limit_net = prices(t)["mid"]
+    await b.place(t, quotes)
+    await pf.tick()
+    (spy,) = pf.snapshot["underlyings"]
+    (st,) = spy["strategies"]
+    assert st["name"] == "Strangle" and st["trade_id"] == b.state["trades"][0]["id"]
+    assert st["numbers"]["open_value"] == pytest.approx(b.state["trades"][0]["events"][0]["net"])
+    assert pf.snapshot["account"]["type"] == "SIMULATED"
+
+
+@pytest.mark.anyio
+async def test_roll_cancels_the_old_profit_target_and_closes_are_named_for_the_trade():
+    b = SimBroker(MemoryStore(), 10_000, clock=clock())
+    await b.place(
+        ticket(
+            [(sym("P", 555), -1, "open"), (sym("C", 610), -1, "open")],
+            limit_net=5.80,
+            profit_target=0.5,
+        ),
+        QUOTES,
+    )
+    tid = b.state["trades"][0]["id"]
+    target = next(o for o in b.state["orders"] if o["status"] == "WORKING")
+    assert target["strategy"] == "Strangle"
+    assert target["schwab_json"]["complexOrderStrategyType"] == "STRANGLE"
+    quotes = {**QUOTES, sym("P", 555, NEXT): q(4.0, 4.2), sym("C", 610, NEXT): q(3.6, 3.8)}
+    roll = ticket(
+        [
+            (sym("P", 555), 1, "close"),
+            (sym("C", 610), 1, "close"),
+            (sym("P", 555, NEXT), -1, "open"),
+            (sym("C", 610, NEXT), -1, "open"),
+        ],
+        intent="roll",
+        trade_id=tid,
+        limit_net=1.90,
+    )
+    order = await b.place(roll, quotes)
+    assert order["status"] == "FILLED" and order["strategy"] == "Strangle"
+    old = next(o for o in b.state["orders"] if o["id"] == target["id"])
+    assert old["status"] == "CANCELED" and f"roll #{order['id']}" in old["reason"]
+    assert [o for o in b.state["orders"] if o["status"] == "WORKING"] == []
+
+
+def test_stats_count_short_trades_as_one_day():
+    trades = [
+        {
+            "status": "closed",
+            "strategy": "Strangle",
+            "realized_pl": 50.0,
+            "opened_at": 0.0,
+            "closed_at": 600.0,
+        }
+    ]
+    assert stats(trades)[0]["pl_per_day"] == 50.0

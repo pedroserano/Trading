@@ -17,7 +17,7 @@ from . import analytics
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .schwab_service import SchwabAuthError, SchwabError, SchwabNotConnected
-from .strategies import Rules, evaluate, group_all
+from .strategies import Rules, Strategy, evaluate, group, group_all
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -53,6 +53,10 @@ class PortfolioService:
         clock: Callable[[], datetime] = lambda: datetime.now(ET),
         preferences=None,
         notifier=None,
+        include_watchlist: bool = True,
+        extra_symbols=None,
+        after_quotes=None,
+        trade_info=None,
     ):
         self.source = source
         self.store = store
@@ -64,6 +68,11 @@ class PortfolioService:
         self.clock = clock
         self.preferences = preferences
         self.notifier = notifier
+        self.include_watchlist = include_watchlist
+        # Hooks used by the simulated account.
+        self.extra_symbols = extra_symbols  # async () -> set of symbols to quote
+        self.after_quotes = after_quotes  # async (quotes) -> number of fills
+        self.trade_info = trade_info  # () -> {trade_id: {strategy, net, rolls}}
         self.stream = None  # StreamService, attached when streaming is available
         self.watchlist: list[str] = []
         self._symbols: set[str] = set()
@@ -170,7 +179,8 @@ class PortfolioService:
         self.needs = None
         if self.preferences is not None:
             self.rules = await self.preferences.rules()
-            self.watchlist = await self.preferences.watchlist()
+            if self.include_watchlist:
+                self.watchlist = await self.preferences.watchlist()
         try:
             account_hash = await self.resolve_account()
             today = self.clock().date()
@@ -185,11 +195,14 @@ class PortfolioService:
             if due:
                 self.account_raw = await self.source.account(account_hash)
                 acct = (self.account_raw or {}).get("securitiesAccount", {})
-                self.legs = [
-                    leg
-                    for p in acct.get("positions", [])
-                    if (leg := leg_from_schwab_position(p)) is not None
-                ]
+                self.legs = []
+                for p in acct.get("positions", []):
+                    leg = leg_from_schwab_position(p)
+                    if leg is None:
+                        continue
+                    if p.get("tradeId") is not None:
+                        leg.extra["trade_id"] = p["tradeId"]
+                    self.legs.append(leg)
                 self.positions_at = time.time()
             symbols = (
                 {leg.symbol for leg in self.legs}
@@ -197,6 +210,8 @@ class PortfolioService:
                 | {BENCH, VIX}
                 | set(self.watchlist)
             )
+            if self.extra_symbols is not None:
+                symbols |= await self.extra_symbols()
             self._symbols = symbols
             now = time.time()
             full = not self.streaming() or now - self._full_poll_at >= 60
@@ -215,6 +230,10 @@ class PortfolioService:
                     entry.update({k: v for k, v in q.items() if k != "quote"})
                     entry.setdefault("quote", {}).update(q.get("quote", {}))
             self.quotes_at = time.time()
+            if self.after_quotes is not None and await self.after_quotes(self.quotes):
+                # Something filled or settled: reload positions on the next pass.
+                self.positions_at = None
+                self._wake.set()
             await self._refresh_vix_history(today)
             self.error = None
         except NeedsSetup as e:
@@ -303,6 +322,29 @@ class PortfolioService:
                     except Exception as e:
                         log.warning("Flag notification failed: %s", e)
 
+    def _group_by_trade(self) -> dict:
+        """Simulated positions are grouped exactly, by the trade each leg belongs to."""
+        info = self.trade_info()
+        by_trade: dict[int, list[Leg]] = {}
+        for leg in self.legs:
+            by_trade.setdefault(leg.extra.get("trade_id"), []).append(leg)
+        out: dict[str, list[Strategy]] = {}
+        for tid, legs in by_trade.items():
+            guess = group(legs)
+            t = info.get(tid, {})
+            name = guess[0].name if len(guess) == 1 else t.get("strategy", "Custom")
+            defined = all(g.defined_risk for g in guess)
+            st = Strategy(
+                name,
+                legs[0].underlying,
+                [x.with_quantity(x.quantity) for x in legs],
+                defined,
+                open_override=t.get("net"),
+                meta={"trade_id": tid, "rolls": t.get("rolls", 0)},
+            )
+            out.setdefault(legs[0].underlying, []).append(st)
+        return dict(sorted(out.items()))
+
     def _build_and_publish(self, extras: dict | None = None) -> None:
         extras = extras or {}
         self._apply_quotes()
@@ -352,7 +394,7 @@ class PortfolioService:
         else:
             snap["account"] = None
 
-        groups = group_all(self.legs)
+        groups = self._group_by_trade() if self.trade_info else group_all(self.legs)
         underlyings = []
         tot = {"pl": 0.0, "theta": 0.0, "delta_bw": 0.0}
         missing = {"pl": False, "theta": False, "delta_bw": False}
@@ -422,6 +464,8 @@ class PortfolioService:
 
 def _strategy_json(st, today: date) -> dict:
     return {
+        "trade_id": st.meta.get("trade_id"),
+        "rolls": st.meta.get("rolls", 0),
         "name": st.name,
         "defined_risk": st.defined_risk,
         "numbers": st.numbers,

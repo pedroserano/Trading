@@ -4,17 +4,21 @@ import type { Snapshot } from "./types";
 export type Link = "connecting" | "open" | "retrying";
 
 /** Live portfolio snapshot pushed by the backend over server-sent events. */
-export function useSnapshot(): { snapshot: Snapshot | null; link: Link } {
+export function useSnapshot(account: "live" | "sim" = "live"): {
+  snapshot: Snapshot | null;
+  link: Link;
+} {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [link, setLink] = useState<Link>("connecting");
 
   useEffect(() => {
+    setSnapshot(null);
     let source: EventSource | null = null;
     let retry: number | undefined;
     let closed = false;
 
     const connect = () => {
-      source = new EventSource("/api/events");
+      source = new EventSource(`/api/events?account=${account}`);
       source.onopen = () => setLink("open");
       source.onmessage = (e) => {
         const snap = JSON.parse(e.data) as Snapshot;
@@ -43,7 +47,7 @@ export function useSnapshot(): { snapshot: Snapshot | null; link: Link } {
       source?.close();
       window.clearTimeout(retry);
     };
-  }, []);
+  }, [account]);
 
   return { snapshot, link };
 }

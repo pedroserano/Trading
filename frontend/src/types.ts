@@ -38,6 +38,8 @@ export interface StrategyNumbers {
 }
 
 export interface StrategyView {
+  trade_id: number | null;
+  rolls: number;
   name: string;
   defined_risk: boolean;
   numbers: StrategyNumbers;
@@ -71,7 +73,7 @@ export interface UnderlyingView {
 export interface Snapshot {
   pending?: boolean;
   generated_at: number;
-  mode: "demo" | "live";
+  mode: "demo" | "live" | "sim";
   connection: {
     connected: boolean;
     expires_in_days: number | null;
@@ -203,4 +205,104 @@ export interface Analysis {
     bp_used_pct: number | null;
     bp_ceiling_pct: number | null;
   };
+}
+
+export interface OrderLeg {
+  symbol: string;
+  quantity: number;
+  effect: "open" | "close";
+}
+
+export interface Preview {
+  account: "sim" | "live";
+  intent: string;
+  strategy: string;
+  underlying: string;
+  spot: number | null;
+  units: number;
+  prices: { natural: number | null; mid: number | null; far: number | null };
+  limit_net: number | null;
+  duration: "DAY" | "GTC";
+  legs: {
+    symbol: string;
+    instruction: string;
+    quantity: number;
+    bid: number | null;
+    ask: number | null;
+    mark: number | null;
+    put_call: string;
+    strike: number;
+    expiration: string | null;
+  }[];
+  bp_effect: number | null;
+  defined_risk: boolean;
+  bp_used_after: number | null;
+  commission: number;
+  errors: string[];
+  warnings: string[];
+  schwab_json: unknown;
+  schwab_preview: {
+    ok: boolean;
+    simulated?: boolean;
+    error?: string;
+    fields: Record<string, number>;
+    messages: { level: string; text: string }[];
+  } | null;
+}
+
+export interface SimOrder {
+  id: number;
+  created_at: number;
+  status: "WORKING" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED";
+  intent: string;
+  trade_id: number | null;
+  underlying: string;
+  strategy: string;
+  legs: OrderLeg[];
+  units: number;
+  limit_net: number;
+  duration: "DAY" | "GTC";
+  fill_net: number | null;
+  filled_at: number | null;
+  reason: string | null;
+  schwab_json: unknown;
+}
+
+export interface TradeEvent {
+  at: number;
+  kind: "open" | "close" | "roll" | "adjust" | "expire" | "settle";
+  order_id: number | null;
+  net: number;
+  commission: number;
+  legs: { symbol: string; quantity: number; price: number }[];
+}
+
+export interface SimTrade {
+  id: number;
+  underlying: string;
+  strategy: string;
+  opened_at: number;
+  closed_at: number | null;
+  status: "open" | "closed";
+  events: TradeEvent[];
+  realized_pl: number | null;
+}
+
+export interface StatRow {
+  strategy: string;
+  trades: number;
+  win_rate: number;
+  total_pl: number;
+  avg_pl: number;
+  avg_days: number;
+  pl_per_day: number;
+}
+
+export interface Activity {
+  cash: number;
+  start_cash: number;
+  net_liq: number | null;
+  orders: SimOrder[];
+  trades: SimTrade[];
+  stats: StatRow[];
 }

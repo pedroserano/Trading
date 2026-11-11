@@ -27,6 +27,9 @@ class Strategy:
     underlying: str
     legs: list[Leg]
     defined_risk: bool
+    # Net opened in dollars including rolls (positive = credit), when known from a journal.
+    open_override: float | None = None
+    meta: dict = field(default_factory=dict)
     # Filled by evaluate().
     numbers: dict = field(default_factory=dict)
     flags: list[dict] = field(default_factory=list)
@@ -194,7 +197,11 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     legs = st.legs
     opts = [leg for leg in legs if leg.is_option]
     # Positive = credit received.
-    open_value = -sum(leg.quantity * leg.avg_price * leg.multiplier for leg in legs)
+    open_value = (
+        st.open_override
+        if st.open_override is not None
+        else -sum(leg.quantity * leg.avg_price * leg.multiplier for leg in legs)
+    )
     marks_known = all(leg.mark is not None for leg in legs)
     value = sum(leg.quantity * leg.mark * leg.multiplier for leg in legs) if marks_known else None
     pl = None if value is None else value + open_value

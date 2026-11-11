@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { TicketContext } from "./context";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, signed, strike, tone } from "./format";
 import PayoffChart from "./PayoffChart";
@@ -134,6 +135,7 @@ export default function Trade({ symbol }: { symbol: string }) {
   const [anaError, setAnaError] = useState<string | null>(null);
   const [params, setParams] = useState<Params>({ strangle: 0.16, vertical: 0.3, condor: 0.2, width: 5 });
   const scroller = useRef<HTMLDivElement>(null);
+  const openTicket = useContext(TicketContext);
   const centred = useRef<string | null>(null);
 
   useEffect(() => setInput(symbol), [symbol]);
@@ -445,8 +447,26 @@ export default function Trade({ symbol }: { symbol: string }) {
             </button>
           ) : null}
           {anaError ? <div className="banner warn">{anaError}</div> : null}
+          {legs.length ? (
+            <button
+              type="button"
+              className="primary review"
+              onClick={() =>
+                openTicket({
+                  title: `Open ${symbol} trade`,
+                  account: "sim",
+                  intent: "open",
+                  underlying: symbol,
+                  tradeId: null,
+                  legs: legs.map((l) => ({ symbol: l.symbol, quantity: l.quantity, effect: "open" as const })),
+                })
+              }
+            >
+              Review order
+            </button>
+          ) : null}
           {analysis && spot !== null ? <Summary a={analysis} spot={spot} /> : null}
-          <p className="phase-note">Order entry arrives in phase 3.</p>
+          <p className="phase-note">Orders go to the simulated account until phase 4.</p>
         </div>
       </div>
     </div>

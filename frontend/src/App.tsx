@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
+import { AccountContext, TicketContext, type Account } from "./context";
+import Activity from "./Activity";
+import OrderTicket, { closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
 import Trade from "./Trade";
 import Watchlist from "./Watchlist";
 
-type Route = { page: "positions" } | { page: "watchlist" } | { page: "trade"; symbol: string };
+type Route =
+  | { page: "positions" }
+  | { page: "watchlist" }
+  | { page: "activity" }
+  | { page: "trade"; symbol: string };
+
+
 
 function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "watchlist") return { page: "watchlist" };
+  if (parts[0] === "activity") return { page: "activity" };
   if (parts[0] === "trade") return { page: "trade", symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase() };
   return { page: "positions" };
 }
@@ -66,8 +76,10 @@ function useNow(ms: number) {
 }
 
 export default function App() {
-  const { snapshot, link } = useSnapshot();
+  const [account, setAccount] = usePersisted<Account>("account", "live");
+  const { snapshot, link } = useSnapshot(account);
   const route = useRoute();
+  const [ticket, setTicket] = useState<TicketSpec | null>(null);
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
   const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
 
@@ -79,11 +91,13 @@ export default function App() {
     );
   }
   return (
-    <>
-      <Header s={snapshot} link={link} route={route} />
+    <TicketContext.Provider value={setTicket}>
+      <AccountContext.Provider value={account}>
+      <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} />
       <main>
         <Banner s={snapshot} />
         {route.page === "watchlist" ? <Watchlist /> : null}
+        {route.page === "activity" ? <Activity /> : null}
         {route.page === "trade" ? <Trade symbol={route.symbol} /> : null}
         {route.page === "positions" ? (
           <>
@@ -114,7 +128,9 @@ export default function App() {
           </>
         ) : null}
       </main>
-    </>
+      {ticket ? <OrderTicket spec={ticket} onClose={() => setTicket(null)} /> : null}
+      </AccountContext.Provider>
+    </TicketContext.Provider>
   );
 }
 
@@ -164,12 +180,20 @@ function Nav({ route }: { route: Route }) {
       {tab("positions", "#/", "Positions")}
       {tab("watchlist", "#/watchlist", "Watchlist")}
       {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
+      {tab("activity", "#/activity", "Activity")}
       <a href="/connect">Settings</a>
     </nav>
   );
 }
 
-function Header({ s, link, route }: { s: Snapshot; link: Link; route: Route }) {
+function Header(props: {
+  s: Snapshot;
+  link: Link;
+  route: Route;
+  account: Account;
+  setAccount: (a: Account) => void;
+}) {
+  const { s, link, route } = props;
   const a = s.account;
   const bp = a?.bp_used_pct ?? null;
   const ceiling = a?.bp_ceiling_pct ?? null;
@@ -183,6 +207,14 @@ function Header({ s, link, route }: { s: Snapshot; link: Link; route: Route }) {
       <div className="brand">
         <strong>Trading</strong>
         {s.mode === "demo" ? <span className="badge demo">DEMO</span> : null}
+        <div className="seg acct-switch" role="group" aria-label="Account">
+          <button aria-pressed={props.account === "live"} onClick={() => props.setAccount("live")}>
+            Schwab
+          </button>
+          <button aria-pressed={props.account === "sim"} onClick={() => props.setAccount("sim")}>
+            Simulated
+          </button>
+        </div>
         {a ? (
           <span className="acct">
             …{a.last4} {a.type ? a.type.toLowerCase() : ""}
@@ -417,6 +449,7 @@ function UnderGroup(props: {
           open={props.open}
           toggle={props.toggle}
           compact={compact}
+          underSymbol={u.symbol}
         />
       ))}
     </>
@@ -448,6 +481,7 @@ function StrategyRows(props: {
   open: Set<string>;
   toggle: (k: string) => void;
   compact: boolean;
+  underSymbol?: string;
 }) {
   const { st, id, compact } = props;
   const n = st.numbers;
@@ -553,6 +587,26 @@ function StrategyRows(props: {
             </tr>
           ))
         : null}
+      {expanded && st.legs.some((l) => l.kind === "OPTION") ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={compact ? 4 : 13} /> : null}
     </>
+  );
+}
+
+function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | undefined; cols: number }) {
+  const open = useContext(TicketContext);
+  const account = useContext(AccountContext);
+  if (!under) return null;
+  return (
+    <tr className="leg actions">
+      <td className="l" colSpan={cols}>
+        <button type="button" className="small" onClick={() => open(closeSpec(st, under, account))}>
+          Close
+        </button>
+        <button type="button" className="small" onClick={() => open(rollSpec(st, under, account))}>
+          Roll
+        </button>
+        {account === "live" ? <span className="sub"> Preview against Schwab; live orders arrive in phase 4.</span> : null}
+      </td>
+    </tr>
   );
 }

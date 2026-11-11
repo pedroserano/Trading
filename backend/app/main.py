@@ -6,6 +6,7 @@ import time
 from contextlib import asynccontextmanager, suppress
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
@@ -21,12 +22,23 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
+from . import guards
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .jobs import DailyJobs
 from .notify import PushoverNotifier, ReminderService
+from .orders import (
+    Ticket,
+    TicketError,
+    TicketLeg,
+    apply_quotes,
+    prices,
+    schwab_order,
+    validate_shape,
+)
+from .orders import strategy_name as ticket_strategy
 from .portfolio import BENCH, PortfolioService
 from .preferences import _SYMBOL, RULE_FIELDS, Preferences, parse_symbols
 from .schwab_service import (
@@ -35,6 +47,7 @@ from .schwab_service import (
     SchwabNotConnected,
     SchwabService,
 )
+from .sim import COMMISSION, SimBroker, SimDataSource, stats
 from .store import PgStore
 from .streaming import StreamService
 from .token_store import TokenStore
@@ -61,6 +74,69 @@ class LegIn(BaseModel):
     delta: float | None = None
     theta: float | None = None
     vega: float | None = None
+
+
+class OrderLegIn(BaseModel):
+    symbol: str = Field(max_length=32)
+    quantity: int
+    effect: Literal["open", "close"]
+
+
+class OrderIn(BaseModel):
+    account: Literal["sim", "live"] = "sim"
+    intent: Literal["open", "close", "roll", "adjust"] = "open"
+    trade_id: int | None = None
+    legs: list[OrderLegIn] = Field(min_length=1, max_length=8)
+    limit_net: float | None = None
+    duration: Literal["DAY", "GTC"] = "DAY"
+    profit_target: float | None = Field(None, ge=0.05, le=0.95)
+
+
+class ResetIn(BaseModel):
+    start_cash: float = Field(gt=0, le=100_000_000)
+    confirm: str
+
+
+def summarize_preview(raw) -> dict:
+    """Pulls the useful parts out of Schwab's preview response, whatever its nesting."""
+    fields, messages = {}, []
+    wanted = {
+        "projectedCommission",
+        "projectedBuyingPower",
+        "projectedAvailableFund",
+        "orderValue",
+        "projectedMarginRequirement",
+    }
+    levels = {
+        "rejects": "error",
+        "warns": "warning",
+        "alerts": "warning",
+        "reviews": "info",
+        "accepts": "ok",
+    }
+
+    def walk(node, parent=None):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in wanted and isinstance(v, int | float):
+                    fields.setdefault(k, v)
+                if k in levels and isinstance(v, list):
+                    for item in v:
+                        if isinstance(item, dict):
+                            text = item.get("message") or item.get("title") or str(item)
+                            messages.append({"level": levels[k], "text": str(text)[:300]})
+                walk(v, k)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, parent)
+
+    walk(raw)
+    return {
+        "ok": not any(m["level"] == "error" for m in messages),
+        "fields": fields,
+        "messages": [m for m in messages if m["level"] != "ok"],
+        "raw": raw,
+    }
 
 
 class AnalyzeIn(BaseModel):
@@ -180,6 +256,36 @@ def create_app(
             schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
         )
         portfolio.stream = stream
+    broker = SimBroker(store, start_cash=settings.sim_start_cash)
+    sim_source = SimDataSource(source, broker)
+
+    async def sim_account() -> str:
+        return SimDataSource.HASH
+
+    sim_portfolio = PortfolioService(
+        sim_source,
+        store,
+        settings,
+        connection_json,
+        sim_account,
+        mode="sim",
+        preferences=preferences,
+        include_watchlist=False,
+        extra_symbols=broker.working_symbols,
+        after_quotes=broker.on_quotes,
+        trade_info=lambda: broker.trade_info() if broker.state else {},
+    )
+    if stream is not None:
+        sim_portfolio.stream = stream
+        stream.wanted = lambda: portfolio.wanted_symbols() | sim_portfolio.wanted_symbols()
+
+        def both(batch):
+            portfolio.on_stream_quotes(batch)
+            sim_portfolio.on_stream_quotes(batch)
+
+        stream.on_quotes = both
+    portfolios = {"live": portfolio, "sim": sim_portfolio}
+    limits = guards.Limits(max_contracts=settings.max_contracts_per_leg)
     watchlist = WatchlistService(source, store, portfolio, preferences)
     health: dict[str, str | None] = {}
     jobs = DailyJobs(source, store, portfolio, settings)
@@ -188,6 +294,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await store.open()
+        await broker.load()
         schwab.load()
         log.info("Started. Demo: %s. Schwab connected: %s", demo, schwab.status().connected)
         tasks = []
@@ -198,6 +305,8 @@ def create_app(
                 "reminders": reminders.run,
                 "publisher": portfolio.publisher,
                 "watchlist": watchlist.run,
+                "simulated account": sim_portfolio.run,
+                "simulated publisher": sim_portfolio.publisher,
             }
             if stream is not None:
                 services["streaming"] = stream.run
@@ -443,8 +552,8 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(e)) from e
 
     @app.get("/api/snapshot", dependencies=[Depends(require_login)])
-    async def api_snapshot():
-        return JSONResponse(portfolio.snapshot or {"pending": True})
+    async def api_snapshot(account: Literal["live", "sim"] = "live"):
+        return JSONResponse(portfolios[account].snapshot or {"pending": True})
 
     def _schwab_errors(e: Exception) -> HTTPException:
         if isinstance(e, SchwabNotConnected):
@@ -538,14 +647,189 @@ def create_app(
         result["beta"] = beta
         return result
 
+    # Orders ----------------------------------------------------------------------------
+
+    async def build_ticket(body: OrderIn) -> tuple[Ticket, dict, dict]:
+        try:
+            legs = [TicketLeg.parse(x.symbol, x.quantity, x.effect) for x in body.legs]
+            t = Ticket(
+                legs=legs,
+                intent=body.intent,
+                duration=body.duration,
+                limit_net=body.limit_net,
+                trade_id=body.trade_id,
+                profit_target=body.profit_target if body.intent == "open" else None,
+            )
+            validate_shape(t)
+        except TicketError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if (
+            body.intent in ("close", "roll", "adjust")
+            and body.account == "sim"
+            and body.trade_id is None
+        ):
+            raise HTTPException(status_code=400, detail="Closing a simulated trade needs its id")
+        try:
+            quotes = await source.quotes(sorted({x.symbol for x in legs} | {t.underlying}))
+        except SchwabError as e:
+            raise _schwab_errors(e) from e
+        apply_quotes(t, quotes)
+        p = prices(t)
+        if t.limit_net is None:
+            t.limit_net = p["mid"]
+        else:
+            t.limit_net = round(t.limit_net, 2)
+        return t, p, quotes
+
+    async def assess(body: OrderIn, t: Ticket, p: dict, quotes: dict) -> dict:
+        today = portfolio.clock().date()
+        pf = portfolios[body.account]
+        acct = (pf.snapshot or {}).get("account") or {}
+        if body.account == "sim":
+            held = await broker.held(body.trade_id)
+        else:
+            held = {}
+            for leg in portfolio.legs:
+                held[leg.symbol] = held.get(leg.symbol, 0) + int(leg.quantity)
+        spot = None
+        uq = (quotes.get(t.underlying) or {}).get("quote", {})
+        for k in ("mark", "lastPrice", "closePrice"):
+            if uq.get(k):
+                spot = float(uq[k])
+                break
+        bp, defined = None, True
+        if spot and t.intent in ("open", "adjust") and all(x.mark is not None for x in t.legs):
+            tl = [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs]
+            a = analyze(tl, spot, today)
+            bp, defined = a["bp_estimate"], not a["unlimited_loss"]
+        nl, maint = acct.get("net_liq"), acct.get("maintenance")
+        after = (maint + bp) / nl if (bp is not None and nl and maint is not None) else None
+        errors, warnings = guards.check(
+            t,
+            p,
+            today,
+            limits=limits,
+            held=held,
+            net_liq=nl,
+            bp_effect=bp,
+            defined_risk=defined,
+            bp_used_after=after,
+            bp_ceiling=acct.get("bp_ceiling_pct"),
+        )
+        body_json = None
+        try:
+            body_json = schwab_order(t)
+        except TicketError as e:
+            errors.append(str(e))
+        preview = None
+        # Schwab can only preview against the real account: opening orders, or live closes.
+        if body_json and (t.intent == "open" or body.account == "live"):
+            if demo:
+                preview = {"ok": True, "simulated": True, "fields": {}, "messages": [], "raw": None}
+            else:
+                try:
+                    preview = summarize_preview(
+                        await schwab.call("preview_order", await selector(), body_json)
+                    )
+                except Exception as e:
+                    preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
+        contracts = sum(abs(x.quantity) for x in t.legs)
+        return {
+            "account": body.account,
+            "intent": t.intent,
+            "strategy": ticket_strategy(t),
+            "underlying": t.underlying,
+            "spot": spot,
+            "units": t.units,
+            "prices": p,
+            "limit_net": t.limit_net,
+            "duration": t.duration,
+            "legs": [
+                {
+                    "symbol": x.symbol,
+                    "instruction": x.instruction,
+                    "quantity": abs(x.quantity),
+                    "bid": x.bid,
+                    "ask": x.ask,
+                    "mark": x.mark,
+                    "put_call": x.put_call,
+                    "strike": x.strike,
+                    "expiration": x.expiration.isoformat() if x.expiration else None,
+                }
+                for x in t.legs
+            ],
+            "bp_effect": bp,
+            "defined_risk": defined,
+            "bp_used_after": after,
+            "commission": round(contracts * COMMISSION, 2),
+            "errors": errors,
+            "warnings": warnings,
+            "schwab_json": body_json,
+            "schwab_preview": preview,
+        }
+
+    @app.post("/api/orders/preview", dependencies=[Depends(require_login)])
+    async def api_order_preview(body: OrderIn):
+        t, p, quotes = await build_ticket(body)
+        return await assess(body, t, p, quotes)
+
+    @app.post("/api/orders", dependencies=[Depends(require_login)])
+    async def api_order_place(body: OrderIn):
+        if body.account != "sim":
+            raise HTTPException(status_code=403, detail="Live orders arrive in phase 4")
+        if body.limit_net is None:
+            raise HTTPException(status_code=400, detail="Set a limit price")
+        t, p, quotes = await build_ticket(body)
+        result = await assess(body, t, p, quotes)
+        if result["errors"]:
+            raise HTTPException(status_code=400, detail="; ".join(result["errors"]))
+        try:
+            order = await broker.place(t, quotes)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        sim_portfolio.refresh_soon()
+        return order
+
+    @app.post("/api/orders/{order_id}/cancel", dependencies=[Depends(require_login)])
+    async def api_order_cancel(order_id: int):
+        try:
+            order = await broker.cancel(order_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        sim_portfolio.refresh_soon()
+        return order
+
+    @app.get("/api/activity", dependencies=[Depends(require_login)])
+    async def api_activity():
+        st = await broker.snapshot()
+        acct = (sim_portfolio.snapshot or {}).get("account") or {}
+        return {
+            "account": "sim",
+            "cash": st["cash"],
+            "start_cash": st["start_cash"],
+            "net_liq": acct.get("net_liq"),
+            "orders": sorted(st["orders"], key=lambda o: -o["id"])[:300],
+            "trades": sorted(st["trades"], key=lambda tr: -tr["id"])[:300],
+            "stats": stats(st["trades"]),
+        }
+
+    @app.post("/api/sim/reset", dependencies=[Depends(require_login)])
+    async def api_sim_reset(body: ResetIn):
+        if body.confirm != "RESET":
+            raise HTTPException(status_code=400, detail="Type RESET to confirm")
+        await broker.reset(body.start_cash)
+        sim_portfolio.refresh_soon()
+        return {"ok": True}
+
     @app.get("/api/events", dependencies=[Depends(require_login)])
-    async def api_events(request: Request):
-        queue = portfolio.subscribe()
+    async def api_events(request: Request, account: Literal["live", "sim"] = "live"):
+        pf = portfolios[account]
+        queue = pf.subscribe()
 
         async def stream():
             try:
-                if portfolio.snapshot:
-                    yield f"data: {json.dumps(portfolio.snapshot, default=str)}\n\n"
+                if pf.snapshot:
+                    yield f"data: {json.dumps(pf.snapshot, default=str)}\n\n"
                 while not await request.is_disconnected():
                     try:
                         snap = await asyncio.wait_for(queue.get(), timeout=15)
@@ -553,7 +837,7 @@ def create_app(
                     except TimeoutError:
                         yield ": keep-alive\n\n"
             finally:
-                portfolio.unsubscribe(queue)
+                pf.unsubscribe(queue)
 
         return StreamingResponse(
             stream(),

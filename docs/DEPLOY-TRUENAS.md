@@ -155,6 +155,8 @@ so the container picks them up.
 | `REMINDER_WEEKDAY`, `REMINDER_HOUR` | When the weekly Schwab sign-in reminder goes out, US Eastern. Default Sunday 18:00. |
 | `WATCHLIST` | Starting watchlist, e.g. `SPY,QQQ,IWM`. Used only until the watchlist is edited on the Settings page, which also imports thinkorswim exports. |
 | `DEMO_MODE` | `true` shows a simulated account. Leave `false` for real use. |
+| `SIM_START_CASH` | Starting cash of the simulated account. Default 100000. Resetting the simulated account from the Activity page can set a different amount. |
+| `MAX_CONTRACTS_PER_LEG` | Hard limit on contracts per leg in any order, simulated or live. Default 10. |
 
 ## One-tap Schwab sign-in (optional)
 
