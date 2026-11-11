@@ -343,9 +343,8 @@ trades that follow the entry mechanics:
 
 - **Candidate filter.** IV rank at or above 30 (preferring 50 and above). Liquid at the money
   (spread and open interest thresholds). The monthly expiration nearest 45 DTE, within 30 to 60.
-  No ex-dividend date inside the trade for short calls. Earnings dates need another data
-  source, since Schwab's API does not appear to provide them; until one is added, single
-  stocks are flagged as "earnings unknown".
+  No ex-dividend date inside the trade for short calls. No earnings inside the earnings
+  buffer (below).
 - **Strategy choice.** From the strategies you enable, by IV regime: high IV rank, strangles at
   16 delta or iron condors at 20 delta short strikes; moderate, defined-risk spreads at 30
   delta collecting about a third of the width; low IV rank, no new short-premium trade. Each
@@ -355,6 +354,21 @@ trades that follow the entry mechanics:
   5% undefined), beta-weighted delta moves toward neutral or stays inside a set band, and theta
   stays within its target band. At most one open chain per underlying and expiration, and new
   trades are spread across expirations rather than stacked in one.
+- **Earnings buffer.** A setting, "avoid earnings within N days" (default 7). A single stock
+  with an earnings date within N days from today is not proposed or opened. A second
+  setting, on by default, also excludes any trade whose expiration falls after the next
+  earnings date, so a position opened today does not sit through a report. When no earnings
+  date is known for a single stock, it is treated as possibly within the buffer: Ideas mode
+  shows it marked "earnings unknown", and Propose and Auto skip it. Index products and broad
+  ETFs (SPY, QQQ, IWM and similar) have no earnings and are exempt.
+- **Earnings source.** Schwab's API does not appear to provide earnings dates, so a separate
+  source sits behind an `EarningsProvider` interface, fetched once a day for the watchlist and
+  held positions and stored with the date it was fetched. Candidates to evaluate when phase 5
+  starts: Alpha Vantage's earnings calendar (one request returns about three months for all
+  US companies, which fits a free daily allowance) and Finnhub's earnings calendar, then
+  Nasdaq's public calendar as a fallback. Their current free-tier terms need checking at that
+  point. A manual date per symbol on the Settings page overrides the source. Positions also
+  get a flag when an earnings date falls before their expiration.
 - **Ranking.** Candidates are scored on IV rank, credit per dollar of buying power, probability
   of profit, liquidity and how much they improve the portfolio's delta and theta.
 
@@ -400,6 +414,7 @@ order throttle set on the app registration.
 
 Decided:
 
+- The scanner never opens a single-stock trade with earnings inside a user-set number of days, or with an unknown earnings date (section 11, earnings buffer).
 - First year of live trading is small size in SPY only. The app enforces this with an underlying allowlist rather than relying on discipline. SPY also sidesteps the IV rank wait, since VIX history gives its rank from day one.
 - The app targets one chosen account out of several under the Schwab login (section 4, account targeting).
 
@@ -418,7 +433,7 @@ Still open:
 
 1. Phase 2's market-hours check against thinkorswim, and the phase 3 two-week simulated run.
 2. The order throttle on the Schwab app registration must be above zero before phase 4.
-3. An earnings calendar source for single stocks, before the scanner trades them (phase 5).
+3. Which earnings calendar source to use (phase 5); evaluated against the candidates in section 11.
 
 ## Sources
 
