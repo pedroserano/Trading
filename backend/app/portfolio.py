@@ -137,6 +137,8 @@ class PortfolioService:
 
     async def run(self) -> None:
         while True:
+            # Cleared before the tick, so a refresh requested during it is not lost.
+            self._wake.clear()
             try:
                 await self.tick()
             except asyncio.CancelledError:
@@ -144,13 +146,15 @@ class PortfolioService:
             except Exception:
                 log.exception("Portfolio refresh failed unexpectedly")
                 self.error = "Internal error while refreshing; see the app log."
-                self._build_and_publish()
+                try:
+                    self._build_and_publish()
+                except Exception:
+                    log.exception("Publishing after a failed refresh also failed")
             interval = (
                 self.settings.quote_interval_s
                 if self._session() == "open"
                 else max(60.0, self.settings.quote_interval_s)
             )
-            self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=interval)
             except TimeoutError:

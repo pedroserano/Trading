@@ -10,8 +10,13 @@
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display:flex; align-items:center; justify-content:space-between;
-           padding:12px 20px; border-bottom:1px solid var(--line); }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+           padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .tabs { display:inline-flex; gap:2px; flex-wrap:wrap; }
+  .tabs a { color:var(--dim); padding:4px 10px; border-radius:6px; text-decoration:none; }
+  .tabs a:hover { color:var(--text); }
+  .tabs a.active { color:var(--text); background:#21262d; }
+  .signout { margin-left:auto; }
   header strong { letter-spacing:.02em; }
   main { max-width:860px; margin:0 auto; padding:20px 16px 48px; }
   section { background:var(--panel); border:1px solid var(--line); border-radius:8px;

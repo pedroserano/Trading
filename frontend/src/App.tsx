@@ -164,6 +164,7 @@ function Nav({ route }: { route: Route }) {
       {tab("positions", "#/", "Positions")}
       {tab("watchlist", "#/watchlist", "Watchlist")}
       {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
+      <a href="/connect">Settings</a>
     </nav>
   );
 }
@@ -230,9 +231,6 @@ function Header({ s, link, route }: { s: Snapshot; link: Link; route: Route }) {
             Schwab {exp === null ? "–" : `${exp.toFixed(1)}d`}
           </a>
         ) : null}
-        <a href="/connect" className="settings">
-          Settings
-        </a>
       </div>
     </header>
   );

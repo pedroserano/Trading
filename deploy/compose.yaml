@@ -2,7 +2,7 @@
 # See docs/DEPLOY-TRUENAS.md.
 services:
   backend:
-    image: ghcr.io/pedroserano/trading-backend:${IMAGE_TAG:-latest}
+    image: ghcr.io/pedroserano/trading-backend:${IMAGE_TAG:-main}
     restart: unless-stopped
     environment:
       APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD in .env}

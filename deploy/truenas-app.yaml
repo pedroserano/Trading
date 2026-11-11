@@ -46,7 +46,7 @@ services:
 
   backend:
     container_name: trading-backend
-    image: ghcr.io/pedroserano/trading-backend:claude-ecstatic-newton-usvk97
+    image: ghcr.io/pedroserano/trading-backend:main
     restart: unless-stopped
     env_file: /mnt/apps/trading/.env
     environment:

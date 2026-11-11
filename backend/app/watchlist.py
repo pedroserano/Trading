@@ -20,7 +20,8 @@ CHAIN_REFRESH_S = 15 * 60
 
 
 class WatchlistService:
-    def __init__(self, source, store, portfolio):
+    def __init__(self, source, store, portfolio, preferences=None):
+        self.preferences = preferences
         self.source = source
         self.store = store
         self.portfolio = portfolio
@@ -89,7 +90,9 @@ class WatchlistService:
         held = {u["symbol"]: u for u in p.snapshot.get("underlyings", [])}
         since = p.clock().date() - timedelta(days=366)
         out = []
-        for sym in p.watchlist:
+        # The saved list is the truth; the portfolio's copy can lag by one refresh.
+        symbols = await self.preferences.watchlist() if self.preferences else p.watchlist
+        for sym in symbols:
             q = p._quote(sym)
             c = self.cache.get(sym, {})
             if sym == BENCH:

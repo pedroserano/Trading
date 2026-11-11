@@ -153,6 +153,8 @@ table.chain { width: 100%; border-collapse: collapse; font-size: 13px; }
 .chain td.bid button { color: #ff9e98; }
 .chain td.ask button { color: #8ee69a; }
 .chain td.click button:hover { border-color: currentColor; }
+.chain td.bid button.selected { background: #f8514940; border-color: #ff9e98; color: #fff; }
+.chain td.ask button.selected { background: #3fb95040; border-color: #8ee69a; color: #fff; }
 .tag { margin-left: 4px; font-size: 10px; color: var(--accent); }
 .builder { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel); }
 .quick { display: flex; flex-wrap: wrap; gap: 6px; }
