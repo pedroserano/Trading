@@ -23,7 +23,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, sheet_import, targets
+from . import guards, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
@@ -574,8 +574,6 @@ def create_app(
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
                 "stream": None if stream is None else (stream.status, stream.detail),
-                "history": chain_service.history,
-                "sheet_account": SHEET_ACCOUNT,
                 "health": health,
             },
         )
@@ -1434,30 +1432,6 @@ def create_app(
         chain_service,
         sim_trades=lambda: sim_chains(broker.state) if broker.state else [],
     )
-
-    @app.post("/history/import", dependencies=[Depends(require_login)])
-    async def history_import(request: Request, file: UploadFile = File(...)):
-        data = await file.read(25 * 1024 * 1024 + 1)
-        if len(data) > 25 * 1024 * 1024:
-            request.session["flash"] = "That file is larger than 25 MB."
-            return RedirectResponse(settings_url("history"), status_code=303)
-        try:
-            rows, counts = sheet_import.read_workbook(data, SHEET_ACCOUNT)
-        except sheet_import.SheetError as e:
-            request.session["flash"] = str(e)
-            return RedirectResponse(settings_url("history"), status_code=303)
-        result = await store.upsert_sheet_rows(rows)
-        await chain_service.rebuild()
-        portfolio.refresh_soon()
-        h = chain_service.history
-        request.session["notice"] = (
-            f"Imported {counts['account_rows']} {SHEET_ACCOUNT} rows: {result['new']} new, "
-            f"{result['updated']} updated, {result['unchanged']} unchanged "
-            f"({counts['other_accounts']} rows for other accounts skipped). "
-            f"{len(h['problems'])} rows need a look and {len(h['review'])} differences "
-            "with Schwab are listed on the Dashboard's Review tab."
-        )
-        return RedirectResponse(settings_url("history"), status_code=303)
 
     @app.get("/api/history", dependencies=[Depends(require_login)])
     async def api_history():

@@ -79,25 +79,6 @@
   </form>
 </section>
 
-<section id="history">
-  <h2>Trading history</h2>
-  <p class="dim">Upload the "Options P/L" spreadsheet as an .xlsx file (in Google Sheets: File,
-     Download, Microsoft Excel). Rows for the {{ sheet_account }} account are imported; other
-     accounts are skipped. Uploading again later only adds new or changed rows.</p>
-  {% if history.error %}
-  <p class="error">{{ history.error }}</p>
-  {% endif %}
-  {% if history.rows %}
-  <p><span class="dot ok"></span>{{ history.rows }} rows imported. {{ history.matched }} matched
-     to Schwab's records, {{ history.problems|length }} need a look, {{ history.review|length }}
-     differences with Schwab. <a href="/#/dashboard">Open the dashboard</a></p>
-  {% endif %}
-  <form method="post" action="/history/import" enctype="multipart/form-data">
-    <p><input type="file" name="file" accept=".xlsx" required></p>
-    <p><button class="primary" type="submit">Import</button></p>
-  </form>
-</section>
-
 <section id="rules">
   <h2>Management rules</h2>
   <form method="post" action="/rules">

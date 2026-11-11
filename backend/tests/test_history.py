@@ -1,5 +1,6 @@
 """Spreadsheet import, reconciliation, dashboard and export. Uses made-up rows only."""
 
+import asyncio
 import io
 from datetime import UTC, date, datetime
 
@@ -400,27 +401,38 @@ def client(tmp_path):
         cookie_secure=False,
         data_dir=tmp_path,
     )
+    store = MemoryStore()
     app = create_app(
         s,
-        store=MemoryStore(),
+        store=store,
         start_background=False,
         static_dir=tmp_path / "x",
         source=DemoDataSource(today=date(2026, 11, 11)),
     )
     with TestClient(app, follow_redirects=False) as c:
         c.post("/login", data={"password": "p" * 12})
+        c.store = store
         yield c
 
 
-def test_import_dashboard_review_and_export_endpoints(client):
-    r = client.post(
-        "/history/import", files={"file": ("book.xlsx", workbook(), "application/octet-stream")}
-    )
-    assert r.status_code == 303
+def stored(client, data=None):
+    """Rows already imported from the sheet: there is no upload any more, but the rows
+    imported earlier stay in the database and the dashboard reads them on every rebuild."""
+    rows, _ = sheet_import.read_workbook(data or workbook(), "Joint")
+    asyncio.run(client.store.upsert_sheet_rows(rows))
+    # Any review decision rebuilds the chains from what is stored.
+    client.post("/api/history/review", json={"id": "x", "decision": None})
+
+
+def test_settings_no_longer_offers_the_import(client):
     page = client.get("/connect").text
-    assert "Imported 8 Joint rows: 8 new" in page and "1 rows for other accounts" in page
-    again = client.post("/history/import", files={"file": ("book.xlsx", workbook(), "x")})
-    assert again.status_code == 303 and "8 unchanged" in client.get("/connect").text
+    assert 'id="history"' not in page and "/history/import" not in page
+    r = client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
+    assert r.status_code in (404, 405)
+
+
+def test_stored_history_dashboard_review_and_export_endpoints(client):
+    stored(client)
     h = client.get("/api/history").json()
     assert h["rows"] == 8 and len(h["problems"]) == 1
     act = client.get("/api/activity").json()
@@ -435,8 +447,6 @@ def test_import_dashboard_review_and_export_endpoints(client):
     assert client.post("/api/history/review", json={"id": "x", "decision": "ignore"}).json() == {
         "ok": True
     }
-    bad = client.post("/history/import", files={"file": ("x.xlsx", b"nope", "x")})
-    assert bad.status_code == 303 and "Excel" in client.get("/connect").text
     exp = client.get("/api/export/sheet?start=2020-01-01&end=2030-01-01")
     assert exp.status_code == 200 and exp.content[:2] == b"PK"
 
@@ -444,14 +454,13 @@ def test_import_dashboard_review_and_export_endpoints(client):
 def test_a_failing_sheet_merge_keeps_schwab_trades_and_says_why(client, monkeypatch):
     from app import sheet_import as si
 
-    client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
+    stored(client)
 
     def broken(rows):
         raise ValueError("bad row")
 
     monkeypatch.setattr(si, "convert", broken)
-    client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
+    client.post("/api/history/review", json={"id": "x", "decision": None})
     act = client.get("/api/activity").json()
     assert "bad row" in act["sheet"]["error"] and act["sheet"]["rows"] == 8
     assert act["trade_counts"].get("sheet", 0) == 0
-    assert "bad row" in client.get("/connect").text
