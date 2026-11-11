@@ -472,11 +472,12 @@ def create_app(
         }
 
     @app.get("/api/trade/{symbol:path}/chain", dependencies=[Depends(require_login)])
-    async def api_chain(symbol: str, expiration: date, strikes: int = 20):
+    async def api_chain(symbol: str, expiration: date, strikes: int = 0):
+        """strikes: how many either side of the money; 0 returns every strike."""
         symbol = _check_symbol(symbol)
-        strikes = max(4, min(strikes, 60))
+        count = None if strikes <= 0 else max(4, min(strikes, 200))
         try:
-            raw = await source.option_chain(symbol, expiration, expiration, strike_count=strikes)
+            raw = await source.option_chain(symbol, expiration, expiration, strike_count=count)
         except SchwabError as e:
             raise _schwab_errors(e) from e
         out = chain_mod.chain_rows(raw or {})

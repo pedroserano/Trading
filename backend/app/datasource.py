@@ -17,7 +17,7 @@ class DataSource(Protocol):
     async def quotes(self, symbols: list[str]) -> dict: ...
     async def daily_closes(self, symbol: str, days: int) -> list[tuple[date, float]]: ...
     async def option_chain(
-        self, symbol: str, from_date: date, to_date: date, strike_count: int = 6
+        self, symbol: str, from_date: date, to_date: date, strike_count: int | None = 6
     ) -> dict: ...
     async def expirations(self, symbol: str) -> dict: ...
     async def market_open(self, day: date) -> bool | None: ...
@@ -53,8 +53,9 @@ class SchwabDataSource:
         return out
 
     async def option_chain(
-        self, symbol: str, from_date: date, to_date: date, strike_count: int = 6
+        self, symbol: str, from_date: date, to_date: date, strike_count: int | None = 6
     ) -> dict:
+        """strike_count None returns every strike."""
         c = self.schwab.client()
         return await self.schwab.call(
             "get_option_chain",
@@ -276,9 +277,13 @@ class DemoDataSource:
         }
 
     async def option_chain(
-        self, symbol: str, from_date: date, to_date: date, strike_count: int = 6
+        self, symbol: str, from_date: date, to_date: date, strike_count: int | None = 6
     ) -> dict:
         s = self._price_of(symbol)
+        if strike_count is None:
+            # Every strike: roughly 40% either side, like a real listed chain.
+            step0 = 5 if s > 200 else (1 if s > 50 else 0.5)
+            strike_count = int(s * 0.4 / step0)
         calls, puts = {}, {}
         step = 5 if s > 200 else (1 if s > 50 else 0.5)
         atm = round(s / step) * step

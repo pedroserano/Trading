@@ -166,7 +166,7 @@ export default function Trade({ symbol }: { symbol: string }) {
     const load = async () => {
       try {
         const c = await getJson<Chain>(
-          `/api/trade/${encodeURIComponent(symbol)}/chain?expiration=${exp}&strikes=24`,
+          `/api/trade/${encodeURIComponent(symbol)}/chain?expiration=${exp}`,
         );
         if (stop) return;
         setChain(c);
@@ -227,12 +227,15 @@ export default function Trade({ symbol }: { symbol: string }) {
     return () => window.clearTimeout(t);
   }, [legs, chain?.underlying_price, chain?.atm_iv, symbol]);
 
-  const addLeg = useCallback((leg: BuildLeg) => {
+  // Tapping a price selects that contract; tapping it again deselects it. Tapping the other
+  // side of a selected contract switches it between buy and sell. Quantity is set in the leg list.
+  const toggleLeg = useCallback((leg: BuildLeg) => {
     setLegs((prev) => {
       const i = prev.findIndex((l) => l.symbol === leg.symbol);
       if (i < 0) return prev.length >= 8 ? prev : [...prev, leg];
-      const q = prev[i].quantity + leg.quantity;
-      return q === 0 ? prev.filter((_, j) => j !== i) : prev.map((l, j) => (j === i ? { ...l, quantity: q } : l));
+      const cur = prev[i];
+      if (Math.sign(cur.quantity) === Math.sign(leg.quantity)) return prev.filter((_, j) => j !== i);
+      return prev.map((l, j) => (j === i ? { ...l, quantity: -l.quantity } : l));
     });
   }, []);
 
@@ -252,12 +255,20 @@ export default function Trade({ symbol }: { symbol: string }) {
   const cell = (c: Contract | null, row: ChainRow, side: Side, kind: "bid" | "ask") => {
     if (!c || c[kind] === null) return <td className="q">–</td>;
     const qty = kind === "bid" ? -1 : 1;
+    const held = inBuild.get(c.symbol);
+    const selected = held !== undefined && Math.sign(held) === qty;
     return (
       <td className={`q click ${kind}`}>
         <button
           type="button"
-          title={`${kind === "bid" ? "Sell" : "Buy"} 1 ${strike(row.strike)} ${side}`}
-          onClick={() => exp && addLeg(legFrom(c, row, side, exp, qty))}
+          aria-pressed={selected}
+          className={selected ? "selected" : ""}
+          title={
+            selected
+              ? `Remove the ${strike(row.strike)} ${side}`
+              : `${kind === "bid" ? "Sell" : "Buy"} the ${strike(row.strike)} ${side}`
+          }
+          onClick={() => exp && toggleLeg(legFrom(c, row, side, exp, qty))}
         >
           {num(c[kind], 2)}
         </button>
@@ -424,7 +435,8 @@ export default function Trade({ symbol }: { symbol: string }) {
             </table>
           ) : (
             <p className="hint">
-              Pick a strategy above, or click a bid to sell and an ask to buy. Legs are priced at mid.
+              Pick a strategy above, or tap a bid to sell and an ask to buy; tap again to remove.
+              Set quantities here. Legs are priced at mid.
             </p>
           )}
           {legs.length ? (

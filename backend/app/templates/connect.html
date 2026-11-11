@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block header %}
-<span>
-  <a href="/" style="color:var(--accent); margin-right:16px">Positions</a>
-  <form class="inline" method="post" action="/logout"><button class="link">Sign out</button></form>
-</span>
+<nav class="tabs">
+  <a href="/#/">Positions</a>
+  <a href="/#/watchlist">Watchlist</a>
+  <a href="/#/trade/SPY">Trade</a>
+  <a href="/connect" class="active" aria-current="page">Settings</a>
+</nav>
+<form class="inline signout" method="post" action="/logout"><button class="link">Sign out</button></form>
 {% endblock %}
 {% block main %}
 

@@ -319,6 +319,8 @@ def test_trade_endpoints(client):
     assert exps["default"] in {e["date"] for e in exps["expirations"]}
     ch = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}&strikes=10").json()
     assert len(ch["rows"]) == 21 and ch["underlying_price"] > 0
+    full = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()
+    assert len(full["rows"]) > 40  # every strike when no count is given
     row = next(r for r in ch["rows"] if r["put"]["delta"] and r["put"]["delta"] > -0.35)
     leg = {
         "put_call": "P",
