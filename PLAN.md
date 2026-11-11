@@ -212,6 +212,90 @@ expiration or assignment.
 - **Commissions.** Taken from Schwab's transactions for the real account; $0.45 per contract
   for the simulated account (a setting).
 
+### Trading history from the Google Sheet, and the analysis dashboard
+
+The trading history kept in the "Options P/L - Auto" Google Sheet since July 2020 is imported
+into the app, reconciled with Schwab, and analysed alongside every trade the app records.
+
+**What the sheet contains** (reviewed November 2026):
+
+- **Trades tab:** one row per leg. Columns A–P hold the opening: underlying, strike, strategy
+  code, expiration, date, stock price at the time, quantity in shares, premium, commission,
+  breakeven, max loss and a buying power estimate. Q is the account. R is the status: Closed,
+  Rolled, Expired, Assigned or Open. S–Y hold the closing: date, quantity, price, commission,
+  cost, P/L, % return and days held. Multi-leg P/L and cost basis (AB–AC) are filled for a few
+  combined trades.
+- **Strategy codes:** P and C are short puts and calls, P+ and C+ are long; Vert P, Vert C, IC
+  and STR are spreads entered as one row with a net price; a blank code is stock.
+- **Summary tab:** P/L by underlying, and monthly option income by year for each account.
+- **Accounts:** Joint (3,840 rows, July 2020 onwards), Individual (963 rows, from 2023) and
+  Traditional IRA (32 rows, from 2025).
+- **Joint rows by type:** 3,335 single-leg options, 103 spreads with net prices only, 99 stock,
+  292 futures options (/ES, /NQ), and about 15 rows with missing or unusual fields to review.
+
+**Writing new trades into the sheet: not recommended.** It is possible: the app could append
+rows to the Trades tab through Google's Sheets API with a Google service account, copying the
+row formulas. But it is fragile. A moved column, renamed tab or edited formula would make the
+app write to the wrong place. Rows already entered by hand would need matching to avoid
+duplicates. The app would also hold a Google credential with write access to the sheet.
+Instead:
+
+- **Export in the sheet's format.** A button on the dashboard downloads any period's trades
+  as rows laid out exactly like the Trades tab (columns A–Y, values only), to paste in if you
+  want to keep the sheet going.
+- **Direct writing** can still be added later (phase 6) if the export proves too manual.
+
+**Import and reconciliation (Joint account):**
+
+- **Upload.** The sheet is uploaded as an .xlsx file on the Settings page; the app needs no
+  Google access. Uploading again later is safe: rows already imported are recognised and only
+  new or changed rows are added.
+- **Conversion.** Each single-leg row becomes an opening fill and a closing, expiration or
+  assignment fill. Rows marked Rolled are linked to the leg opened the same day on the same
+  underlying, so roll chains match how they were traded. Spreads entered as one row are kept
+  with their net prices. Stock rows become share positions. Futures options are kept as
+  history for the P/L figures but are not reconciled, since the app does not trade futures.
+- **Reconciliation with Schwab.** Where the sheet overlaps Schwab's transaction history (up to
+  a year), each sheet leg is matched to a Schwab fill by contract, side, quantity and date (one
+  trading day either way). Matched legs use Schwab's exact prices, times and fees, and keep the
+  sheet's roll links as a hint. Legs only in the sheet, or only at Schwab, appear on a review
+  list with Accept and Ignore, since they usually mean another account's trade or a typo.
+- **Before the overlap,** the sheet is the only record, and its trades are labelled "from
+  sheet" wherever they appear.
+- **Other accounts.** Individual and Traditional IRA rows can be imported the same way as
+  history-only accounts for the dashboard, without reconciliation, if wanted.
+
+**Dashboard: what worked and what did not.** A Dashboard page over every closed chain: the
+imported history, Schwab trades since, and optionally the simulated account.
+
+- **Overview:** cumulative P/L, P/L by month and year (the Summary tab's monthly income table),
+  by underlying and by strategy; win rate, average winner and loser, largest losses.
+- **Breakdowns.** For each factor below, closed trades are bucketed and each bucket shows the
+  number of trades, win rate, total and average P/L, P/L per day held, and average share of
+  the credit kept:
+
+  | Factor | Sheet history | Trades from now on |
+  |---|---|---|
+  | Strategy, underlying, DTE at entry, days held, number of rolls, day of week | Yes | Yes |
+  | How it was managed: closed early (at what % of max profit), rolled, held to expiration, assigned | Yes | Yes |
+  | Size: buying power estimate and contracts; as a share of net liq | Estimate and contracts only | Yes |
+  | Distance out of the money at entry (strike against the stock price recorded in the sheet), as a stand-in for delta | Yes | Yes, plus actual delta |
+  | VIX at entry and its change during the trade | Yes, from Schwab's VIX price history | Yes |
+  | Underlying move during the trade | Yes, from Schwab's daily price history | Yes |
+  | IV rank at entry | SPY and SPX only, from VIX history | Yes |
+  | Probability of profit at entry | Estimate for SPY and SPX only, using VIX as the volatility | Yes, captured at the order |
+  | Days to earnings at entry and whether earnings fell inside the trade | If the earnings source provides past report dates | Yes |
+
+- **Why.** A factor table ranks the buckets that did meaningfully better or worse than the
+  overall result, with their sample sizes, so a small sample is not mistaken for a pattern.
+  A losers report lists the worst trades with every factor value side by side. A mechanics
+  check compares trades that followed the rules (entry near 45 DTE, managed at 50% or by 21
+  DTE) with those that did not. These show what went with good and bad results; they cannot
+  prove why.
+- **From now on,** every order placed through the app records a snapshot of the conditions:
+  IV, IV rank, VIX, delta, probability of profit, size against net liq, days to earnings. So
+  the analysis gets more complete with every trade.
+
 ## 7. User interface
 
 Design principles for an expert user: dense rather than spacious, numbers over prose,
@@ -272,6 +356,7 @@ This app can move real money and holds credentials that can too.
 | 2. Analysis | Schwab streaming for quotes and account activity, chain view, payoff curve, Greeks cross-check, IV history job and IV rank, watchlist, beta weighting, rules engine and flags, notifications. | Flags fire correctly against a recorded set of test portfolios. |
 | 3. Simulated trading | Order builder for all listed strategies, preview against Schwab, `SimBroker`, order and roll tickets, journal, roll chains. | Two weeks of simulated trading with builder output checked against orders built by hand in thinkorswim. |
 | 4. Live trading and automanage | Live order placement through Schwab with the phase 3 guards and preview, audit log table, reconciliation, cancel and replace, GTC profit targets resting at Schwab. Trade chains for the Schwab account from transaction history, and the History panel. Then per-position automanage (section 11), first on the simulated account, then live. Start live with one-lot defined-risk trades. | A month of small live trades with zero reconciliation mismatches, and every roll from that month shown correctly in its chain. Automanage: two weeks on the simulated account with every action reviewed, then two weeks live in Notify and Propose modes before any Auto. |
+| 4 (cont.). History import and dashboard | Sheet upload and conversion, reconciliation with Schwab and the review list, Dashboard page with the breakdowns above, export in the sheet's format, entry snapshots on every order. Built after trade chains and before automanage. | Every Joint row from the sheet either imported or on the review list with a reason; overlap totals within a few dollars of Schwab's; the dashboard's monthly totals match the sheet's Summary tab for the same months. |
 | 4a. SPY-only first year | LIVE mode restricted to SPY by an allowlist setting, one-lot default and a low per-order buying power cap. Other underlyings stay available in SIM. | A year of SPY trading reviewed in the journal before the allowlist is widened. |
 | 5. Opportunity scanner and automated opening | Scanner over the watchlist using the entry rules, ranked trade ideas, then Propose and Auto modes for opening trades (section 11), simulated account first. | A month of the scanner in Ideas mode on the simulated account, compared with what you would have chosen; then a month of Auto on the simulated account inside all limits, before Auto is allowed on the Schwab account. |
 | 6. Refinement | Portfolio screen, mobile layout, earnings data (needs a source other than Schwab), more strategy builders. | Ongoing. |
