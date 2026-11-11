@@ -106,6 +106,19 @@ def test_single_leg_debit_gtc_and_strategy_types():
     )
     body = schwab_order(roll)
     assert body["complexOrderStrategyType"] == "CUSTOM" and body["orderType"] == "NET_CREDIT"
+    # Rolls of one option are labelled as thinkorswim labels them.
+    one = ticket(
+        [(sym("P", 555), 1, "close"), (sym("P", 555, NEXT), -1, "open")],
+        intent="roll",
+        limit_net=0.3,
+    )
+    assert schwab_order(one)["complexOrderStrategyType"] == "CALENDAR"
+    down = ticket(
+        [(sym("P", 555), 1, "close"), (sym("P", 550, NEXT), -1, "open")],
+        intent="roll",
+        limit_net=0.1,
+    )
+    assert schwab_order(down)["complexOrderStrategyType"] == "DIAGONAL"
     assert [x["instruction"] for x in body["orderLegCollection"]] == [
         "BUY_TO_CLOSE",
         "BUY_TO_CLOSE",

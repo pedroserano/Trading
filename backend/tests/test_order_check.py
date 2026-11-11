@@ -79,7 +79,7 @@ def test_differences_are_listed_field_by_field():
         "session": "NORMAL",
         "duration": "DAY",
         "orderStrategyType": "SINGLE",
-        "complexOrderStrategyType": "CALENDAR",
+        "complexOrderStrategyType": "DIAGONAL",
         "price": 0.85,
         "quantity": 1.0,
         "taxLotMethod": "FIFO",
@@ -99,8 +99,8 @@ def test_differences_are_listed_field_by_field():
     entry = oc.check(roll)
     assert entry["result"] == "differs"
     by_field = {d["field"]: d for d in entry["diffs"]}
-    assert by_field["complexOrderStrategyType"]["schwab"] == "CALENDAR"
-    assert by_field["complexOrderStrategyType"]["app"] == "CUSTOM"
+    assert by_field["complexOrderStrategyType"]["schwab"] == "DIAGONAL"
+    assert by_field["complexOrderStrategyType"]["app"] == "CALENDAR"
     assert by_field["taxLotMethod"]["level"] == "note"
     assert "price" not in by_field  # 0.85 credit both ways
 
@@ -134,9 +134,58 @@ async def test_service_logs_every_order_and_keeps_them():
     svc = oc.OrderCheckService(src, store, account)
     assert await svc.sync() == 4
     view = await svc.view()
-    assert view["counts"] == {"match": 2, "differs": 1, "not comparable": 1}
+    assert view["counts"] == {"match": 3, "not comparable": 1}
     assert [e["order_id"] for e in view["entries"]][:2] == [9001, 9002]
     # A second pass keeps when each was first seen.
     first = {e["order_id"]: e["first_seen"] for e in view["entries"]}
     await svc.sync()
     assert {e["order_id"]: e["first_seen"] for e in (await svc.view())["entries"]} == first
+
+
+def test_a_real_thinkorswim_roll_matches():
+    """A same-strike roll placed in thinkorswim, as Schwab returned it (account removed)."""
+
+    def leg(symbol, instruction, cusip):
+        return {
+            "legId": 1,
+            "quantity": 2,
+            "instruction": instruction,
+            "orderLegType": "OPTION",
+            "positionEffect": "OPENING" if instruction.endswith("OPEN") else "CLOSING",
+            "instrument": {
+                "type": "VANILLA",
+                "cusip": cusip,
+                "symbol": symbol,
+                "putCall": "CALL",
+                "assetType": "OPTION",
+                "uniformSymbol": symbol,
+                "underlyingSymbol": "PYPL",
+            },
+        }
+
+    order = {
+        "tag": "API_TOS:IPHONE",
+        "price": 0.27,
+        "status": "PENDING_ACTIVATION",
+        "orderId": 1,
+        "session": "NORMAL",
+        "duration": "DAY",
+        "editable": True,
+        "quantity": 2,
+        "orderType": "NET_CREDIT",
+        "cancelable": True,
+        "enteredTime": "2026-11-11T06:57:08+0000",
+        "filledQuantity": 0,
+        "orderStrategyType": "SINGLE",
+        "remainingQuantity": 2,
+        "orderLegCollection": [
+            leg("PYPL  290119C00065000", "SELL_TO_OPEN", "0PYPL.AJ90065000"),
+            leg("PYPL  281215C00065000", "BUY_TO_CLOSE", "0PYPL.LF80065000"),
+        ],
+        "destinationLinkName": "AutoRoute",
+        "requestedDestination": "AUTO",
+        "complexOrderStrategyType": "CALENDAR",
+    }
+    entry = oc.check(order)
+    assert entry["result"] == "match", entry["diffs"]
+    assert entry["diffs"] == []
