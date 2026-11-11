@@ -472,9 +472,20 @@ td .earn { margin-left: 0; }
 .mkt { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 10px; white-space: nowrap;
   font-size: 12px; font-variant-numeric: tabular-nums; cursor: default; }
 .mkt + .mkt { border-left: 1px solid var(--line); }
-/* Phones: one line that scrolls sideways. */
+/* Phones: a grid that shows every market, label above price and change. The 1px gap on the
+   line colour draws the dividers between cells. */
 @media (max-width: 700px) {
-  .market-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .market-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;
+    padding: 0; overflow: hidden; background: var(--line); }
+  .mkt { flex-wrap: wrap; gap: 0 5px; padding: 5px 8px; min-width: 0; background: var(--panel); }
+  .mkt + .mkt { border-left: 0; }
+  .mkt-label { flex-basis: 100%; font-size: 11px; }
+  .mkt-price, .mkt-chg { font-size: 12px; }
+  /* 13 markets leave one in the last row at 3 and at 2 columns: let it fill the row. */
+  .mkt:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 360px) {
+  .market-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .mkt-label { color: var(--dim); }
 .mkt-price { color: var(--text); font-weight: 500; }
