@@ -147,7 +147,7 @@ export default function Watchlist() {
                 </td>
                 <td>{r.atm_oi === null ? "–" : r.atm_oi.toLocaleString("en-US")}</td>
                 <td className="l">
-                  <EarningsFlag e={r.earnings} />
+                  <EarningsFlag e={r.earnings} tag={false} />
                 </td>
                 <td>
                   {r.held ? (

@@ -8,7 +8,7 @@ function day(iso: string, long = false): string {
 }
 
 /** The next earnings report: a flag with the date and before the open or after the close. */
-export default function EarningsFlag({ e }: { e: EarningsInfo | null | undefined }) {
+export default function EarningsFlag({ e, tag = true }: { e: EarningsInfo | null | undefined; tag?: boolean }) {
   if (!e) return null;
   const near = e.days <= 7;
   const when = e.time ? SHORT[e.time] : "time not given";
@@ -22,7 +22,8 @@ export default function EarningsFlag({ e }: { e: EarningsInfo | null | undefined
       <span className="earn-flag" aria-hidden="true">
         ⚑
       </span>
-      ER {day(e.date)} · {when}
+      {tag ? "ER " : ""}
+      {day(e.date)} · {when}
     </span>
   );
 }
