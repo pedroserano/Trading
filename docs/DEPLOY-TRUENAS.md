@@ -4,54 +4,45 @@ The stack is three containers: the app (`backend`), its database (`postgres`), a
 front door (`caddy`). The real compose file and its secrets live on a dataset; the TrueNAS
 custom app is a three-line stub that points at it.
 
-There are two ways to install. **Option A** is a single YAML pasted into TrueNAS that gives
-the app its own LAN address, in the same style as a macvlan Homebridge install. **Option B**
-(the numbered sections below) keeps the compose file on a dataset and serves the app on a
-port of the NAS's own address.
+There are two ways to install. **Option A** is a single YAML pasted into TrueNAS that serves
+the app on port 8443 of the NAS's own address. **Option B** (the numbered sections below)
+keeps the compose file on a dataset instead.
 
-## Option A: one pasted YAML with its own LAN address
+## Option A: one pasted YAML
 
 1. Create a dataset for the app on a data pool (Datasets > select the pool > Add Dataset),
-   for example `trading` on a pool named `apps`, so it is mounted at `/mnt/apps/trading`.
+   for example `trading` on a pool named `thor`, so it is mounted at `/mnt/thor/trading`.
    It must be a dataset on a data pool, not a folder: a plain `mkdir` under `/mnt` where no
    pool is mounted writes to the boot drive, which TrueNAS does not snapshot and which a
    TrueNAS update replaces. Check it before going on:
 
    ```sh
-   df -h /mnt/apps/trading    # the Filesystem column must read apps/trading, not boot-pool/...
+   df -h /mnt/thor/trading    # the Filesystem column must read thor/trading, not boot-pool/...
    ```
 
    If your pool has another name, use its path below and in `deploy/truenas-app.yaml`
-   instead of `/mnt/apps/trading`. Then create the folders and the settings file
+   instead of `/mnt/thor/trading`. Then create the folders and the settings file
    (System > Shell):
 
    ```sh
-   mkdir -p /mnt/apps/trading/config /mnt/apps/trading/postgres /mnt/apps/trading/caddy
-   chown 568:568 /mnt/apps/trading/config
-   nano /mnt/apps/trading/.env      # paste deploy/.env.example and fill it in
-   chmod 600 /mnt/apps/trading/.env
+   mkdir -p /mnt/thor/trading/config /mnt/thor/trading/postgres /mnt/thor/trading/caddy
+   chown 568:568 /mnt/thor/trading/config
+   nano /mnt/thor/trading/.env      # paste deploy/.env.example and fill it in
+   chmod 600 /mnt/thor/trading/.env
    ```
 
    In this option only these `.env` lines are used: `APP_PASSWORD`, `SECRET_KEY`,
    `POSTGRES_PASSWORD`, `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, `SCHWAB_CALLBACK_URL`.
 
-2. Find the name of the existing macvlan network: `sudo docker network ls | grep macvlan`.
-   Docker permits one macvlan network per parent interface and subnet, so this app joins the
-   existing one. For a TrueNAS app named `homebridge` with a network `homebridge_net`, it is
-   `ix-homebridge_homebridge_net`.
+2. Open `deploy/truenas-app.yaml` and adjust the marked values: the NAS's LAN address,
+   which appears twice (`192.168.7.80` as shipped), and the dataset path if it is not
+   `/mnt/thor/trading`. If port 8443 is taken on the NAS, change the left side of
+   `'8443:443'`.
 
-3. Open `deploy/truenas-app.yaml` and adjust the marked values: the network name, and the
-   app's IP address, which appears three times (`192.168.4.102` as shipped). Pick an address
-   that is free and outside the router's DHCP range.
-
-4. Give the NAS access to the image (section 3 below), then Apps > Discover Apps > menu next
+3. Give the NAS access to the image (section 3 below), then Apps > Discover Apps > menu next
    to Custom App > Install via YAML, name `trading`, paste the file, Save.
 
-5. Open `https://192.168.4.102` from another device and continue at section 5 below.
-
-Limits of this option: the NAS itself cannot reach the app's address (normal for macvlan),
-and the app depends on the Homebridge app's network, so if Homebridge is deleted this app
-must be reinstalled with its own network definition.
+4. Open `https://192.168.7.80:8443` from another device and continue at section 5 below.
 
 ## Option B: compose file on a dataset
 
@@ -174,7 +165,7 @@ so the container picks them up.
 
 | Setting | Purpose |
 |---|---|
-| `APP_URL` | The address you open the app at, e.g. `https://192.168.4.102`. Used as the link in notifications. |
+| `APP_URL` | The address you open the app at, e.g. `https://192.168.7.80:8443`. Used as the link in notifications. |
 | `PUSHOVER_USER_KEY`, `PUSHOVER_APP_TOKEN` | Turn on notifications. The user key is on the Pushover dashboard; the token comes from creating an application there. |
 | `REMINDER_WEEKDAY`, `REMINDER_HOUR` | When the weekly Schwab sign-in reminder goes out, US Eastern. Default Sunday 18:00. |
 | `WATCHLIST` | Starting watchlist, e.g. `SPY,QQQ,IWM`. Used only until the watchlist is edited on the Settings page, which also imports thinkorswim exports. |
@@ -193,10 +184,10 @@ app. This needs a change to the Schwab app registration, which can put it back t
 Schwab's approval for a few days, during which sign-in may not work. Do it at a quiet time.
 
 1. In the Schwab developer portal, edit the app's callback URLs to
-   `https://127.0.0.1:8182,https://192.168.4.102/schwab/callback` (your app's address).
+   `https://127.0.0.1:8182,https://192.168.7.80:8443/schwab/callback` (your app's address).
    Keep the first one as a fallback.
 2. Wait until the app shows "Ready For Use" again.
-3. In `.env`, set `SCHWAB_CALLBACK_URL=https://192.168.4.102/schwab/callback`, then stop and
+3. In `.env`, set `SCHWAB_CALLBACK_URL=https://192.168.7.80:8443/schwab/callback`, then stop and
    start the app.
 4. The Settings page now shows a single "Sign in with Schwab" button.
 

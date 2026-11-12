@@ -1,64 +1,26 @@
 # Paste into TrueNAS: Apps > Discover Apps > Custom App menu > Install via YAML.
-# Self-contained: the only other file needed on the NAS is /mnt/apps/trading/.env
-# (copy deploy/.env.example). Adjust the three marked values for your network.
-# /mnt/apps/trading must be a dataset on a data pool (see docs/DEPLOY-TRUENAS.md, Option A);
-# if yours is elsewhere, change every /mnt/apps/trading below to its path.
-networks:
-  # The macvlan network that already exists for Homebridge. Docker allows one macvlan
-  # network per parent interface, so this app joins it instead of creating another.
-  lan:
-    external: true
-    name: ix-homebridge_homebridge_net   # <-- confirm with: sudo docker network ls
-  internal: {}
-
+# Self-contained: the only other file needed on the NAS is /mnt/thor/trading/.env
+# (copy deploy/.env.example). The app is served at https://<NAS address>:8443.
+# Adjust the marked values: the NAS's LAN address (twice), and the dataset path if yours
+# is not /mnt/thor/trading. That path must be a dataset on a data pool, not a folder on the
+# boot drive (see docs/DEPLOY-TRUENAS.md, Option A).
 configs:
   caddyfile:
     content: |
       {
         auto_https disable_redirects
-        default_sni 192.168.4.102
+        default_sni 192.168.7.80
       }
-      https://192.168.4.102 {
+      https://192.168.7.80 {
         tls internal
         encode zstd gzip
         reverse_proxy backend:8000
       }
-
+networks:
+  internal: {}
 services:
-  caddy:
-    container_name: trading-caddy
-    image: caddy:2
-    restart: unless-stopped
-    configs:
-      - source: caddyfile
-        target: /etc/caddy/Caddyfile
-    networks:
-      lan:
-        ipv4_address: 192.168.4.102     # <-- a free address outside your router's DHCP range
-      internal: {}
-    volumes:
-      - /mnt/apps/trading/caddy:/data
-    depends_on:
-      - backend
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
   backend:
     container_name: trading-backend
-    image: ghcr.io/pedroserano/trading-backend:main
-    # Always fetch the newest build when the app starts; the tag never changes.
-    pull_policy: always
-    restart: unless-stopped
-    env_file: /mnt/apps/trading/.env
-    environment:
-      TZ: America/New_York
-    networks:
-      - internal
-    volumes:
-      - /mnt/apps/trading/config:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,27 +29,59 @@ services:
         limits:
           cpus: '1.0'
           memory: 1024M
-
-  postgres:
-    container_name: trading-postgres
-    image: postgres:17
-    restart: unless-stopped
-    env_file: /mnt/apps/trading/.env
+    env_file: /mnt/thor/trading/.env
     environment:
-      POSTGRES_DB: trading
-      POSTGRES_USER: trading
       TZ: America/New_York
+    image: ghcr.io/pedroserano/trading-backend:main
     networks:
       - internal
+    # Always fetch the newest build when the app starts; the tag never changes.
+    pull_policy: always
+    restart: unless-stopped
     volumes:
-      - /mnt/apps/trading/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trading -d trading"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
+      - /mnt/thor/trading/config:/data
+  caddy:
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    container_name: trading-caddy
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    image: caddy:2
+    networks:
+      - internal
+    ports:
+      - '8443:443'
+    restart: unless-stopped
+    volumes:
+      - /mnt/thor/trading/caddy:/data
+  postgres:
+    container_name: trading-postgres
     deploy:
       resources:
         limits:
           cpus: '1.0'
           memory: 1024M
+    env_file: /mnt/thor/trading/.env
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trading
+      TZ: America/New_York
+    healthcheck:
+      interval: 10s
+      retries: 6
+      test:
+        - CMD-SHELL
+        - pg_isready -U trading -d trading
+      timeout: 5s
+    image: postgres:17
+    networks:
+      - internal
+    restart: unless-stopped
+    volumes:
+      - /mnt/thor/trading/postgres:/var/lib/postgresql/data
