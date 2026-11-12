@@ -93,7 +93,6 @@ type Tab = "overview" | "worked" | "review";
 export default function Dashboard() {
   const account = useContext(AccountContext);
   const [tab, setTab] = useState<Tab>("overview");
-  const [source, setSource] = useState<"all" | "sheet" | "schwab">("all");
   const [futures, setFutures] = useState(false);
   const [data, setData] = useState<DashData | null>(null);
   const [history, setHistory] = useState<History | null>(null);
@@ -103,7 +102,7 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const q = account === "live" ? `account=live&source=${source}&futures=${futures}` : "account=sim";
+      const q = account === "live" ? `account=live&futures=${futures}` : "account=sim";
       setData(await getJson<DashData>(`/api/dashboard?${q}`));
       if (account === "live") setHistory(await getJson<History>("/api/history"));
       setError(null);
@@ -112,7 +111,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [account, source, futures]);
+  }, [account, futures]);
 
   useEffect(() => {
     load();
@@ -138,14 +137,6 @@ export default function Dashboard() {
         </div>
         {account === "live" ? (
           <>
-            <label className="inline-select">
-              Recorded by
-              <select value={source} onChange={(e) => setSource(e.target.value as typeof source)}>
-                <option value="all">Spreadsheet and Schwab</option>
-                <option value="sheet">Spreadsheet only</option>
-                <option value="schwab">Schwab only</option>
-              </select>
-            </label>
             <label className="check">
               <input type="checkbox" checked={futures} onChange={(e) => setFutures(e.target.checked)} /> Include futures options in totals
             </label>
@@ -473,7 +464,6 @@ function TradesTable({ trades }: { trades: Trade[] }) {
               <td className="l">
                 <span className="sym-inline">{t.underlying}</span>
                 {t.strategy}
-                {t.source === "sheet" ? <span className="sub"> sheet</span> : null}
               </td>
               <td>{t.opened ?? "–"}</td>
               <td>{t.closed ?? "–"}</td>
@@ -540,7 +530,7 @@ function Worked({ d }: { d: DashData }) {
       {covered !== undefined && covered < d.count ? (
         <p className="dim-text">
           Known for {covered.toLocaleString("en-US")} of {d.count.toLocaleString("en-US")} trades.
-          {factor === "earnings_days" ? " Earnings dates need the earnings data source planned for phase 5; trades placed through the app record it from then on." : ""}
+          {factor === "earnings_days" ? " Older trades have no earnings date; trades placed through the app record it." : ""}
           {factor === "ivr" || factor === "pop" ? " Older trades have it only for SPX and SPY, estimated from VIX; trades placed through the app record it." : ""}
           {factor === "vix" || factor === "move" ? " Fills in as price history loads." : ""}
         </p>

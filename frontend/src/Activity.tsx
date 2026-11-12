@@ -16,17 +16,16 @@ export default function Activity() {
   const [data, setData] = useState<ActivityData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const [source, setSource] = useState<"all" | "sheet" | "schwab">("all");
   const [limit, setLimit] = useState(300);
 
   const load = useCallback(async () => {
     try {
-      setData(await getJson<ActivityData>(`/api/activity?account=${account}&source=${source}&limit=${limit}`));
+      setData(await getJson<ActivityData>(`/api/activity?account=${account}&limit=${limit}`));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [account, source, limit]);
+  }, [account, limit]);
 
   useEffect(() => {
     setData(null);
@@ -136,40 +135,15 @@ export default function Activity() {
       )}
 
       <h3>Trades</h3>
-      {live && data.trade_counts ? (
+      {live && data.trades_shown_of ? (
         <div className="toolbar">
-          <div className="seg" role="group" aria-label="Trades from">
-            {(
-              [
-                ["all", "All"],
-                ["sheet", "Spreadsheet"],
-                ["schwab", "Schwab"],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                aria-pressed={source === k}
-                onClick={() => {
-                  setSource(k);
-                  setLimit(300);
-                }}
-              >
-                {label} ({(data.trade_counts?.[k] ?? 0).toLocaleString("en-US")})
-              </button>
-            ))}
-          </div>
           <span className="dim-text">
-            Showing {data.trades.length.toLocaleString("en-US")} of {(data.trades_shown_of ?? 0).toLocaleString("en-US")}: open
+            Showing {data.trades.length.toLocaleString("en-US")} of {data.trades_shown_of.toLocaleString("en-US")}: open
             trades first, then the most recently closed.
           </span>
         </div>
       ) : null}
       {live && data.sheet?.error ? <div className="msg warn">{data.sheet.error}</div> : null}
-      {live && source === "sheet" && data.sheet && !data.sheet.rows ? (
-        <div className="msg">
-          No spreadsheet rows are stored on this server.
-        </div>
-      ) : null}
       {data.trades.length ? (
         <div className="table-wrap">
           <table className="positions">
