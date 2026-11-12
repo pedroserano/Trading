@@ -199,10 +199,45 @@ function Stat(props: { label: string; children: React.ReactNode; title?: string 
   );
 }
 
-function Nav({ route, children }: { route: Route; children?: React.ReactNode }) {
+const ICONS: Record<string, React.ReactNode> = {
+  positions: (
+    <>
+      <rect x="3" y="7" width="18" height="13" rx="2" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M3 12h18" />
+    </>
+  ),
+  portfolio: (
+    <>
+      <path d="M12 3v9h9" />
+      <path d="M20.5 15A9 9 0 1 1 9 3.5" />
+    </>
+  ),
+  watchlist: <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />,
+  trade: <path d="M4 8h14l-3-3M20 16H6l3 3" />,
+  activity: (
+    <>
+      <path d="M6 3h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5L6 21z" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
+    </>
+  ),
+  dashboard: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" />
+    </>
+  ),
+};
+
+/** The menu: a row of links in the header on wide screens, a bar of icons with labels fixed
+ * to the bottom of the screen on phones (styles.css). */
+function Nav({ route }: { route: Route }) {
   const tab = (page: Route["page"], href: string, label: string) => (
     <a href={href} className={route.page === page ? "active" : ""} aria-current={route.page === page ? "page" : undefined}>
-      {label}
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        {ICONS[page]}
+      </svg>
+      <span>{label}</span>
     </a>
   );
   return (
@@ -214,7 +249,6 @@ function Nav({ route, children }: { route: Route; children?: React.ReactNode }) 
       {tab("activity", "#/activity", "Activity")}
       {tab("dashboard", "#/dashboard", "Dashboard")}
       {tab("settings", "#/settings", "Settings")}
-      {children}
     </nav>
   );
 }
@@ -282,7 +316,6 @@ function Header(props: {
     ? `Target band ${pct(tb.min, 2)}–${pct(tb.max, 2)} of net liq` +
       (out(tb) ? `, now ${tb.state} it` : "")
     : "Target band 0.1%–0.3% of net liq";
-  const spyIvr = s.ivr.SPY;
   const exp = s.connection.expires_in_days;
   return (
     <header className={`top ${stacked.on ? "stacked" : ""}`} ref={stacked.header}>
@@ -298,26 +331,24 @@ function Header(props: {
           </button>
         </div>
         <PauseSwitch />
+        <DataLight s={s} link={link} />
         {a ? (
           <span className="acct">
             …{a.last4} {a.type ? a.type.toLowerCase() : ""}
           </span>
         ) : null}
-        <Nav route={route}>
-          {/* Right after Settings at every width, wrapping with the menu. */}
-          <span className="right">
-            <DataLight s={s} link={link} />
-            {s.mode === "live" ? (
-              <a
-                href="#/settings"
-                className={`signin ${exp !== null && exp < 2 ? "warn-text" : ""}`}
-                title="Days until the Schwab sign-in expires"
-              >
-                Schwab {exp === null ? "–" : `${exp.toFixed(1)}d`}
-              </a>
-            ) : null}
-          </span>
-        </Nav>
+        <Nav route={route} />
+        <span className="right">
+          {s.mode === "live" ? (
+            <a
+              href="#/settings"
+              className={`signin ${exp !== null && exp < 2 ? "warn-text" : ""}`}
+              title="Days until the Schwab sign-in expires"
+            >
+              Schwab {exp === null ? "–" : `${exp.toFixed(1)}d`}
+            </a>
+          ) : null}
+        </span>
       </div>
       <div className="stats" ref={stacked.stats}>
         <Stat label="Net liq">{money(a?.net_liq)}</Stat>
@@ -348,13 +379,6 @@ function Header(props: {
         </Stat>
         <Stat label="P/L day" title="Today's P/L on open positions">
           <span className={tone(s.totals.day_pl ?? null)}>{signed(s.totals.day_pl ?? null, 0)}</span>
-        </Stat>
-        <Stat label="VIX">{num(s.market.vix, 2)}</Stat>
-        <Stat
-          label="SPY IVR"
-          title={spyIvr ? `From VIX over ${spyIvr.days} days. IV percentile ${spyIvr.percentile}` : ""}
-        >
-          {spyIvr && spyIvr.rank !== null ? Math.round(spyIvr.rank) : "–"}
         </Stat>
       </div>
     </header>

@@ -126,6 +126,24 @@ tr.leg td.l { padding-left: 34px; }
 .tabs a { color: var(--dim); padding: 4px 10px; border-radius: 6px; }
 .tabs a:hover { color: var(--text); }
 .tabs a.active { color: var(--text); background: #21262d; }
+.tabs svg { display: none; width: 24px; height: 24px; fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Phones: the menu is a bar of icons with labels fixed to the bottom of the screen, above the
+   home indicator; the page leaves room for it. */
+@media (max-width: 700px) {
+  .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; margin: 0;
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 0;
+    padding: 4px max(4px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom))
+      max(4px, env(safe-area-inset-left));
+    background: var(--panel); border-top: 1px solid var(--line); }
+  .tabs a { display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 4px 0; border-radius: 0; font-size: 10px; min-width: 0; overflow: visible; }
+  .tabs a span { white-space: nowrap; letter-spacing: -0.02em; }
+  .tabs a.active { background: none; color: var(--accent); }
+  .tabs svg { display: block; }
+  main { padding-bottom: calc(76px + env(safe-area-inset-bottom)) !important; }
+}
 tr.under a.sym { color: var(--text); }
 tr.under a.sym:hover { color: var(--accent); }
 .dim-text { color: var(--dim); font-size: 13px; }
@@ -223,7 +241,6 @@ button.link.clear { background: none; border: 0; color: var(--dim); cursor: poin
   header.top { position: static; }
   .chain td:first-child, .chain td:last-child,
   .chain thead tr:nth-child(2) th:first-child, .chain thead tr:nth-child(2) th:last-child { display: none; }
-  .tabs { margin-left: 0; }
   .brand { flex-wrap: wrap; }
   .summary { grid-template-columns: 1fr; }
   .chain td, .chain th { padding-left: 3px; padding-right: 3px; }
@@ -369,7 +386,6 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .factor-chips button { background: none; border: 1px solid var(--line); border-radius: 14px; padding: 3px 10px; color: var(--dim); cursor: pointer; font-size: 13px; }
 .factor-chips button[aria-selected="true"] { color: var(--text); border-color: var(--accent); }
 @media (max-width: 900px) { .two-col { grid-template-columns: minmax(0, 1fr); } .export { margin-left: 0; } }
-@media (max-width: 700px) { .tabs { flex-wrap: wrap; } }
 
 /* Settings page content (rendered by the server, shown inside the app) */
 .settings-page { max-width: 880px; margin: 0 auto; font-size: 15px; line-height: 1.45; }
