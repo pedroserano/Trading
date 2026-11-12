@@ -75,9 +75,8 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [legs, setLegs] = useState<OrderLeg[]>(spec.legs);
   const [limit, setLimit] = useState<number | null>(null);
   const [duration, setDuration] = useState<"DAY" | "GTC">("DAY");
-  const [target, setTarget] = useState(true);
-  // "Automanage on fill" instead of the GTC order at 50%: the default comes from Settings,
-  // Automation; the profit rule's level there says what automanage then does.
+  // "Automanage on fill": the default comes from Settings, Automation. The Profit target rule
+  // then closes the trade at its target (50%, 25% for straddles), at the level set there.
   const [manage, setManage] = useState(false);
   const [profitLevel, setProfitLevel] = useState<string | null>(null);
   useEffect(() => {
@@ -87,10 +86,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     )
       .then((v) => {
         setProfitLevel(v.settings.levels.profit ?? null);
-        if (v.settings.ticket_automanage) {
-          setManage(true);
-          setTarget(false);
-        }
+        setManage(!!v.settings.ticket_automanage);
       })
       .catch(() => undefined);
   }, [spec.intent, spec.account]);
@@ -155,7 +151,6 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
           legs,
           limit_net: lim,
           duration,
-          profit_target: spec.intent === "open" && target ? 0.5 : null,
         });
         setPreview(p);
         if (lim === null) setLimit(p.limit_net);
@@ -166,7 +161,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         setBusy(false);
       }
     },
-    [legs, duration, target, spec],
+    [legs, duration, spec],
   );
 
   // Preview on open, and again (debounced) when anything on the ticket changes.
@@ -174,7 +169,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     const t = window.setTimeout(() => run(limit), limit === null ? 0 : 300);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legs, limit, duration, target]);
+  }, [legs, limit, duration]);
 
   const live = spec.account === "live";
   const liveBlocks = preview?.live_blocks ?? [];
@@ -182,7 +177,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     !!preview && preview.errors.length === 0 && (!live || liveBlocks.length === 0) && !busy && limit !== null;
   // A live order takes two clicks: Place, then Send to Schwab.
   const [confirming, setConfirming] = useState(false);
-  useEffect(() => setConfirming(false), [legs, limit, duration, target]);
+  useEffect(() => setConfirming(false), [legs, limit, duration]);
   const place = async () => {
     if (!canPlace) return;
     if (live && !confirming) {
@@ -199,7 +194,6 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         legs,
         limit_net: limit,
         duration,
-        profit_target: spec.intent === "open" && target ? 0.5 : null,
         automanage: spec.intent === "open" && manage,
       });
       setPlaced(o);
@@ -251,7 +245,6 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
             {live ? (
               <p className="dim-text">
                 Follow it on the Activity page, which reads Schwab's orders every 10 seconds while it works.
-                {spec.intent === "open" && target ? " The profit target goes in as a GTC order once it fills." : ""}
                 {spec.intent === "open" && manage ? " Automanage switches on for the trade once it fills." : ""}
               </p>
             ) : placed.status === "WORKING" ? (
@@ -348,19 +341,6 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               <label>
                 <input type="radio" checked={duration === "GTC"} onChange={() => setDuration("GTC")} /> GTC
               </label>
-              {spec.intent === "open" && credit ? (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={target}
-                    onChange={(e) => {
-                      setTarget(e.target.checked);
-                      if (e.target.checked) setManage(false);
-                    }}
-                  />{" "}
-                  On fill, GTC close at 50% of max profit
-                </label>
-              ) : null}
               {spec.intent === "open" ? (
                 <label
                   title={
@@ -373,10 +353,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                   <input
                     type="checkbox"
                     checked={manage}
-                    onChange={(e) => {
-                      setManage(e.target.checked);
-                      if (e.target.checked) setTarget(false);
-                    }}
+                    onChange={(e) => setManage(e.target.checked)}
                   />{" "}
                   Automanage on fill
                   {manage && profitLevel && profitLevel !== "auto" ? (

@@ -571,7 +571,9 @@ def test_guts_settings_from_the_form():
 
 def test_ticket_automanage_default_is_a_checkbox():
     cur = merged_settings(None)
-    assert cur["ticket_automanage"] is False
-    on = parse_settings({"_form": "automation", "ticket_automanage": "on"}, cur)
-    assert on["ticket_automanage"] is True
-    assert parse_settings({"_form": "automation"}, on)["ticket_automanage"] is False
+    assert cur["ticket_automanage"] is True
+    off = parse_settings({"_form": "automation"}, cur)
+    assert off["ticket_automanage"] is False
+    assert parse_settings({"_form": "automation", "ticket_automanage": "on"}, off)[
+        "ticket_automanage"
+    ]

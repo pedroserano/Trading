@@ -79,9 +79,8 @@ DEFAULT_SETTINGS = {
     "max_order_spread": 0.25,
     "window_start": "09:45",
     "window_end": "15:30",
-    # The order ticket: tick "Automanage on fill" for new trades by default, instead of
-    # "On fill, GTC close at 50%" (at Auto the profit rule keeps that order itself).
-    "ticket_automanage": False,
+    # The order ticket: "Automanage on fill" starts ticked for new trades.
+    "ticket_automanage": True,
 }
 # Adjustable on the Settings page: (key, label, low, high, kind, unit).
 SETTING_FIELDS = [
