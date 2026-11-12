@@ -199,7 +199,7 @@ def test_one_tap_callback(settings):
         login(c)
         assert "Sign in with Schwab" in c.get("/connect").text
         r = c.get("/schwab/callback?code=abc&state=xyz")
-        assert r.status_code == 303 and r.headers["location"] == "/connect"
+        assert r.status_code == 303 and r.headers["location"] == "/connect#connection"
         assert schwab.completed_with.endswith("/schwab/callback?code=abc&state=xyz")
 
 
@@ -438,3 +438,35 @@ def test_schwab_orders_setting_lifts_live_automation_only_with_live_auto(setting
         c.post("/live/settings", data={"mode": "auto", "symbols": "SPY"})
         assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
         assert "LIVE_AUTO=true" in c.get("/connect").text
+
+
+def test_settings_tabs_show_every_setting_with_its_default(settings):
+    """Each setting is on the page once, in a tab, with a default for the change markers."""
+    import re
+
+    from app import scanner as scan_mod
+    from app.automation import RULES, SETTING_FIELDS
+    from app.preferences import BAND_FIELDS, RULE_FIELDS
+
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        page = c.get("/connect").text
+        tabs = re.findall(r'class="tab-panel" data-tab="([a-z]+)"', page)
+        assert tabs == ["rules", "portfolio", "automation", "scanner", "watchlist", "connection"]
+        keys = (
+            [("r", f[0]) for f in RULE_FIELDS + BAND_FIELDS]
+            + [("a", f[0]) for f in SETTING_FIELDS]
+            + [("s", f[0]) for f in scan_mod.FIELDS]
+        )
+        for prefix, key in keys:
+            tag = re.search(rf'<input id="{prefix}-{key}"[^>]*>', page)
+            assert tag and "data-default=" in tag.group(0), key
+        for rule in RULES:
+            assert f'id="a-{rule}"' in page
+        # The Portfolio tab's form leaves the Rules tab's checkboxes alone.
+        c.post("/rules", data={"block_over_ceiling": "on", "notify_flags": "on"})
+        r = c.post("/rules", data={"_form": "targets", "delta_bias": "neutral", "theta_max": "0.4"})
+        assert r.headers["location"].endswith("#targets")
+        saved = store.settings["rules"]
+        assert saved["notify_flags"] and saved["block_over_ceiling"] and saved["theta_max"] == 0.004

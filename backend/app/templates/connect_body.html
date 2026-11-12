@@ -1,4 +1,60 @@
-{# Settings content: shown inside the app's Settings page, or on its own at /connect. #}
+{# Settings content: shown inside the app's Settings page, or on its own at /connect.
+   Each .tab-panel is one tab in the app (the page shows them all without JavaScript).
+   Inputs carry data-default so the page can mark changed values and reset a group. #}
+
+{% macro fmt(v, kind) %}{% if kind == "percent" %}{{ '%g'|format((v * 100)|round(2)) }}{% elif kind == "int" %}{{ v|int }}{% else %}{{ '%g'|format(v) }}{% endif %}{% endmacro %}
+
+{% macro tip(text) %}{% if text %}<span class="tip" tabindex="0" role="button" aria-label="{{ text }}" data-tip="{{ text }}">i</span>{% endif %}{% endmacro %}
+
+{% macro label(id, text, hint) %}<span class="rule-label"><label for="{{ id }}">{{ text }}</label>{{ tip(hint) }}<span class="changed" title="Changed from the default">●</span></span>{% endmacro %}
+
+{# A number setting. f is (key, label, low, high, kind, ...); pct_frac when low/high are
+   fractions (rules) rather than display percent (automanage, scanner). #}
+{% macro num(prefix, f, v, d, unit, hint="", pct_frac=false) %}
+{% set key, text, lo, hi, kind = f[0], f[1], f[2], f[3], f[4] %}
+{% set mul = 100 if (kind == "percent" and pct_frac) else 1 %}
+<div class="rule">
+  {{ label(prefix ~ "-" ~ key, text, hint) }}
+  <span class="rule-input">
+    <input id="{{ prefix }}-{{ key }}" type="number" name="{{ key }}" required value="{{ fmt(v, kind) }}" data-default="{{ fmt(d, kind) }}" step="{{ '1' if kind == 'int' else 'any' }}" min="{{ (lo * mul)|int if kind == 'int' else '%g'|format(lo * mul) }}" max="{{ (hi * mul)|int if kind == 'int' else '%g'|format(hi * mul) }}">
+    <span class="dim unit">{{ unit }}</span>
+  </span>
+</div>
+{% endmacro %}
+
+{% macro check(name, text, on, default, hint="") %}
+<div class="rule check-row">
+  <span class="rule-label"><label><input type="checkbox" name="{{ name }}" {% if on %}checked{% endif %} data-default="{{ '1' if default else '0' }}"> {{ text }}</label>{{ tip(hint) }}<span class="changed" title="Changed from the default">●</span></span>
+</div>
+{% endmacro %}
+
+{% macro select(id, name, text, options, current, default, hint="") %}
+<div class="rule">
+  {{ label(id, text, hint) }}
+  <span class="rule-input">
+    <select id="{{ id }}" name="{{ name }}" data-default="{{ default }}">
+      {% for k, l in options %}<option value="{{ k }}" {% if current == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+    </select>
+  </span>
+</div>
+{% endmacro %}
+
+{% macro group(title, hint="", reset=true) %}
+<fieldset class="group">
+  <legend>{{ title }}{{ tip(hint) }}{% if reset %}<button type="button" class="link reset-group">Reset to defaults</button>{% endif %}</legend>
+  {{ caller() }}
+</fieldset>
+{% endmacro %}
+
+{% macro advanced(title) %}
+<details class="group advanced">
+  <summary>{{ title }}</summary>
+  <div class="advanced-body"><button type="button" class="link reset-group">Reset to defaults</button>{{ caller() }}</div>
+</details>
+{% endmacro %}
+
+{% set levels = [] %}{% for lv in auto_levels %}{% set _ = levels.append((lv, lv|capitalize)) %}{% endfor %}
+
 {% if error %}<section class="error">{{ error }}</section>{% endif %}
 {% if notice %}<section style="border-color:var(--ok)">{{ notice }}</section>{% endif %}
 
@@ -10,7 +66,233 @@
 </section>
 {% endif %}
 
-<section>
+{# ------------------------------------------------------------------------------------ #}
+<div class="tab-panel" data-tab="rules" data-label="Rules">
+<section id="rules">
+  <h2>Rules</h2>
+  <form method="post" action="/rules">
+    <input type="hidden" name="_form" value="rules">
+    {% call group("Managing trades", "The tastytrade management rules. Positions shows a flag when a trade reaches one; Automation decides what happens then.") %}
+      {{ num("r", rule_map.profit_target, rules.profit_target, rule_defaults.profit_target, "%", "Close at this share of the credit received, including rolls. tastytrade: 50%.", true) }}
+      {{ num("r", rule_map.profit_target_straddle, rules.profit_target_straddle, rule_defaults.profit_target_straddle, "%", "Straddles and iron flies carry more credit and more risk; tastytrade manages them at 25%.", true) }}
+      {{ num("r", rule_map.manage_dte, rules.manage_dte, rule_defaults.manage_dte, "DTE", "At or inside this many days to expiration a trade is flagged to close or roll, before gamma risk grows. tastytrade: 21.", true) }}
+      {{ num("r", rule_map.tested_delta, rules.tested_delta, rule_defaults.tested_delta, "Δ", "A short strike past this delta, or in the money, counts as tested.", true) }}
+      {{ num("r", rule_map.loss_multiple, rules.loss_multiple, rule_defaults.loss_multiple, "×", "Flag an undefined-risk trade once its loss reaches this multiple of the credit received.", true) }}
+      {{ check("notify_flags", "Notify when a flag appears", rules.notify_flags, rule_defaults.notify_flags, "A notification the first time each flag appears on a position, and once a day while delta or theta is outside its portfolio target.") }}
+    {% endcall %}
+    {% call group("Buying power", "Limits on opening trades, for you, automation and the scanner.") %}
+      <div class="rule">
+        {{ label("r-margin", "Margin type", rule_notes.margin_type) }}
+        <span class="rule-input">
+          <select id="r-margin" name="margin_type" data-default="{{ rules.margin_type }}">
+            {% for k, l in margin_types.items() %}<option value="{{ k }}" {% if rules.margin_type == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+          </select>
+        </span>
+      </div>
+      {{ num("r", rule_map.max_underlying_bp, rules.max_underlying_bp, rule_defaults.max_underlying_bp, "%", rule_notes.max_underlying_bp, true) }}
+      {{ num("r", rule_map.max_index_bp, rules.max_index_bp, rule_defaults.max_index_bp, "%", rule_notes.max_index_bp, true) }}
+      {{ check("block_over_ceiling", "Refuse trades above the VIX buying-power ceiling", rules.block_over_ceiling, rule_defaults.block_over_ceiling, rule_notes.block_over_ceiling ~ " The ceiling rises with VIX: 25% of net liq under 15, 30% to 20, 35% to 30, 40% to 40, 50% above (half under portfolio margin).") }}
+    {% endcall %}
+    <p class="save"><button class="primary" type="submit">Save rules</button></p>
+  </form>
+</section>
+</div>
+
+{# ------------------------------------------------------------------------------------ #}
+<div class="tab-panel" data-tab="portfolio" data-label="Portfolio">
+<section id="targets">
+  <h2>Portfolio targets</h2>
+  <form method="post" action="/rules">
+    <input type="hidden" name="_form" value="targets">
+    {% call group("Delta", "Beta-weighted to SPY, as a share of net liq (SPY deltas times SPY's price, over net liq): +10% means the account gains about 1% of net liq on a 10% SPY rally. A short strangle opens near neutral, turns short delta as the market rises and long delta as it falls; tastytrade keeps the book near neutral and leans it only by choice.") %}
+      <div class="rule">
+        {{ label("r-bias", "Delta bias", rule_notes.delta_bias) }}
+        <span class="rule-input">
+          <select id="r-bias" name="delta_bias" data-default="neutral">
+            {% for k, l in biases.items() %}<option value="{{ k }}" {% if rules.delta_bias == k %}selected{% endif %}>{{ l }}</option>{% endfor %}
+          </select>
+        </span>
+      </div>
+      {{ num("r", rule_map.delta_min, rules.delta_min, rule_defaults.delta_min, "%", "The band for the bias chosen. These are this app's defaults, not tastytrade figures; widen them for a small account, where one trade moves delta a lot.", true) }}
+      {{ num("r", rule_map.delta_max, rules.delta_max, rule_defaults.delta_max, "%", "", true) }}
+    {% endcall %}
+    {% call group("Theta", "Daily theta of 0.1% to 0.3% of net liq is tastytrade's published guide: less leaves buying power idle, more usually means too much risk for the account.") %}
+      {{ num("r", rule_map.theta_min, rules.theta_min, rule_defaults.theta_min, "%", "", true) }}
+      {{ num("r", rule_map.theta_max, rules.theta_max, rule_defaults.theta_max, "%", "At this level the scanner opens no new trades.", true) }}
+    {% endcall %}
+    <p class="dim small">Outside a band the header turns amber, a notification goes out once a day,
+       the order ticket warns, and the scanner leans new trades back toward it. The app never
+       places a hedge trade for a band.</p>
+    <p class="save"><button class="primary" type="submit">Save targets</button></p>
+  </form>
+</section>
+</div>
+
+{# ------------------------------------------------------------------------------------ #}
+<div class="tab-panel" data-tab="automation" data-label="Automation">
+<section id="automation">
+  <h2>Automation</h2>
+  <form method="post" action="/automation/settings">
+    <input type="hidden" name="_form" value="automation">
+    {% call group("Levels", "For every trade with Automanage ticked on Positions. Off: nothing. Notify: a message. Propose: an order waits for your tap. Auto: placed at mid and stepped toward natural. The Schwab account stops at Propose unless Live trading is set to Manual and automatic (and LIVE_AUTO=true).") %}
+      {% for rule, text in auto_rules.items() %}
+        {{ select("a-" ~ rule, "level_" ~ rule, text, levels, auto.levels[rule], auto_defaults.levels[rule]) }}
+      {% endfor %}
+      {{ select("a-dda", "dte_defined_action", "Defined-risk trades at the DTE mark", [("close", "Close"), ("roll", "Roll")], auto.dte_defined_action, auto_defaults.dte_defined_action, "tastytrade closes defined-risk trades at 21 DTE rather than rolling them.") }}
+    {% endcall %}
+    {% call group("Rolling", "How the 21 DTE rule rolls an undefined-risk trade: out to the monthly nearest the target, at the same strikes, for a credit.") %}
+      {{ num("a", auto_map.roll_target_dte, auto.roll_target_dte, auto_defaults.roll_target_dte, auto_map.roll_target_dte[5]) }}
+      {{ num("a", auto_map.min_roll_ivr, auto.min_roll_ivr, auto_defaults.min_roll_ivr, auto_map.min_roll_ivr[5], "Below this IV rank premium is not worth selling again, so the trade is closed instead.") }}
+      {{ num("a", auto_map.max_rolls, auto.max_rolls, auto_defaults.max_rolls, auto_map.max_rolls[5]) }}
+      {{ num("a", auto_map.min_roll_credit, auto.min_roll_credit, auto_defaults.min_roll_credit, auto_map.min_roll_credit[5], "A roll that would collect less than this is replaced by a close.") }}
+    {% endcall %}
+    {% call group("Tested side", "Rolling the untested side closer collects more credit and brings the trade back toward neutral; matching the tested side's delta re-centres it.") %}
+      {{ select("a-ut", "untested_target", "Roll the untested side to", [("match", "Tested side's delta"), ("fixed", "Fixed delta (" ~ rules.tested_delta ~ ")")], auto.untested_target, auto_defaults.untested_target) }}
+      {{ num("a", auto_map.max_untested_rolls, auto.max_untested_rolls, auto_defaults.max_untested_rolls, auto_map.max_untested_rolls[5], "After this many, the DTE rule takes over.") }}
+      {{ check("roll_ic_untested", "Iron condors: roll the untested vertical, same width", auto.roll_ic_untested, auto_defaults.roll_ic_untested) }}
+      {{ check("roll_single_itm", "A lone short option in the money: roll out for a credit", auto.roll_single_itm, auto_defaults.roll_single_itm) }}
+      {{ check("allow_inverted", "Let a strangle go inverted", auto.allow_inverted, auto_defaults.allow_inverted, "Rolling the untested side past the tested strike.") }}
+    {% endcall %}
+    {% call group("Guts to wings", "Close the guts and sell a new strangle at the wings delta in the same expiration, as one order. The guts can never be worth less than their in-the-money value (an inverted strangle, at least its inversion width), so the repair pays up to that plus the allowance and locks in no new loss beyond it.") %}
+      {{ check("guts_to_wings", "Inverted strangles", auto.guts_to_wings, auto_defaults.guts_to_wings) }}
+      {{ check("guts_near", "Straddles and narrow strangles", auto.guts_near, auto_defaults.guts_near, "A straddle has no untested side to roll closer; until a short is this deep it is left to the profit target (25% for straddles) and 21 DTE.") }}
+      {{ num("a", auto_map.guts_near_gap, auto.guts_near_gap, auto_defaults.guts_near_gap, auto_map.guts_near_gap[5]) }}
+      {{ num("a", auto_map.guts_near_delta, auto.guts_near_delta, auto_defaults.guts_near_delta, auto_map.guts_near_delta[5], "tastytrade sets no fixed delta for this; 0.70 is this app's default, a strike about half a standard deviation in the money.") }}
+      {{ num("a", auto_map.wings_delta, auto.wings_delta, auto_defaults.wings_delta, auto_map.wings_delta[5]) }}
+      {{ num("a", auto_map.guts_extra_debit, auto.guts_extra_debit, auto_defaults.guts_extra_debit, auto_map.guts_extra_debit[5]) }}
+    {% endcall %}
+    {% call group("Earnings") %}
+      {{ num("a", auto_map.earnings_close_sessions, auto.earnings_close_sessions, auto_defaults.earnings_close_sessions, auto_map.earnings_close_sessions[5], "Before the open (bmo): the session before the report is the last; after the close (amc): the report day itself.") }}
+    {% endcall %}
+    {% call group("When and how much", "Automation also pauses itself on stale prices, at the daily cap or loss limit, and while the Schwab sign-in has less than a day left.") %}
+      <div class="rule">
+        {{ label("a-ws", "Act only between (ET)", "On early-close days it stops at 12:30.") }}
+        <span class="rule-input">
+          <input id="a-ws" type="time" name="window_start" value="{{ auto.window_start }}" data-default="{{ auto_defaults.window_start }}" required>
+          <span class="dim unit">and</span>
+          <input type="time" name="window_end" value="{{ auto.window_end }}" data-default="{{ auto_defaults.window_end }}" required aria-label="Window end">
+        </span>
+      </div>
+      {{ num("a", auto_map.grace_minutes, auto.grace_minutes, auto_defaults.grace_minutes, auto_map.grace_minutes[5], "At Auto, the order waits this long as a proposal you can dismiss.") }}
+      {{ num("a", auto_map.daily_cap, auto.daily_cap, auto_defaults.daily_cap, auto_map.daily_cap[5]) }}
+      {{ num("a", auto_map.daily_loss_limit, auto.daily_loss_limit, auto_defaults.daily_loss_limit, auto_map.daily_loss_limit[5], "Once net liq is down this much since the day began, automation stops until tomorrow.") }}
+    {% endcall %}
+    {% call advanced("Advanced: order pricing") %}
+      {{ num("a", auto_map.step_cents, auto.step_cents, auto_defaults.step_cents, auto_map.step_cents[5], "Orders start at mid and move this much toward natural each step.") }}
+      {{ num("a", auto_map.step_minutes, auto.step_minutes, auto_defaults.step_minutes, auto_map.step_minutes[5]) }}
+      {{ num("a", auto_map.max_concession, auto.max_concession, auto_defaults.max_concession, auto_map.max_concession[5], "Then the order is cancelled and you are notified.") }}
+      {{ num("a", auto_map.max_order_spread, auto.max_order_spread, auto_defaults.max_order_spread, auto_map.max_order_spread[5], "A wider order (and more than 10 cents) waits and is tried again later.") }}
+    {% endcall %}
+    <p class="save"><button class="primary" type="submit">Save automation</button></p>
+  </form>
+</section>
+</div>
+
+{# ------------------------------------------------------------------------------------ #}
+<div class="tab-panel" data-tab="scanner" data-label="Scanner">
+<section id="scanner">
+  <h2>Scanner</h2>
+  <form method="post" action="/scanner/settings">
+    <input type="hidden" name="_form" value="scanner">
+    {% call group("Levels", "The scanner looks for premium worth selling: a strangle when IV rank is high, an iron condor otherwise. Notify, Propose (waits for your tap) or Auto; the Schwab account stops at Propose unless Live trading is set to Manual and automatic.") %}
+      {% for acct, text in (("sim", "Simulated account"), ("live", "Schwab account")) %}
+        {% set opts = [] %}{% for lv in auto_levels %}{% if acct == "sim" or lv != "auto" or live.auto_cap == "auto" %}{% set _ = opts.append((lv, lv|capitalize)) %}{% endif %}{% endfor %}
+        {{ select("s-" ~ acct, "level_" ~ acct, text, opts, scan["level_" ~ acct], scan_defaults["level_" ~ acct]) }}
+      {% endfor %}
+      <div class="rule">
+        {{ label("s-time", "Scan at (ET)", "") }}
+        <span class="rule-input"><input id="s-time" type="time" name="scan_time" value="{{ scan.scan_time }}" data-default="{{ scan_defaults.scan_time }}" required></span>
+      </div>
+      {{ check("automanage_new", "Switch automanage on for new trades", scan.automanage_new, scan_defaults.automanage_new) }}
+    {% endcall %}
+    {% call group("What it opens") %}
+      {{ num("s", scan_map.min_ivr, scan.min_ivr, scan_defaults.min_ivr, scan_map.min_ivr[5], "tastytrade sells premium when IV rank is 30 or more.") }}
+      {{ num("s", scan_map.undefined_ivr, scan.undefined_ivr, scan_defaults.undefined_ivr, scan_map.undefined_ivr[5], "Below this, an iron condor (defined risk) instead.") }}
+      {{ num("s", scan_map.short_delta, scan.short_delta, scan_defaults.short_delta, scan_map.short_delta[5]) }}
+      {{ num("s", scan_map.ic_short_delta, scan.ic_short_delta, scan_defaults.ic_short_delta, scan_map.ic_short_delta[5]) }}
+      {{ num("s", scan_map.min_ic_credit, scan.min_ic_credit, scan_defaults.min_ic_credit, scan_map.min_ic_credit[5], "tastytrade collects about a third of the width.") }}
+      {{ num("s", scan_map.min_pop, scan.min_pop, scan_defaults.min_pop, scan_map.min_pop[5]) }}
+    {% endcall %}
+    {% call group("Expiration") %}
+      {{ num("s", scan_map.target_dte, scan.target_dte, scan_defaults.target_dte, scan_map.target_dte[5], "tastytrade opens around 45 DTE.") }}
+      {{ num("s", scan_map.min_dte, scan.min_dte, scan_defaults.min_dte, scan_map.min_dte[5]) }}
+      {{ num("s", scan_map.max_dte, scan.max_dte, scan_defaults.max_dte, scan_map.max_dte[5]) }}
+      {{ check("monthly_only", "Monthly expirations only", scan.monthly_only, scan_defaults.monthly_only) }}
+    {% endcall %}
+    {% call group("Size and limits") %}
+      {{ num("s", scan_map.contracts, scan.contracts, scan_defaults.contracts, scan_map.contracts[5]) }}
+      {{ num("s", scan_map.max_bp_share, scan.max_bp_share, scan_defaults.max_bp_share, scan_map.max_bp_share[5], "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
+      {{ num("s", scan_map.max_per_underlying, scan.max_per_underlying, scan_defaults.max_per_underlying, scan_map.max_per_underlying[5], "Never two trades in the same underlying and expiration.") }}
+      {{ num("s", scan_map.max_new_per_day, scan.max_new_per_day, scan_defaults.max_new_per_day, scan_map.max_new_per_day[5]) }}
+      {{ num("s", scan_map.max_bp_day, scan.max_bp_day, scan_defaults.max_bp_day, scan_map.max_bp_day[5]) }}
+    {% endcall %}
+    {% call group("Earnings", "ETFs and indexes have no earnings. A single stock opens only when its next report is known and further away than this.") %}
+      {{ num("s", scan_map.earnings_days, scan.earnings_days, scan_defaults.earnings_days, scan_map.earnings_days[5]) }}
+      {{ check("avoid_through_earnings", "No trade that expires after the next report", scan.avoid_through_earnings, scan_defaults.avoid_through_earnings) }}
+    {% endcall %}
+    {% call group("Leaning") %}
+      {{ check("band_lean", "Lean back toward the portfolio delta band", scan.band_lean, scan_defaults.band_lean, "Outside the band, sell the put closer when too short, the call closer when too long. Comes before the price-extreme lean.") }}
+      {{ check("extreme_tilt", "Lean at price extremes", scan.extreme_tilt, scan_defaults.extreme_tilt, "After a drop sell the put side closer (bullish), after a rise the call side (bearish).") }}
+      {{ num("s", scan_map.tilt_delta, scan.tilt_delta, scan_defaults.tilt_delta, scan_map.tilt_delta[5]) }}
+    {% endcall %}
+    {% call advanced("Advanced: liquidity, price extremes, rescans") %}
+      {{ num("s", scan_map.max_spread, scan.max_spread, scan_defaults.max_spread, scan_map.max_spread[5]) }}
+      {{ num("s", scan_map.min_oi, scan.min_oi, scan_defaults.min_oi, scan_map.min_oi[5]) }}
+      {{ num("s", scan_map.range_band, scan.range_band, scan_defaults.range_band, scan_map.range_band[5]) }}
+      {{ num("s", scan_map.move_days, scan.move_days, scan_defaults.move_days, scan_map.move_days[5]) }}
+      {{ num("s", scan_map.move_sigma, scan.move_sigma, scan_defaults.move_sigma, scan_map.move_sigma[5]) }}
+      {{ num("s", scan_map.day_ratio, scan.day_ratio, scan_defaults.day_ratio, scan_map.day_ratio[5]) }}
+      {{ num("s", scan_map.scan_every, scan.scan_every, scan_defaults.scan_every, scan_map.scan_every[5], "After the scan time, until automation's window ends.") }}
+    {% endcall %}
+    <p class="save"><button class="primary" type="submit">Save scanner</button></p>
+  </form>
+</section>
+</div>
+
+{# ------------------------------------------------------------------------------------ #}
+<div class="tab-panel" data-tab="watchlist" data-label="Watchlist">
+<section id="watchlist">
+  <h2>Watchlist {{ tip("IV is recorded every trading day for these symbols, and they appear on the Watchlist screen. Symbols you hold are always recorded too.") }}</h2>
+  <p class="chips">
+    {% for sym in watchlist %}
+    <form class="inline chip" method="post" action="/watchlist/remove">
+      <input type="hidden" name="symbol" value="{{ sym }}">{{ sym }}
+      <button class="link" title="Remove {{ sym }}" aria-label="Remove {{ sym }}">×</button>
+    </form>
+    {% else %}<span class="dim">Empty.</span>{% endfor %}
+  </p>
+  <form method="post" action="/watchlist/import" enctype="multipart/form-data">
+    <p><textarea name="text" rows="2" placeholder="Type or paste symbols: SPY, QQQ, IWM"></textarea></p>
+    <p class="dim small">Or a thinkorswim export (the watchlist's menu, Export, To file):
+       <input type="file" name="file" accept=".csv,.txt,text/csv,text/plain"></p>
+    <p>
+      <label><input type="radio" name="mode" value="add" checked> Add</label>
+      &nbsp;&nbsp;
+      <label><input type="radio" name="mode" value="replace"> Replace the list</label>
+      &nbsp;&nbsp;<button class="primary" type="submit">Import</button>
+    </p>
+  </form>
+</section>
+
+<section id="earnings">
+  <h2>Earnings dates {{ tip("Used by the scanner's earnings buffer, the automanage earnings rule, and the earnings flags. Refreshed every six hours.") }}</h2>
+  <p class="dim small">Source: <b>{{ "Finnhub" if earnings.provider == "Finnhub" else "demo dates" if earnings.provider == "demo" else "only the dates below" }}</b>{% if earnings.provider == "manual" %}
+     (add <code>FINNHUB_API_KEY=...</code> to <code>.env</code> for automatic dates){% endif %}.
+     {% if earnings.refreshed_at %}Dates known for {{ earnings.known }} stocks.{% endif %}</p>
+  {% if earnings.error %}<p class="error">{{ earnings.error }}</p>{% endif %}
+  <form method="post" action="/earnings/manual">
+    <p><textarea name="text" rows="3" placeholder="AAPL 2027-01-28 amc">{{ earnings_manual }}</textarea></p>
+    <p class="dim small">Your dates win over the source. One per line: <code>SYMBOL YYYY-MM-DD bmo</code>
+       (before the open) or <code>amc</code> (after the close).</p>
+    <p><button class="primary" type="submit">Save earnings dates</button></p>
+  </form>
+  <form method="post" action="/earnings/refresh"><p><button type="submit">Refresh now</button></p></form>
+</section>
+</div>
+
+{# ------------------------------------------------------------------------------------ #}
+<div class="tab-panel" data-tab="connection" data-label="Connection">
+<section id="connection">
   <h2>Status</h2>
   {% if not demo %}
   <p>
@@ -52,345 +334,12 @@
   {% endif %}
 </section>
 
-<section id="watchlist">
-  <h2>Watchlist</h2>
-  <p class="dim">IV is recorded every trading day for these symbols, and they appear on the
-     Watchlist screen. Symbols you hold positions in are always recorded too.</p>
-  <p class="chips">
-    {% for sym in watchlist %}
-    <form class="inline chip" method="post" action="/watchlist/remove">
-      <input type="hidden" name="symbol" value="{{ sym }}">{{ sym }}
-      <button class="link" title="Remove {{ sym }}" aria-label="Remove {{ sym }}">×</button>
-    </form>
-    {% else %}<span class="dim">Empty.</span>{% endfor %}
-  </p>
-  <form method="post" action="/watchlist/import" enctype="multipart/form-data">
-    <p><strong>Import from thinkorswim:</strong> in the watchlist's menu choose Export, To file,
-       then choose that CSV file here.</p>
-    <p><input type="file" name="file" accept=".csv,.txt,text/csv,text/plain"></p>
-    <p>Or type or paste symbols, separated by commas or spaces:</p>
-    <p><textarea name="text" rows="2" placeholder="SPY, QQQ, IWM, GLD, TLT"></textarea></p>
-    <p>
-      <label><input type="radio" name="mode" value="add" checked> Add to the list</label>
-      &nbsp;&nbsp;
-      <label><input type="radio" name="mode" value="replace"> Replace the list</label>
-    </p>
-    <p><button class="primary" type="submit">Import</button></p>
-  </form>
-</section>
-
-<section id="rules">
-  <h2>Management rules</h2>
-  <form method="post" action="/rules">
-    <div class="rule">
-      <label for="r-margin">Margin type</label>
-      <span class="rule-input">
-        <select id="r-margin" name="margin_type">
-          {% for k, label in margin_types.items() %}<option value="{{ k }}" {% if rules.margin_type == k %}selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select>
-      </span>
-    </div>
-    <p class="warn-note">⚠ {{ rule_notes.margin_type }}</p>
-    {% for name, label, lo, hi, kind in rule_fields %}
-      {% set v = rules[name] %}
-      <div class="rule">
-        <label for="r-{{ name }}">{{ label }}</label>
-        <span class="rule-input">
-          <input id="r-{{ name }}" type="number" name="{{ name }}" required
-            {% if kind == "percent" %}value="{{ '%g'|format((v * 100)|round(1)) }}" step="0.5" min="{{ (lo*100)|int }}" max="{{ (hi*100)|int }}"
-            {% elif kind == "int" %}value="{{ v }}" step="1" min="{{ lo }}" max="{{ hi }}"
-            {% else %}value="{{ v }}" step="0.01" min="{{ lo }}" max="{{ hi }}"{% endif %}>
-          <span class="dim unit">{{ "%" if kind == "percent" else ("×" if kind == "multiple" else ("DTE" if kind == "int" else "Δ")) }}</span>
-        </span>
-      </div>
-      {% if rule_notes[name] %}<p class="warn-note">⚠ {{ rule_notes[name] }}</p>{% endif %}
-    {% endfor %}
-    <p><label><input type="checkbox" name="block_over_ceiling" {% if rules.block_over_ceiling %}checked{% endif %}>
-       Refuse opening trades above the buying-power ceiling for the current VIX</label></p>
-    <p class="warn-note">⚠ {{ rule_notes.block_over_ceiling }}</p>
-    <p><label><input type="checkbox" name="notify_flags" {% if rules.notify_flags %}checked{% endif %}>
-       Send a notification the first time each flag appears on a position, and once a day while
-       delta or theta is outside its portfolio target</label></p>
-
-    <h3 id="targets">Portfolio targets</h3>
-    <p class="dim">tastytrade mechanics: trade small, trade often, and manage the portfolio as a
-       whole. Delta is beta-weighted to SPY and shown as a share of net liq (SPY deltas times
-       SPY's price, over net liq): +10% means the account gains about 1% of net liq on a 10% SPY
-       rally. A short strangle opens near delta neutral and turns short delta as the market
-       rises and long delta as it falls; tastytrade keeps the book near neutral and leans it only
-       by choice. Daily theta of 0.1% to 0.3% of net liq is tastytrade's published
-       guide: less leaves buying power idle, more usually means too much risk for the account.</p>
-    <div class="rule">
-      <label for="r-bias">Delta bias</label>
-      <span class="rule-input">
-        <select id="r-bias" name="delta_bias">
-          {% for k, label in biases.items() %}<option value="{{ k }}" {% if rules.delta_bias == k %}selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select>
-      </span>
-    </div>
-    <p class="warn-note">⚠ {{ rule_notes.delta_bias }}</p>
-    {% for name, label, lo, hi, kind in band_fields %}
-      {% set v = rules[name] %}
-      <div class="rule">
-        <label for="r-{{ name }}">{{ label }}</label>
-        <span class="rule-input">
-          <input id="r-{{ name }}" type="number" name="{{ name }}" required
-            value="{{ '%g'|format((v * 100)|round(2)) }}"
-            step="{{ '0.5' if name.startswith('delta') else '0.01' }}" min="{{ '%g'|format(lo * 100) }}" max="{{ '%g'|format(hi * 100) }}">
-          <span class="dim unit">%</span>
-        </span>
-      </div>
-    {% endfor %}
-    <p class="dim">Outside a band the app corrects by what it opens, never by a hedge trade of its
-       own: the header turns amber, a notification goes out once a day, the order ticket warns
-       about a trade that moves delta or theta further out, and the scanner leans new strangles
-       and iron condors back toward the delta band (puts closer when too short, calls closer when
-       too long), proposes rather than places a trade that would push delta further out, and opens
-       nothing while theta is at its maximum. The bias bands are this app's defaults, not
-       tastytrade figures; widen them for a small account, where one trade moves delta a lot.</p>
-    <p><button class="primary" type="submit">Save rules</button></p>
-  </form>
-</section>
-
-<section id="automation">
-  <h2>Management rules: automanage</h2>
-  <p class="dim">Applies the rules above to trades you switch to automanage: on the simulated
-     account at any level, on the Schwab account up to Propose (Auto too once Live trading is set
-     to Manual and automatic). Notify sends a message; Propose prepares an order for one tap;
-     Auto places it at mid and steps toward natural. These levels apply to every trade with Automanage ticked on Positions.</p>
-  <form method="post" action="/automation/settings">
-    <input type="hidden" name="_form" value="automation">
-    {% for rule, label in auto_rules.items() %}
-      <div class="rule">
-        <label for="a-{{ rule }}">{{ label }}</label>
-        <span class="rule-input">
-          <select id="a-{{ rule }}" name="level_{{ rule }}">
-            {% for lv in auto_levels %}<option value="{{ lv }}" {% if auto.levels[rule] == lv %}selected{% endif %}>{{ lv|capitalize }}</option>{% endfor %}
-          </select>
-        </span>
-      </div>
-    {% endfor %}
-    <div class="rule">
-      <label for="a-dda">Defined-risk trades at the DTE mark</label>
-      <span class="rule-input">
-        <select id="a-dda" name="dte_defined_action">
-          <option value="close" {% if auto.dte_defined_action == "close" %}selected{% endif %}>Close</option>
-          <option value="roll" {% if auto.dte_defined_action == "roll" %}selected{% endif %}>Roll</option>
-        </select>
-      </span>
-    </div>
-    {% for key, label, lo, hi, kind, unit in auto_fields %}
-      {% set v = auto[key] %}
-      <div class="rule">
-        <label for="a-{{ key }}">{{ label }}</label>
-        <span class="rule-input">
-          <input id="a-{{ key }}" type="number" name="{{ key }}" required min="{{ lo }}" max="{{ hi }}"
-            {% if kind == "percent" %}value="{{ '%g'|format((v * 100)|round(1)) }}" step="0.1"
-            {% elif kind == "int" %}value="{{ v }}" step="1"
-            {% else %}value="{{ v }}" step="0.01"{% endif %}>
-          <span class="dim unit">{{ unit }}</span>
-        </span>
-      </div>
-    {% endfor %}
-    <div class="rule">
-      <label for="a-ut">Tested side: roll the untested side to</label>
-      <span class="rule-input">
-        <select id="a-ut" name="untested_target">
-          <option value="match" {% if auto.untested_target == "match" %}selected{% endif %}>Tested side's delta</option>
-          <option value="fixed" {% if auto.untested_target == "fixed" %}selected{% endif %}>Fixed delta ({{ rules.tested_delta }})</option>
-        </select>
-      </span>
-    </div>
-    <p class="dim">Rolling the untested side closer collects more credit and brings the trade back
-       toward neutral; matching the tested side's delta re-centres it.</p>
-    <p><label><input type="checkbox" name="roll_ic_untested" {% if auto.roll_ic_untested %}checked{% endif %}>
-       Iron condors too: roll the untested vertical closer at the same width</label></p>
-    <p><label><input type="checkbox" name="roll_single_itm" {% if auto.roll_single_itm %}checked{% endif %}>
-       A lone short put or call in the money: roll it out in time for a credit</label></p>
-    <p><label><input type="checkbox" name="guts_to_wings" {% if auto.guts_to_wings %}checked{% endif %}>
-       An inverted strangle: buy the guts, sell the wings (close it and sell a new strangle at the
-       wings delta, same expiration) to re-centre it</label></p>
-    <p><label><input type="checkbox" name="guts_near" {% if auto.guts_near %}checked{% endif %}>
-       A straddle, or a strangle with its strikes within the narrow-strangle gap: buy the guts,
-       sell the wings once a short reaches the delta above</label></p>
-    <p class="dim">tastytrade mechanics: the guts can never be worth less than their in-the-money
-       value (an inverted strangle, at least its inversion width), so the repair pays up to that
-       plus your allowance and locks in no new loss beyond it; the new 16-delta strangle keeps
-       collecting theta with the breakevens re-centred. A straddle has no untested side to roll
-       closer, so until a short is this deep it is left to the profit target (25% for straddles)
-       and the 21 DTE rule. tastytrade sets no fixed delta for this repair; 0.70 is this app's
-       default, a short strike roughly half a standard deviation in the money.</p>
-    <p><label><input type="checkbox" name="allow_inverted" {% if auto.allow_inverted %}checked{% endif %}>
-       Let a tested strangle go inverted (roll the untested side past the tested strike)</label></p>
-    <div class="rule">
-      <label for="a-ws">Act only between (ET)</label>
-      <span class="rule-input">
-        <input id="a-ws" type="time" name="window_start" value="{{ auto.window_start }}" required>
-        <span class="dim unit">and</span>
-        <input type="time" name="window_end" value="{{ auto.window_end }}" required aria-label="Window end">
-      </span>
-    </div>
-    <p><button class="primary" type="submit">Save automanage settings</button></p>
-  </form>
-</section>
-
-<section id="scanner">
-  <h2>Management rules: opening trades</h2>
-  <p class="dim">The scanner looks once a day, at the scan time, for premium worth selling: a
-     strangle when IV rank is high, an iron condor otherwise, in the monthly expiration nearest the
-     target DTE. What it finds follows the level below: Notify, Propose (waits for your tap) or Auto
-     (the Schwab account stops at Propose unless Live trading is set to Manual and automatic). Single stocks open only when their next
-     earnings report is known and further away than the buffer; ETFs and indexes have no earnings.</p>
-  <form method="post" action="/scanner/settings">
-    <input type="hidden" name="_form" value="scanner">
-    {% for acct, label in (("sim", "Simulated account"), ("live", "Schwab account")) %}
-      <div class="rule">
-        <label for="s-{{ acct }}">{{ label }}</label>
-        <span class="rule-input">
-          <select id="s-{{ acct }}" name="level_{{ acct }}">
-            {% for lv in auto_levels %}{% if acct == "sim" or lv != "auto" or live.auto_cap == "auto" %}<option value="{{ lv }}" {% if scan["level_" ~ acct] == lv %}selected{% endif %}>{{ lv|capitalize }}</option>{% endif %}{% endfor %}
-          </select>
-        </span>
-      </div>
-    {% endfor %}
-    {% for key, label, lo, hi, kind, unit in scan_fields %}
-      {% set v = scan[key] %}
-      <div class="rule">
-        <label for="s-{{ key }}">{{ label }}</label>
-        <span class="rule-input">
-          <input id="s-{{ key }}" type="number" name="{{ key }}" required
-            {% if kind == "percent" %}value="{{ '%g'|format((v * 100)|round(1)) }}" step="0.5" min="{{ lo }}" max="{{ hi }}"
-            {% elif kind == "int" %}value="{{ v }}" step="1" min="{{ lo }}" max="{{ hi }}"
-            {% else %}value="{{ v }}" step="0.01" min="{{ lo }}" max="{{ hi }}"{% endif %}>
-          <span class="dim unit">{{ unit }}</span>
-        </span>
-      </div>
-      {% if key == "max_bp_share" %}<p class="warn-note">⚠ Set by the margin type ({{ "portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%" }}) when it is switched; adjustable here.</p>{% endif %}
-    {% endfor %}
-    <div class="rule">
-      <label for="s-time">Scan at (ET)</label>
-      <span class="rule-input"><input id="s-time" type="time" name="scan_time" value="{{ scan.scan_time }}" required></span>
-    </div>
-    <p><label><input type="checkbox" name="monthly_only" {% if scan.monthly_only %}checked{% endif %}>
-       Monthly expirations only</label></p>
-    <p><label><input type="checkbox" name="avoid_through_earnings" {% if scan.avoid_through_earnings %}checked{% endif %}>
-       Single stocks: no trade whose expiration is after the next earnings report</label></p>
-    <p><label><input type="checkbox" name="automanage_new" {% if scan.automanage_new %}checked{% endif %}>
-       Switch automanage on for trades the scanner opens</label></p>
-    <p><label><input type="checkbox" name="band_lean" {% if scan.band_lean %}checked{% endif %}>
-       Outside the portfolio delta band, lean new trades back toward it (this comes before the
-       price-extreme lean)</label></p>
-    <p><label><input type="checkbox" name="extreme_tilt" {% if scan.extreme_tilt %}checked{% endif %}>
-       Lean the trade at price extremes: after a drop sell the put side closer (bullish), after a
-       rise the call side (bearish)</label></p>
-    <p><button class="primary" type="submit">Save scanner settings</button></p>
-  </form>
-</section>
-
-<section id="earnings">
-  <h2>Earnings dates</h2>
-  <p class="dim">Used by the scanner's earnings buffer, the automanage earnings rule, and the
-     earnings flags on Watchlist and Positions. Source: <b>{{ "Finnhub" if earnings.provider == "Finnhub" else "demo dates" if earnings.provider == "demo" else "only the dates below" }}</b>{% if earnings.provider == "manual" %}
-     (for dates looked up automatically, get a free key at finnhub.io and add
-     <code>FINNHUB_API_KEY=...</code> to <code>.env</code>){% endif %}.
-     {% if earnings.refreshed_at %}Dates known for {{ earnings.known }} stocks.{% endif %}
-     Refreshed every six hours.</p>
-  {% if earnings.error %}<p class="error">{{ earnings.error }}</p>{% endif %}
-  <form method="post" action="/earnings/refresh"><p><button type="submit">Refresh now</button></p></form>
-  <form method="post" action="/earnings/manual">
-    <p class="dim">Dates you set win over the source. One line each:
-       <code>SYMBOL YYYY-MM-DD bmo</code> (before the open) or <code>amc</code> (after the close).</p>
-    <p><textarea name="text" rows="4" placeholder="AAPL 2027-01-28 amc">{{ earnings_manual }}</textarea></p>
-    <p><button class="primary" type="submit">Save earnings dates</button></p>
-  </form>
-</section>
-
-<section id="live">
-  <h2>Live trading</h2>
-  {% if live.demo %}
-  <p class="dim">Demo mode: there is no real Schwab account, so live orders stay off.</p>
-  {% elif not live.server_allowed %}
-  <p class="dim">The server does not allow live orders yet. Add <code>LIVE_TRADING=true</code> to the
-     <code>.env</code> file and restart the app; then the setting below decides.</p>
-  {% endif %}
-  <form method="post" action="/live/settings">
-    <div class="rule">
-      <label for="l-mode"><b>Schwab orders</b></label>
-      <span class="rule-input">
-        <select id="l-mode" name="mode">
-          <option value="off" {% if not live.enabled %}selected{% endif %}>Off</option>
-          <option value="manual" {% if live.enabled and not live.auto %}selected{% endif %}>Manual only</option>
-          <option value="auto" {% if live.enabled and live.auto %}selected{% endif %}>Manual and automatic</option>
-        </select>
-      </span>
-    </div>
-    <p class="dim"><b>Off</b>: the ticket only previews Schwab orders; trade on the simulated account.
-       <b>Manual only</b>: you send orders from the ticket (checks, Schwab's preview and a second
-       confirm), and automation only proposes. <b>Manual and automatic</b>: automanage and the
-       scanner may also place orders themselves at Auto levels, within the limits below, the daily
-       loss limit and the daily order cap.
-       {% if live.on %}<span class="dot ok"></span> Orders go to Schwab{% if live.auto_cap == "auto" %}, automatic ones too{% endif %}.{% endif %}</p>
-    {% if live.enabled and live.auto and not live.server_auto %}
-    <p class="warn-note">⚠ Automatic orders also need <code>LIVE_AUTO=true</code> in <code>.env</code>
-       and a restart; until then automation only proposes.</p>
-    {% endif %}
-    <p><label><input type="checkbox" name="all_symbols" {% if live.all_symbols %}checked{% endif %}>
-       Any underlying (the list below is then not used; the scanner uses your watchlist)</label></p>
-    <div class="rule">
-      <label for="l-symbols">Underlyings allowed live</label>
-      <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
-        value="{{ live.symbols|join(' ') }}" style="width:160px"></span>
-    </div>
-    <div class="rule">
-      <label for="l-max">Contracts per leg, at most</label>
-      <span class="rule-input"><input id="l-max" type="number" name="max_contracts" min="1" max="50"
-        step="1" value="{{ live.max_contracts }}"><span class="dim unit">contracts</span></span>
-    </div>
-    <div class="rule">
-      <label for="l-bp">Buying power for one trade, at most</label>
-      <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
-        step="0.5" value="{{ '%g'|format(live.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
-    </div>
-    <p class="warn-note">⚠ Set by the margin type ({{ "portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%" }}) when it is switched; adjustable here.</p>
-    <p><button class="primary" type="submit">Save live trading</button></p>
-  </form>
-</section>
-
-
-{% if not demo and status.connected %}
-<section>
-  <h2>Account</h2>
-  {% if accounts %}
-  <form method="post" action="/account/select">
-    <table>
-      <tr><th></th><th>Account</th></tr>
-      {% for a in accounts %}
-      <tr>
-        <td style="width:32px"><input type="radio" name="number" value="{{ a.number }}"
-            {% if selected and selected.number == a.number %}checked{% endif %} required></td>
-        <td style="text-align:left">…{{ a.last4 }}
-          {% if selected and selected.number == a.number %}<span class="dim">&nbsp;in use</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    <p><button class="primary" type="submit">Use this account</button></p>
-  </form>
-  {% if accounts|length > 1 %}
-  <p class="dim">The Schwab sign-in shows {{ accounts|length }} accounts. For the strongest
-     separation, sign in again below and tick only the trading account on Schwab's consent screen.</p>
-  {% endif %}
-  {% elif not error %}
-  <p class="dim">Schwab returned no accounts.</p>
-  {% endif %}
-</section>
-{% endif %}
-
 {% if not demo %}
-<section>
+<section id="signin">
   <h2>{{ "Renew Schwab sign-in" if status.connected else "Connect to Schwab" }}</h2>
   {% if one_tap %}
   <p><a class="button primary" href="/schwab/authorize">Sign in with Schwab</a></p>
-  <p class="dim">Sign in, tick only the trading account, and approve. Schwab sends you back here.</p>
+  <p class="dim small">Sign in, tick only the trading account, and approve. Schwab sends you back here.</p>
   {% else %}
   <ol>
     <li><a class="button primary" href="/schwab/authorize" target="_blank" rel="noopener">Open Schwab sign-in</a>
@@ -416,8 +365,80 @@
 </section>
 {% endif %}
 
-<section>
+{% if not demo and status.connected %}
+<section id="account">
+  <h2>Account</h2>
+  {% if accounts %}
+  <form method="post" action="/account/select">
+    <table>
+      <tr><th></th><th>Account</th></tr>
+      {% for a in accounts %}
+      <tr>
+        <td style="width:32px"><input type="radio" name="number" value="{{ a.number }}"
+            {% if selected and selected.number == a.number %}checked{% endif %} required></td>
+        <td style="text-align:left">…{{ a.last4 }}
+          {% if selected and selected.number == a.number %}<span class="dim">&nbsp;in use</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p><button class="primary" type="submit">Use this account</button></p>
+  </form>
+  {% if accounts|length > 1 %}
+  <p class="dim small">The Schwab sign-in shows {{ accounts|length }} accounts. For the strongest
+     separation, sign in again and tick only the trading account on Schwab's consent screen.</p>
+  {% endif %}
+  {% elif not error %}
+  <p class="dim">Schwab returned no accounts.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section id="live">
+  <h2>Live trading</h2>
+  {% if live.demo %}
+  <p class="dim small">Demo mode: there is no real Schwab account, so live orders stay off.</p>
+  {% elif not live.server_allowed %}
+  <p class="warn-note">⚠ The server does not allow live orders yet: add <code>LIVE_TRADING=true</code>
+     to <code>.env</code> and restart the app.</p>
+  {% endif %}
+  <form method="post" action="/live/settings">
+    <div class="rule">
+      {{ label("l-mode", "Schwab orders", "Off: the ticket only previews Schwab orders. Manual only: you send orders from the ticket, after the checks, Schwab's preview and a second confirm; automation only proposes. Manual and automatic: automanage and the scanner may also place orders at Auto levels, within these limits, the daily loss limit and the daily order cap.") }}
+      <span class="rule-input">
+        <select id="l-mode" name="mode" data-default="off">
+          <option value="off" {% if not live.enabled %}selected{% endif %}>Off</option>
+          <option value="manual" {% if live.enabled and not live.auto %}selected{% endif %}>Manual only</option>
+          <option value="auto" {% if live.enabled and live.auto %}selected{% endif %}>Manual and automatic</option>
+        </select>
+      </span>
+    </div>
+    {% if live.on %}<p class="small"><span class="dot ok"></span>Orders go to Schwab{% if live.auto_cap == "auto" %}, automatic ones too{% endif %}.</p>{% endif %}
+    {% if live.enabled and live.auto and not live.server_auto %}
+    <p class="warn-note">⚠ Automatic orders also need <code>LIVE_AUTO=true</code> in <code>.env</code>
+       and a restart; until then automation only proposes.</p>
+    {% endif %}
+    {{ check("all_symbols", "Any underlying", live.all_symbols, false, "The list below is then not used, and the live scanner works from your watchlist.") }}
+    <div class="rule">
+      {{ label("l-symbols", "Underlyings allowed live", "") }}
+      <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
+        value="{{ live.symbols|join(' ') }}" style="width:160px"></span>
+    </div>
+    <div class="rule">
+      {{ label("l-max", "Contracts per leg, at most", "") }}
+      <span class="rule-input"><input id="l-max" type="number" name="max_contracts" min="1" max="50"
+        step="1" value="{{ live.max_contracts }}" data-default="1"><span class="dim unit">contracts</span></span>
+    </div>
+    <div class="rule">
+      {{ label("l-bp", "Buying power for one trade, at most", "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
+      <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
+        step="any" value="{{ '%g'|format(live.max_bp_share * 100) }}" data-default="{{ '%g'|format(scan_defaults.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
+    </div>
+    <p class="save"><button class="primary" type="submit">Save live trading</button></p>
+  </form>
+</section>
+
+<section id="session">
   <h2>Session</h2>
   <form method="post" action="/logout"><button>Sign out of the app</button></form>
 </section>
-
+</div>

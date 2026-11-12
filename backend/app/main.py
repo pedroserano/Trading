@@ -1,9 +1,11 @@
 import asyncio
+import copy
 import hmac
 import json
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
@@ -27,6 +29,9 @@ from . import guards, portfolio_view, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
+from .automation import (
+    DEFAULT_SETTINGS as AUTO_DEFAULTS,
+)
 from .automation import (
     LEVELS,
     RULES,
@@ -62,6 +67,7 @@ from .portfolio import BENCH, PortfolioService
 from .preferences import (
     _SYMBOL,
     BAND_FIELDS,
+    MARGIN_DEFAULTS,
     MARGIN_SCALE,
     MARGIN_TYPES,
     RULE_FIELDS,
@@ -77,6 +83,7 @@ from .schwab_service import (
 )
 from .sim import SimBroker, SimDataSource, stats
 from .store import PgStore
+from .strategies import Rules
 from .streaming import StreamService
 from .token_store import TokenStore
 from .watchlist import WatchlistService
@@ -519,6 +526,7 @@ def create_app(
 
     @app.get("/connect", response_class=HTMLResponse, dependencies=[Depends(require_login)])
     async def connect_page(request: Request, fragment: bool = False):
+        rules_now = await preferences.rules()
         # The app shows Settings inside its own page, with the same menu as every other
         # page; /connect on its own is only for when the app's front end is not built.
         if not fragment and (static_dir / "index.html").exists():
@@ -558,7 +566,7 @@ def create_app(
                 ][settings.reminder_weekday],
                 "reminder_hour": settings.reminder_hour,
                 "watchlist": await preferences.watchlist(),
-                "rules": await preferences.rules(),
+                "rules": rules_now,
                 "rule_fields": RULE_FIELDS,
                 "rule_notes": RULE_NOTES,
                 "margin_types": MARGIN_TYPES,
@@ -573,6 +581,12 @@ def create_app(
                 "auto_rules": RULES,
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
+                "auto_map": {f[0]: f for f in SETTING_FIELDS},
+                "auto_defaults": copy.deepcopy(AUTO_DEFAULTS),
+                "scan_map": {f[0]: f for f in scan_mod.FIELDS},
+                "scan_defaults": scan_defaults(rules_now),
+                "rule_map": {f[0]: f for f in RULE_FIELDS + BAND_FIELDS},
+                "rule_defaults": rule_defaults(rules_now),
                 "stream": None if stream is None else (stream.status, stream.detail),
                 "health": health,
             },
@@ -589,7 +603,7 @@ def create_app(
             request.session["notice"] = "Schwab sign-in renewed."
         except SchwabError as e:
             request.session["flash"] = str(e)
-        return RedirectResponse(settings_url(), status_code=303)
+        return RedirectResponse(settings_url("connection"), status_code=303)
 
     @app.post("/schwab/complete", dependencies=[Depends(require_login)])
     async def schwab_complete(request: Request, received_url: str = Form()):
@@ -605,7 +619,7 @@ def create_app(
     @app.post("/schwab/disconnect", dependencies=[Depends(require_login)])
     async def schwab_disconnect():
         await schwab.disconnect()
-        return RedirectResponse(settings_url(), status_code=303)
+        return RedirectResponse(settings_url("connection"), status_code=303)
 
     @app.post("/account/select", dependencies=[Depends(require_login)])
     async def account_select(request: Request, number: str = Form()):
@@ -615,7 +629,7 @@ def create_app(
             request.session["notice"] = f"Using the account ending {number[-4:]}."
         except (ValueError, SchwabError) as e:
             request.session["flash"] = str(e)
-        return RedirectResponse(settings_url(), status_code=303)
+        return RedirectResponse(settings_url("connection"), status_code=303)
 
     @app.post("/notify/test", dependencies=[Depends(require_login)])
     async def notify_test(request: Request):
@@ -626,7 +640,7 @@ def create_app(
             request.session["notice"] = "Test notification sent."
         except Exception as e:
             request.session["flash"] = f"Test notification failed: {e}"
-        return RedirectResponse(settings_url(), status_code=303)
+        return RedirectResponse(settings_url("connection"), status_code=303)
 
     @app.post("/watchlist/import", dependencies=[Depends(require_login)])
     async def watchlist_import(
@@ -780,7 +794,8 @@ def create_app(
                 )
         except ValueError as e:
             request.session["flash"] = str(e)
-        return RedirectResponse(settings_url("rules"), status_code=303)
+        section = "targets" if form.get("_form") == "targets" else "rules"
+        return RedirectResponse(settings_url(section), status_code=303)
 
     # API -------------------------------------------------------------------------------
 
@@ -1239,6 +1254,19 @@ def create_app(
         ),
     }
     app.state.automation = automations["sim"]
+
+    def rule_defaults(rules: Rules) -> dict:
+        """Each rule's default for the current margin type and delta bias, for the Settings
+        page's changed-from-default markers and Reset buttons."""
+        d = asdict(Rules())
+        d.update(MARGIN_DEFAULTS[rules.margin_type])
+        d["delta_min"], d["delta_max"] = targets.BIAS_BANDS[rules.delta_bias]
+        return d
+
+    def scan_defaults(rules: Rules) -> dict:
+        d = copy.deepcopy(scan_mod.DEFAULTS)
+        d["max_bp_share"] = 0.05 * MARGIN_SCALE[rules.margin_type]
+        return d
 
     async def apply_live_cap() -> None:
         automations["live"].max_level = live_broker.auto_cap(await live_broker.config())

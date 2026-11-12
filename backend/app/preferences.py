@@ -128,8 +128,14 @@ class Preferences:
                 shown = (lo * 100, hi * 100) if kind == "percent" else (lo, hi)
                 raise ValueError(f"{label}: must be between {shown[0]:g} and {shown[1]:g}")
             current[name] = int(v) if kind == "int" else v
-        current["notify_flags"] = form.get("notify_flags") in ("on", "true", "1", True)
-        current["block_over_ceiling"] = form.get("block_over_ceiling") in ("on", "true", "1", True)
+        if form.get("_form") != "targets":  # checkboxes are on the rules form only
+            current["notify_flags"] = form.get("notify_flags") in ("on", "true", "1", True)
+            current["block_over_ceiling"] = form.get("block_over_ceiling") in (
+                "on",
+                "true",
+                "1",
+                True,
+            )
         new_type = form.get("margin_type", current.get("margin_type", "reg_t"))
         if new_type not in MARGIN_TYPES:
             raise ValueError("Margin type: Reg T or portfolio margin")

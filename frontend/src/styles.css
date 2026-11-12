@@ -506,3 +506,50 @@ td .earn { margin-left: 0; }
 .pause-switch { margin-left: 6px; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--ok); cursor: pointer; white-space: nowrap; }
 .pause-switch.held { color: var(--warn); border-color: var(--warn); }
 .flag.dividend { color: var(--warn); border-color: var(--warn); }
+
+/* Settings: tabs, groups, hints and change markers */
+.settings-wrap { max-width: 880px; margin: 0 auto; }
+.settings-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
+.settings-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--dim);
+  padding: 8px 12px; font: inherit; font-size: 14px; cursor: pointer; margin-bottom: -1px; }
+.settings-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.settings-tabs .unsaved { color: var(--warn); font-size: 10px; vertical-align: 2px; }
+.settings-page.tabbed .tab-panel[hidden] { display: none; }
+.settings-page .group { border: 0; padding: 0; margin: 0 0 18px; min-width: 0; }
+.settings-page .group > legend, .settings-page .advanced > summary { display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text); position: relative; }
+.settings-page .reset-group { margin-left: auto; font-size: 12px; font-weight: 400; }
+.settings-page .reset-group:hover { color: var(--text); }
+.settings-page .advanced > summary { cursor: pointer; color: var(--dim); list-style: none; }
+.settings-page .advanced > summary::before { content: "▸"; font-size: 11px; }
+.settings-page .advanced[open] > summary::before { content: "▾"; }
+.settings-page .advanced-body { display: flex; flex-direction: column; }
+.settings-page .advanced-body > .reset-group { align-self: flex-end; margin: 2px 0 2px; }
+.settings-page .rule { position: relative; }
+.settings-page .rule-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.settings-page .check-row { justify-content: flex-start; }
+.settings-page .check-row label { display: inline-flex; align-items: center; gap: 8px; }
+.settings-page .changed { display: none; color: var(--accent); font-size: 9px; }
+.settings-page .is-changed .changed { display: inline; }
+.settings-page h2 { display: flex; align-items: center; gap: 6px; position: relative; }
+.settings-page .small { font-size: 13px; }
+.settings-page .save { margin-top: 4px; }
+.settings-page .warn-note { color: var(--warn); font-size: 13px; }
+/* A hint: hover on a computer, tap on a phone. The bubble spans the row below it. */
+.settings-page .tip { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 15px; height: 15px; border: 1px solid var(--dim); border-radius: 50%; color: var(--dim);
+  font: italic 600 10px Georgia, serif; text-transform: none; letter-spacing: 0; cursor: help; user-select: none; }
+.settings-page .tip:hover, .settings-page .tip:focus { color: var(--text); border-color: var(--text); outline: none; }
+.settings-page .tip:hover::after, .settings-page .tip:focus::after {
+  content: attr(data-tip); position: absolute; left: 0; right: 0; top: 100%; z-index: 30; margin-top: 2px;
+  padding: 8px 10px; border-radius: 6px; background: #2d333b; border: 1px solid var(--line); color: var(--text);
+  font: 400 13px/1.45 system-ui, sans-serif; font-style: normal; text-transform: none; letter-spacing: normal;
+  white-space: normal; box-shadow: 0 6px 18px #0008; }
+.settings-page.tabbed .tab-panel > section:only-child > h2 { display: none; }
+@media (max-width: 700px) {
+  .settings-tabs button { padding: 7px 9px; font-size: 13px; }
+  .settings-page .rule-label { flex: 1 1 auto; flex-wrap: wrap; }
+  .settings-page .rule-input input { width: 72px; }
+  .settings-page .rule-input select { width: 138px; }
+  .settings-page .rule-input .unit { width: 34px; }
+}
