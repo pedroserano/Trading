@@ -1,6 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { getJson, postJson } from "./api";
-import { legText, when } from "./ChainHistory";
+import { getJson } from "./api";
 import { AccountContext } from "./context";
 import { pct, signed } from "./format";
 
@@ -62,22 +61,6 @@ interface DashData {
   findings: Finding[];
   mechanics: { followed: Stats; not_followed: Stats };
 }
-interface ReviewItem {
-  id: string;
-  kind: "sheet_only" | "schwab_only";
-  decision: "accept" | "ignore" | null;
-  time: number;
-  legs: { symbol: string; quantity: number; price?: number }[];
-}
-interface History {
-  rows: number;
-  matched: number;
-  window_start: number | null;
-  problems: { row: string; reason: string; severity?: string; row_data: Record<string, unknown> }[];
-  review: ReviewItem[];
-  futures: number;
-}
-
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const GAIN = "#4493f8";
 const LOSS = "#e5534b";
@@ -88,14 +71,13 @@ function compact(v: number): string {
   return (v < 0 ? "−" : "") + s;
 }
 
-type Tab = "overview" | "worked" | "review";
+type Tab = "overview" | "worked";
 
 export default function Dashboard() {
   const account = useContext(AccountContext);
   const [tab, setTab] = useState<Tab>("overview");
   const [futures, setFutures] = useState(false);
   const [data, setData] = useState<DashData | null>(null);
-  const [history, setHistory] = useState<History | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -104,7 +86,6 @@ export default function Dashboard() {
     try {
       const q = account === "live" ? `account=live&futures=${futures}` : "account=sim";
       setData(await getJson<DashData>(`/api/dashboard?${q}`));
-      if (account === "live") setHistory(await getJson<History>("/api/history"));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -117,8 +98,6 @@ export default function Dashboard() {
     load();
   }, [load]);
 
-  const reviewOpen = history ? history.review.filter((r) => !r.decision).length + history.problems.length : 0;
-
   return (
     <div className="dashboard">
       <div className="toolbar">
@@ -129,11 +108,7 @@ export default function Dashboard() {
           <button aria-pressed={tab === "worked"} onClick={() => setTab("worked")}>
             What worked
           </button>
-          {account === "live" ? (
-            <button aria-pressed={tab === "review"} onClick={() => setTab("review")}>
-              Import review{reviewOpen ? ` (${reviewOpen})` : ""}
-            </button>
-          ) : null}
+
         </div>
         {account === "live" ? (
           <>
@@ -156,7 +131,6 @@ export default function Dashboard() {
         <div className={loading ? "refetching" : ""}>
           {tab === "overview" ? <Overview d={data} /> : null}
           {tab === "worked" ? <Worked d={data} /> : null}
-          {tab === "review" && history ? <Review h={history} onChanged={load} /> : null}
         </div>
       )}
     </div>
@@ -540,122 +514,4 @@ function Worked({ d }: { d: DashData }) {
   );
 }
 
-// Review -------------------------------------------------------------------------------
-
-function Review({ h, onChanged }: { h: History; onChanged: () => void }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const decide = async (id: string, decision: "accept" | "ignore" | null) => {
-    setBusy(id);
-    try {
-      await postJson("/api/history/review", { id, decision });
-      onChanged();
-    } finally {
-      setBusy(null);
-    }
-  };
-  const problems = h.problems.filter((p) => p.severity !== "warning");
-  const warnings = h.problems.filter((p) => p.severity === "warning");
-  return (
-    <>
-      <div className="tiles">
-        <Tile label="Spreadsheet rows imported" value={h.rows.toLocaleString("en-US")} />
-        <Tile label="Matched to Schwab" value={h.matched.toLocaleString("en-US")} sub={h.window_start ? `Schwab's record starts ${when(h.window_start)}` : "Schwab history not synced yet"} />
-        <Tile label="Futures rows" value={String(h.futures)} sub="kept for totals only" />
-      </div>
-
-      <h3>Differences with Schwab ({h.review.length})</h3>
-      <p className="dim-text">
-        Inside the period Schwab has records for, its fills are used. A spreadsheet entry with no matching Schwab fill is left out unless you accept it; it is often a trade from another account or a typo. A Schwab fill missing from the spreadsheet is listed for information only: Schwab's record is used either way.
-      </p>
-      {h.review.length ? (
-        <div className="table-wrap">
-          <table className="positions">
-            <thead>
-              <tr>
-                <th className="l">Date</th>
-                <th className="l">Where</th>
-                <th className="l">Legs</th>
-                <th className="l">Decision</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {h.review.map((r) => (
-                <tr key={r.id}>
-                  <td className="l">{when(r.time)}</td>
-                  <td className="l">{r.kind === "sheet_only" ? "In the spreadsheet, not at Schwab" : "At Schwab, not in the spreadsheet"}</td>
-                  <td className="l legs-cell">
-                    {r.legs.map((l, i) => (
-                      <div key={i}>
-                        {legText(l.symbol, l.quantity)}
-                        {l.price !== undefined ? ` @ ${l.price.toFixed(2)}` : ""}
-                      </div>
-                    ))}
-                  </td>
-                  <td className="l">{r.decision ? (r.decision === "accept" ? "Accepted" : "Ignored") : "–"}</td>
-                  <td>
-                    {r.kind === "sheet_only" && r.decision !== "accept" ? (
-                      <button type="button" className="small" disabled={busy === r.id} onClick={() => decide(r.id, "accept")}>
-                        Accept
-                      </button>
-                    ) : null}
-                    {r.decision !== "ignore" ? (
-                      <button type="button" className="small" disabled={busy === r.id} onClick={() => decide(r.id, "ignore")}>
-                        Ignore
-                      </button>
-                    ) : null}
-                    {r.decision ? (
-                      <button type="button" className="small" disabled={busy === r.id} onClick={() => decide(r.id, null)}>
-                        Undo
-                      </button>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="dim-text">None.</p>
-      )}
-
-      <h3>Rows that could not be imported ({problems.length})</h3>
-      <RowList items={problems} />
-      <h3>Rows imported with a caveat ({warnings.length})</h3>
-      <RowList items={warnings} />
-    </>
-  );
-}
-
-function RowList({ items }: { items: History["problems"] }) {
-  if (!items.length) return <p className="dim-text">None.</p>;
-  return (
-    <div className="table-wrap">
-      <table className="positions">
-        <thead>
-          <tr>
-            <th className="l">Underlying</th>
-            <th className="l">Strikes</th>
-            <th className="l">Strategy</th>
-            <th className="l">Opened</th>
-            <th className="l">Status</th>
-            <th className="l">Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((p) => (
-            <tr key={p.row + p.reason}>
-              <td className="l">{String(p.row_data.underlying ?? "")}</td>
-              <td className="l">{String(p.row_data.strikes ?? "–")}</td>
-              <td className="l">{String(p.row_data.strat ?? "–")}</td>
-              <td className="l">{String(p.row_data.open_date ?? "–")}</td>
-              <td className="l">{String(p.row_data.status ?? "–")}</td>
-              <td className="l">{p.reason}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 

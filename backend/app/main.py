@@ -36,7 +36,7 @@ from .automation import (
     merged_settings,
     parse_settings,
 )
-from .chain_service import REVIEW_KEY, SHEET_ACCOUNT, ChainService
+from .chain_service import SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .earnings import EarningsService
@@ -129,11 +129,6 @@ class LinkIn(BaseModel):
 
 class SplitIn(BaseModel):
     group: str = Field(max_length=64)
-
-
-class ReviewIn(BaseModel):
-    id: str = Field(max_length=200)
-    decision: Literal["accept", "ignore"] | None = None
 
 
 class AutoTradeIn(BaseModel):
@@ -459,6 +454,7 @@ def create_app(
 
     app = FastAPI(title="Trading", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.portfolio = portfolio
+    app.state.chain_service = chain_service
     app.state.selector = selector
     app.add_middleware(
         SessionMiddleware,
@@ -1482,31 +1478,6 @@ def create_app(
         chain_service,
         sim_trades=lambda: sim_chains(broker.state) if broker.state else [],
     )
-
-    @app.get("/api/history", dependencies=[Depends(require_login)])
-    async def api_history():
-        h = chain_service.history
-        return {
-            "rows": h["rows"],
-            "matched": h["matched"],
-            "window_start": h["window_start"],
-            "problems": h["problems"],
-            "review": h["review"],
-            "futures": len(h["futures"]),
-            "prices": prices_service.status,
-        }
-
-    @app.post("/api/history/review", dependencies=[Depends(require_login)])
-    async def api_history_review(body: ReviewIn):
-        decisions = await store.get_setting(REVIEW_KEY) or {}
-        if body.decision is None:
-            decisions.pop(body.id, None)
-        else:
-            decisions[body.id] = body.decision
-        await store.set_setting(REVIEW_KEY, decisions)
-        await chain_service.rebuild()
-        portfolio.refresh_soon()
-        return {"ok": True}
 
     @app.get("/api/dashboard", dependencies=[Depends(require_login)])
     async def api_dashboard(

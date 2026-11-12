@@ -202,6 +202,6 @@ certificate is trusted on that device (section 5).
 ## Trading history from the spreadsheet
 
 The "Options P/L" spreadsheet was imported once into the app's database (the `sheet_rows`
-table, in the Postgres data folder). Those rows stay there and feed the Dashboard, Activity
-and Import review; trades since then come from Schwab and the app itself, so Settings no
+table, in the Postgres data folder). Those rows stay there and feed the Dashboard and
+Activity; trades since then come from Schwab and the app itself, so Settings no
 longer offers an upload. Back up the Postgres folder to keep them.

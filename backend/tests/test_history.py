@@ -420,8 +420,12 @@ def stored(client, data=None):
     imported earlier stay in the database and the dashboard reads them on every rebuild."""
     rows, _ = sheet_import.read_workbook(data or workbook(), "Joint")
     asyncio.run(client.store.upsert_sheet_rows(rows))
-    # Any review decision rebuilds the chains from what is stored.
-    client.post("/api/history/review", json={"id": "x", "decision": None})
+    rebuild(client)
+
+
+def rebuild(client):
+    """The trade chains are rebuilt from what is stored, as the app does on its schedule."""
+    client.portal.call(client.app.state.chain_service.rebuild)
 
 
 def test_settings_no_longer_offers_the_import(client):
@@ -431,11 +435,11 @@ def test_settings_no_longer_offers_the_import(client):
     assert r.status_code in (404, 405)
 
 
-def test_stored_history_dashboard_review_and_export_endpoints(client):
+def test_stored_history_feeds_activity_dashboard_and_export(client):
     stored(client)
-    h = client.get("/api/history").json()
-    assert h["rows"] == 8 and len(h["problems"]) == 1
+    assert client.get("/api/history").status_code == 404  # the review list is gone
     act = client.get("/api/activity").json()
+    assert act["sheet"]["rows"] == 8
     counts = act["trade_counts"]
     assert counts["sheet"] >= 4 and counts["all"] == counts["sheet"] + counts.get("schwab", 0)
     only = client.get("/api/activity?source=sheet&limit=2").json()
@@ -444,9 +448,6 @@ def test_stored_history_dashboard_review_and_export_endpoints(client):
     dash = client.get("/api/dashboard?futures=true").json()
     assert dash["count"] >= 4 and dash["overview"]["total"] > 0
     assert client.get("/api/dashboard?account=sim").json()["count"] == 0
-    assert client.post("/api/history/review", json={"id": "x", "decision": "ignore"}).json() == {
-        "ok": True
-    }
     exp = client.get("/api/export/sheet?start=2020-01-01&end=2030-01-01")
     assert exp.status_code == 200 and exp.content[:2] == b"PK"
 
@@ -460,7 +461,7 @@ def test_a_failing_sheet_merge_keeps_schwab_trades_and_says_why(client, monkeypa
         raise ValueError("bad row")
 
     monkeypatch.setattr(si, "convert", broken)
-    client.post("/api/history/review", json={"id": "x", "decision": None})
+    rebuild(client)
     act = client.get("/api/activity").json()
     assert "bad row" in act["sheet"]["error"] and act["sheet"]["rows"] == 8
     assert act["trade_counts"].get("sheet", 0) == 0
