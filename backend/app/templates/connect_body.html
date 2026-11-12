@@ -305,34 +305,6 @@
   </form>
 </section>
 
-<section id="dividends">
-  <h2>Ex-dividend dates</h2>
-  <p class="dim">From Schwab's quotes, for the symbols the app watches or holds. A short call in the
-     money with less time value left than the dividend is likely to be assigned on the last
-     session before the ex-date; Positions flags it up to 10 days ahead, and the
-     Ex-dividend automanage rule acts on it. Cash-settled indexes (SPX, XSP, NDX, RUT) carry no
-     such risk. "about" marks a date projected from the payment frequency because Schwab gave
-     only a past one.</p>
-  {% if dividend_rows %}
-  <div class="table-wrap"><table class="positions compact">
-    <thead><tr><th class="l">Symbol</th><th class="l">Next ex-date</th><th>Per payment</th>
-      <th class="l">Schwab's fields</th></tr></thead>
-    <tbody>
-    {% for r in dividend_rows %}
-      <tr>
-        <td class="l">{{ r.symbol }}</td>
-        <td class="l">{% if r.info %}{{ "about " if r.info.estimated else "" }}{{ r.info.ex_date }}{% else %}<span class="dim">none</span>{% endif %}</td>
-        <td>{% if r.info %}{{ '%.4g'|format(r.info.amount) }}{% else %}–{% endif %}</td>
-        <td class="l dim mono" style="font-size:12px;white-space:normal;overflow-wrap:anywhere">{% for k, v in r.raw.items() %}{% if v is not none %}{{ k }}={{ v }} {% endif %}{% endfor %}{% if not r.raw.values()|select|list %}no dividend fields{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
-  {% else %}
-  <p class="dim">No quotes yet.</p>
-  {% endif %}
-</section>
-
 <section id="live">
   <h2>Live trading</h2>
   {% if live.demo %}

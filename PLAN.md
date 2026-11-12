@@ -538,7 +538,7 @@ Status: phase 0 complete (running on TrueNAS, connected to Schwab). Phase 1 comp
 Still open:
 
 1. The phase 3 two-week simulated run, with order JSON compared against thinkorswim (in progress).
-2. Check the ex-dividend fields against real Schwab quotes (Settings, Ex-dividend dates shows what Schwab sends and what the app reads).
+2. Check the ex-dividend flag against real Schwab quotes the first time a short call nears an ex-date.
 
 Settled since: the market-hours check against thinkorswim is done; the Schwab app's order
 throttle is above zero; earnings dates come from Finnhub (FINNHUB_API_KEY) plus dates
