@@ -1,22 +1,64 @@
 # Trading
 
-A self-hosted web app for trading options at Schwab with tastylive-style mechanics, built to
-run on TrueNAS. See [PLAN.md](PLAN.md) for the design and roadmap.
+A self-hosted web app for trading options at Schwab with tastytrade-style mechanics: sell
+premium in high IV around 45 DTE, manage winners at a profit target and everything at 21 DTE,
+and keep buying power, delta and theta inside set bounds. It runs as a Docker Compose stack
+on TrueNAS. [PLAN.md](PLAN.md) has the design, the phases and what is still open.
 
-**Current state: phase 4, steps 1 and 1b.** Live positions with trade chains and roll
-history, a watchlist, a trade screen, a simulated account with order tickets, the imported
-trading-history spreadsheet reconciled with Schwab, and a dashboard of what worked. Orders are
-never sent to Schwab.
+## What it does
 
-- Deploy: [docs/DEPLOY-TRUENAS.md](docs/DEPLOY-TRUENAS.md)
-- Backend: `backend/` (Python, FastAPI, schwab-py)
-- Stack definition: `deploy/`
+- **Positions:** live Schwab positions grouped into trade chains, with credit including rolls,
+  rule flags (profit target, 21 DTE, tested, loss, earnings) and a History panel per trade.
+  A header shows net liq, buying power against the VIX ceiling, beta-weighted delta and theta
+  against their portfolio targets, and the data and sign-in status.
+- **Portfolio:** buying power by underlying and sector, delta by position, a theta ladder and
+  a calendar of what reaches 21 DTE.
+- **Watchlist and Trade:** IV rank, expected move, price extremes and earnings dates; a chain
+  with quick builders (strangle, straddle, verticals, iron condor, jade lizard, covered call,
+  ratios), payoff chart, and the portfolio after the trade.
+- **Orders:** tickets for opening, closing and rolling, checked by server-side guards and
+  Schwab's preview, on a simulated account or the Schwab account.
+- **Automation:** automanage per trade (profit targets, 21 DTE rolls, tested-side repairs,
+  earnings exits) and a scanner that finds new trades, each at Off, Notify, Propose or Auto.
+- **Activity and Dashboard:** working orders, the journal, an order check against
+  thinkorswim, and results from the imported trading history plus everything since.
+
+## Safety switches
+
+Orders go to Schwab only when `LIVE_TRADING=true` is set in `.env` and the Live trading
+switch in Settings is on. Live orders are also limited to an allowlist of underlyings (or any
+underlying, if ticked), a contract cap per leg and a buying-power cap per trade, and each one
+needs a second confirm.
+
+Automation on the Schwab account only proposes, unless `LIVE_AUTO=true` is also set and
+Allow Auto is ticked in Settings. Automation also stops for the day at a daily loss limit,
+holds while prices are stale or the Schwab sign-in is about to lapse, and can be paused from
+the header.
+
+## Layout
+
+- `backend/`: Python 3, FastAPI and schwab-py; the server-rendered Settings page is in
+  `backend/app/templates/`.
+- `frontend/`: React and TypeScript, built with Vite and served by the backend.
+- `deploy/`: the Compose stack (app, PostgreSQL, Caddy) and an example `.env`.
+- `docs/DEPLOY-TRUENAS.md`: installing on TrueNAS, every setting in `.env`, and the Schwab
+  sign-in.
 
 ## Development
 
 ```sh
+# Backend: tests and lint, as CI runs them
 cd backend
 uv sync
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
+
+# Frontend: type check and build
+cd frontend
+npm ci
+npm run build
 ```
+
+For a local preview without Schwab, set `DEMO_MODE=true`: the app then shows a simulated
+account with demo prices. During frontend work, run the backend on port 8000 and `npm run
+dev`; Vite proxies the API calls.
