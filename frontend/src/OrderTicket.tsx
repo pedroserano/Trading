@@ -44,6 +44,19 @@ export function closeSpec(st: StrategyView, underlying: string, account: "sim" |
   };
 }
 
+/** Close the shares of a strategy (Schwab account only): an order of their own. */
+export function closeStockSpec(st: StrategyView, underlying: string, account: "sim" | "live"): TicketSpec {
+  const shares = st.legs.filter((l) => l.kind === "EQUITY");
+  return {
+    title: `Close ${underlying} shares`,
+    account,
+    intent: "close",
+    underlying,
+    tradeId: st.trade_id,
+    legs: shares.map((l) => ({ symbol: l.symbol, quantity: -l.quantity, effect: "close" as const })),
+  };
+}
+
 /** Roll the option legs of a strategy, or of one side of it (closing and opening legs count toward the limit). */
 export function rollSpec(st: StrategyView, underlying: string, account: "sim" | "live", side: Side = null): TicketSpec {
   return {
@@ -57,6 +70,7 @@ export function rollSpec(st: StrategyView, underlying: string, account: "sim" | 
 /** Which close and roll actions fit within the four-leg limit for a strategy. */
 export function actionsFor(st: StrategyView): { close: Side[]; roll: Side[] } {
   const all = sideLegs(st, null).length;
+  if (all === 0) return { close: [], roll: [] }; // shares only
   const puts = sideLegs(st, "P").length;
   const calls = sideLegs(st, "C").length;
   const close: Side[] = all <= MAX_LEGS ? [null] : ([puts && puts <= MAX_LEGS ? "P" : null, calls && calls <= MAX_LEGS ? "C" : null].filter(Boolean) as Side[]);
@@ -287,7 +301,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     <td className={`l instr ${l.instruction.startsWith("SELL") ? "neg" : "pos"}`}>{l.instruction.replace(/_/g, " ").toLowerCase()}</td>
                     <td>{l.quantity}</td>
                     <td className="l">
-                      {shortDate(l.expiration)} {strike(l.strike)} {l.put_call === "P" ? "Put" : "Call"}
+                      {l.put_call ? `${shortDate(l.expiration)} ${strike(l.strike)} ${l.put_call === "P" ? "Put" : "Call"}` : `${l.symbol} shares`}
                     </td>
                     <td className="sub">
                       {num(l.bid, 2)} × {num(l.ask, 2)}
@@ -366,7 +380,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
             {preview ? (
               <div className="ticket-sum">
                 <span>
-                  <span className="lbl">Total</span> {money(Math.abs((limit ?? 0) * 100 * preview.units))} {credit ? "credit" : "debit"}
+                  <span className="lbl">Total</span> {money(Math.abs((limit ?? 0) * (preview.multiplier ?? 100) * preview.units))} {credit ? "credit" : "debit"}
                 </span>
                 <span>
                   <span className="lbl">Commission</span> {money(preview.commission, 2)}

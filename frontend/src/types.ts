@@ -242,6 +242,8 @@ export interface Preview {
   underlying: string;
   spot: number | null;
   units: number;
+  /** Dollars per point of the price, per unit: 100 for options, 1 for shares. */
+  multiplier?: number;
   prices: { natural: number | null; mid: number | null; far: number | null };
   limit_net: number | null;
   duration: "DAY" | "GTC";

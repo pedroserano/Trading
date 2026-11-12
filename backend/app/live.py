@@ -56,6 +56,8 @@ SIGNS = {
     "SELL_TO_CLOSE": (-1, "close"),
     "BUY": (1, None),
     "SELL": (-1, None),
+    "BUY_TO_COVER": (1, "close"),
+    "SELL_SHORT": (-1, "open"),
 }
 
 
@@ -255,7 +257,7 @@ class LiveBroker:
                 f"{t.underlying} is not on the live list ({', '.join(c['symbols'])}); "
                 "trade it on the simulated account or add it in Settings"
             )
-        biggest = max(abs(x.quantity) for x in t.legs)
+        biggest = max((abs(x.quantity) for x in t.legs if not x.equity), default=0)
         if biggest > c["max_contracts"]:
             out.append(f"{biggest} contracts on one leg; live trading allows {c['max_contracts']}")
         if (

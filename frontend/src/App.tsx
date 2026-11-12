@@ -8,7 +8,7 @@ import ChainHistory from "./ChainHistory";
 import Dashboard from "./Dashboard";
 import Portfolio from "./Portfolio";
 import Settings from "./Settings";
-import OrderTicket, { actionsFor, closeSpec, rollSpec, type TicketSpec } from "./OrderTicket";
+import OrderTicket, { actionsFor, closeSpec, closeStockSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { EarningsInfo, Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
@@ -715,7 +715,7 @@ function StrategyRows(props: {
             </tr>
           ))
         : null}
-      {expanded && st.legs.some((l) => l.kind === "OPTION") ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={compact ? 5 : 14} /> : null}
+      {expanded && st.legs.length ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={compact ? 5 : 14} /> : null}
     </>
   );
 }
@@ -726,9 +726,16 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
   const [history, setHistory] = useState(false);
   if (!under) return null;
   const acts = actionsFor(st);
+  const options = st.legs.some((l) => l.kind === "OPTION");
+  const shares = st.legs.some((l) => l.kind === "EQUITY");
   return (
     <tr className="leg actions">
       <td className="l" colSpan={cols}>
+        {shares && account === "live" ? (
+          <button type="button" className="small" onClick={() => open(closeStockSpec(st, under, account))}>
+            Close shares
+          </button>
+        ) : null}
         {acts.close.map((side) => (
           <button key={`c${side}`} type="button" className="small" onClick={() => open(closeSpec(st, under, account, side))}>
             Close{side === "P" ? " puts" : side === "C" ? " calls" : ""}
@@ -739,7 +746,7 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
             Roll{side === "P" ? " puts" : side === "C" ? " calls" : ""}
           </button>
         ))}
-        {acts.roll.length === 0 ? (
+        {options && acts.roll.length === 0 ? (
           <span className="sub" title="Schwab accepts at most four legs in one order">
             No roll: it would need more than four legs.{" "}
           </span>

@@ -52,6 +52,7 @@ from .jobs import DailyJobs
 from .live import LiveBroker
 from .market import MarketService
 from .notify import PushoverNotifier, ReminderService
+from .options import parse_option_symbol
 from .order_check import OrderCheckService
 from .orders import (
     Ticket,
@@ -1002,6 +1003,8 @@ def create_app(
             validate_shape(t)
         except TicketError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        if t.stock and body.account == "sim":
+            raise HTTPException(status_code=400, detail="The simulated account holds no stock")
         if (
             body.intent in ("close", "roll", "adjust")
             and body.account == "sim"
@@ -1123,6 +1126,22 @@ def create_app(
                     f"Replaces working order #{o['id']} ({o['intent']} at {price}, "
                     f"{o['duration']}); it will be cancelled when this one is placed"
                 )
+        if t.stock and t.legs[0].quantity < 0:
+            left = held.get(t.underlying, 0) + t.legs[0].quantity
+            short_calls = -sum(
+                q
+                for sym, q in held.items()
+                if q < 0
+                and (o := parse_option_symbol(sym))
+                and o.underlying == t.underlying
+                and o.put_call == "C"
+            )
+            if short_calls and left < short_calls * 100:
+                warnings.append(
+                    f"Selling these shares leaves {short_calls} short call"
+                    f"{'s' if short_calls > 1 else ''} without enough shares to cover; "
+                    "close or roll the calls first"
+                )
         body_json = None
         try:
             body_json = schwab_order(t)
@@ -1140,7 +1159,7 @@ def create_app(
                     )
                 except Exception as e:
                     preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
-        contracts = sum(abs(x.quantity) for x in t.legs)
+        contracts = sum(abs(x.quantity) for x in t.legs if not x.equity)
         live_blocks = []
         if body.account == "live":
             live_blocks = await live_broker.gate(t, bp, nl)
@@ -1163,6 +1182,7 @@ def create_app(
             "underlying": t.underlying,
             "spot": spot,
             "units": t.units,
+            "multiplier": t.multiplier,
             "prices": p,
             "limit_net": t.limit_net,
             "duration": t.duration,

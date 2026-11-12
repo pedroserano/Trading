@@ -7,12 +7,16 @@ positive is a credit received, negative a debit paid. A "unit" is one of the spr
 """
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from functools import reduce
 
 from .options import Leg, parse_option_symbol
 from .strategies import group
+
+# A stock or ETF ticker, as Schwab writes it (BRK/B, BF.B).
+STOCK = re.compile(r"^[A-Z][A-Z0-9./]{0,9}$")
 
 
 # Our strategy names -> Schwab's complexOrderStrategyType.
@@ -33,16 +37,27 @@ class TicketLeg:
     bid: float | None = None
     ask: float | None = None
     mark: float | None = None
+    equity: bool = False  # shares: closing orders only, alone in their order
 
     @classmethod
     def parse(cls, symbol: str, quantity: int, effect: str) -> "TicketLeg":
-        occ = parse_option_symbol(symbol)
-        if occ is None:
-            raise TicketError(f"Not an option symbol: {symbol}")
         if effect not in ("open", "close"):
             raise TicketError("Leg effect must be open or close")
         if not quantity or quantity != int(quantity):
             raise TicketError("Leg quantities must be whole, non-zero numbers")
+        occ = parse_option_symbol(symbol)
+        if occ is None:
+            if not STOCK.match(symbol or ""):
+                raise TicketError(f"Not an option or stock symbol: {symbol}")
+            if effect != "close":
+                raise TicketError("Stock can only be closed here, not opened")
+            return cls(
+                symbol=symbol,
+                quantity=int(quantity),
+                effect="close",
+                underlying=symbol,
+                equity=True,
+            )
         return cls(
             symbol=symbol,
             quantity=int(quantity),
@@ -55,6 +70,8 @@ class TicketLeg:
 
     @property
     def instruction(self) -> str:
+        if self.equity:
+            return "BUY_TO_COVER" if self.quantity > 0 else "SELL"
         if self.effect == "open":
             return "BUY_TO_OPEN" if self.quantity > 0 else "SELL_TO_OPEN"
         return "BUY_TO_CLOSE" if self.quantity > 0 else "SELL_TO_CLOSE"
@@ -83,6 +100,15 @@ class Ticket:
         """How many spreads: the order quantity."""
         return self.unit
 
+    @property
+    def stock(self) -> bool:
+        return any(x.equity for x in self.legs)
+
+    @property
+    def multiplier(self) -> int:
+        """Dollars per point of the net price, per unit: 100 for options, 1 for shares."""
+        return 1 if self.stock else 100
+
     def ratios(self) -> list[int]:
         u = self.unit
         return [leg.quantity // u for leg in self.legs]
@@ -98,6 +124,8 @@ def validate_shape(t: Ticket) -> None:
             f"An order can have 1 to {MAX_LEGS} legs (Schwab's limit); this one has "
             f"{len(t.legs)}. Roll or close the put and call sides as separate orders."
         )
+    if t.stock and (len(t.legs) != 1 or t.intent != "close"):
+        raise TicketError("Shares are closed in an order of their own")
     if len({leg.symbol for leg in t.legs}) != len(t.legs):
         raise TicketError("The same contract appears twice")
     if len({leg.underlying for leg in t.legs}) != 1:
@@ -136,6 +164,8 @@ def prices(t: Ticket) -> dict:
 
 
 def strategy_name(t: Ticket) -> str:
+    if t.stock:
+        return "Stock"
     if t.intent == "roll":
         return "Roll"
     # A closing order is named for the position it closes: buying back a strangle is a
@@ -312,7 +342,10 @@ def schwab_order(t: Ticket) -> dict:
             {
                 "instruction": leg.instruction,
                 "quantity": abs(leg.quantity),
-                "instrument": {"symbol": leg.symbol, "assetType": "OPTION"},
+                "instrument": {
+                    "symbol": leg.symbol,
+                    "assetType": "EQUITY" if leg.equity else "OPTION",
+                },
             }
             for leg in t.legs
         ],

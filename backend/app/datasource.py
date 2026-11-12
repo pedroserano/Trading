@@ -320,6 +320,8 @@ class DemoDataSource:
                     "fundamental": _DEMO_DIVIDENDS.get(sym, {}),
                     "quote": {
                         "mark": round(p, 2),
+                        "bidPrice": round(p - 0.01, 2),
+                        "askPrice": round(p + 0.01, 2),
                         "lastPrice": round(p, 2),
                         "closePrice": round(self.prev_close[sym], 2),
                         "netPercentChange": round((p / self.prev_close[sym] - 1) * 100, 2),

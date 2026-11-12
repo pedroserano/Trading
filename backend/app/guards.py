@@ -55,7 +55,7 @@ def check(
     warnings: list[str] = []
 
     for leg in t.legs:
-        if abs(leg.quantity) > limits.max_contracts:
+        if not leg.equity and abs(leg.quantity) > limits.max_contracts:
             errors.append(
                 f"{abs(leg.quantity)} contracts is above the "
                 f"{limits.max_contracts}-contract limit per leg"

@@ -11,7 +11,15 @@ from app.datasource import DemoDataSource
 from app.main import create_app, summarize_preview
 from app.notify import ET
 from app.options import option_symbol
-from app.orders import Ticket, TicketError, TicketLeg, apply_quotes, prices, schwab_order
+from app.orders import (
+    Ticket,
+    TicketError,
+    TicketLeg,
+    apply_quotes,
+    prices,
+    schwab_order,
+    validate_shape,
+)
 from app.sim import SimBroker, stats
 from app.store import MemoryStore
 
@@ -715,3 +723,48 @@ def test_automanage_on_fill_from_the_ticket(client):
     tid = act["trades"][0]["id"]
     assert auto.state["trades"][str(tid)] == {"enabled": True}
     assert str(order["id"]) not in auto.state["orders"]
+
+
+def test_stock_close_ticket():
+    t = Ticket(legs=[TicketLeg.parse("GLD", -400, "close")], intent="close", limit_net=354.5)
+    validate_shape(t)
+    assert t.stock and t.multiplier == 1 and t.units == 400
+    body = schwab_order(t)
+    assert body["orderType"] == "LIMIT" and body["price"] == "354.50"
+    (leg,) = body["orderLegCollection"]
+    assert leg == {
+        "instruction": "SELL",
+        "quantity": 400,
+        "instrument": {"symbol": "GLD", "assetType": "EQUITY"},
+    }
+    assert TicketLeg.parse("GLD", 100, "close").instruction == "BUY_TO_COVER"
+    with pytest.raises(TicketError):
+        TicketLeg.parse("GLD", 100, "open")  # never opened here
+    with pytest.raises(TicketError):
+        validate_shape(
+            Ticket(
+                legs=[
+                    TicketLeg.parse("GLD", -100, "close"),
+                    TicketLeg.parse(sym("C", 610), 1, "close"),
+                ],
+                intent="close",
+            )
+        )
+    # Shares are not held to the contract limit.
+    apply_quotes(t, {"GLD": {"quote": {"bidPrice": 354.4, "askPrice": 354.6, "mark": 354.5}}})
+    errors, _ = guards.check(
+        t, prices(t), date(2026, 11, 12), limits=guards.Limits(), held={"GLD": 400}
+    )
+    assert errors == []
+
+
+def test_sim_account_refuses_stock(client):
+    r = client.post(
+        "/api/orders/preview",
+        json={
+            "account": "sim",
+            "intent": "close",
+            "legs": [{"symbol": "SPY", "quantity": -100, "effect": "close"}],
+        },
+    )
+    assert r.status_code == 400 and "no stock" in r.json()["detail"]
