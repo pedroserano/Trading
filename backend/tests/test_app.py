@@ -470,3 +470,18 @@ def test_settings_tabs_show_every_setting_with_its_default(settings):
         assert r.headers["location"].endswith("#targets")
         saved = store.settings["rules"]
         assert saved["notify_flags"] and saved["block_over_ceiling"] and saved["theta_max"] == 0.004
+
+
+def test_home_screen_icon_at_the_standard_addresses_without_sign_in(settings, tmp_path):
+    static = tmp_path / "static"
+    (static / "assets" / "icons").mkdir(parents=True)
+    (static / "index.html").write_text("<div id=root></div>")
+    for name in ("apple-touch-icon.png", "icon-32.png"):
+        (static / "assets" / "icons" / name).write_bytes(b"\x89PNG fake")
+    with make_client(settings, FakeSchwab(), static_dir=static) as c:
+        for path in ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/favicon.ico"):
+            r = c.get(path)
+            assert r.status_code == 200 and r.headers["content-type"] == "image/png", path
+        assert c.get("/assets/icons/apple-touch-icon.png").status_code == 200
+        login = c.get("/login").text
+        assert "viewport-fit=cover" in login and 'apple-touch-icon" href=' in login

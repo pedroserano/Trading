@@ -127,7 +127,11 @@ Save. All three containers should reach Running within a minute.
 1. Open `https://<NAS_HOST>:8443`. The browser warns about the certificate, because it comes
    from Caddy's own local authority. Proceed past the warning for now. To remove it
    permanently, install `data/caddy/caddy/pki/authorities/local/root.crt` as a trusted root
-   on each device.
+   on each device (in Option A: `caddy/caddy/pki/authorities/local/root.crt` in the app's
+   dataset). On an iPhone: send the file to the phone (AirDrop or email), open it, install
+   the profile under Settings > Profile Downloaded, then turn it on under Settings > General >
+   About > Certificate Trust Settings. Until that last switch is on, an icon added to the
+   Home Screen is a plain letter, because the phone cannot fetch the app's icon.
 2. Sign in with `APP_PASSWORD`.
 3. Under "Connect to Schwab", follow the four steps on the page. On Schwab's consent screen,
    tick only the account the app should trade.

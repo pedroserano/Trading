@@ -516,6 +516,23 @@ def create_app(
     if (static_dir / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
 
+    # Where phones and browsers look for an icon without reading the page (an iPhone's
+    # home-screen icon among them); no sign-in, like the rest of /assets.
+    icons = static_dir / "assets" / "icons"
+
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    async def touch_icon():
+        if not (icons / "apple-touch-icon.png").exists():
+            raise HTTPException(status_code=404)
+        return FileResponse(icons / "apple-touch-icon.png", media_type="image/png")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        if not (icons / "icon-32.png").exists():
+            raise HTTPException(status_code=404)
+        return FileResponse(icons / "icon-32.png", media_type="image/png")
+
     # Connection and settings page ------------------------------------------------------
 
     def settings_url(section: str = "") -> str:
