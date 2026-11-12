@@ -1,9 +1,11 @@
+import asyncio
 from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import guards
+from app.automation import merged_settings
 from app.config import Settings
 from app.datasource import DemoDataSource
 from app.main import create_app, summarize_preview
@@ -691,3 +693,25 @@ def test_market_strip_in_demo(client):
     assert labels[:4] == ["S&P", "Nasdaq", "Russell", "Dow"] and "Bitcoin" in labels
     es = r["items"][0]
     assert es["contract"] == "/ESZ26" and es["price"] > 1000 and es["change_pct"] is not None
+
+
+def test_automanage_on_fill_from_the_ticket(client):
+    put = first_put(client)
+    body = {
+        "account": "sim",
+        "intent": "open",
+        "legs": [{"symbol": put, "quantity": -1, "effect": "open"}],
+    }
+    pv = client.post("/api/orders/preview", json=body).json()
+    order = client.post(
+        "/api/orders", json={**body, "limit_net": pv["limit_net"], "automanage": True}
+    ).json()
+    assert order["status"] == "FILLED"
+    act = client.get("/api/activity?account=sim").json()
+    assert [o["status"] for o in act["orders"]] == ["FILLED"]  # no GTC target order
+    auto = client.app.state.automation
+    assert auto.state["orders"][str(order["id"])]["rule"] == "entry"
+    asyncio.run(auto._step_orders(merged_settings(None), []))
+    tid = act["trades"][0]["id"]
+    assert auto.state["trades"][str(tid)] == {"enabled": True}
+    assert str(order["id"]) not in auto.state["orders"]

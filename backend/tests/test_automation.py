@@ -4,7 +4,7 @@ from datetime import date, datetime
 import pytest
 
 from app import automation as auto
-from app.automation import Action, AutomationService, decide, merged_settings, sides
+from app.automation import Action, AutomationService, decide, merged_settings, parse_settings, sides
 from app.main import OrderIn
 from app.notify import ET
 from app.options import option_symbol
@@ -567,3 +567,11 @@ def test_guts_settings_from_the_form():
     assert s["guts_to_wings"] is False and s["guts_extra_debit"] == 0.5
     s = a.parse_settings({"_form": "automation", "guts_to_wings": "on"}, None)
     assert s["guts_to_wings"] is True and s["wings_delta"] == 0.16
+
+
+def test_ticket_automanage_default_is_a_checkbox():
+    cur = merged_settings(None)
+    assert cur["ticket_automanage"] is False
+    on = parse_settings({"_form": "automation", "ticket_automanage": "on"}, cur)
+    assert on["ticket_automanage"] is True
+    assert parse_settings({"_form": "automation"}, on)["ticket_automanage"] is False

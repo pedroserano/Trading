@@ -79,6 +79,9 @@ DEFAULT_SETTINGS = {
     "max_order_spread": 0.25,
     "window_start": "09:45",
     "window_end": "15:30",
+    # The order ticket: tick "Automanage on fill" for new trades by default, instead of
+    # "On fill, GTC close at 50%" (at Auto the profit rule keeps that order itself).
+    "ticket_automanage": False,
 }
 # Adjustable on the Settings page: (key, label, low, high, kind, unit).
 SETTING_FIELDS = [
@@ -174,6 +177,7 @@ def parse_settings(form: dict, current: dict) -> dict:
         out["roll_single_itm"] = form.get("roll_single_itm") in ("on", "true", "1")
         out["guts_to_wings"] = form.get("guts_to_wings") in ("on", "true", "1")
         out["guts_near"] = form.get("guts_near") in ("on", "true", "1")
+        out["ticket_automanage"] = form.get("ticket_automanage") in ("on", "true", "1")
     if form.get("untested_target") in ("match", "fixed"):
         out["untested_target"] = form["untested_target"]
     for key, label, lo, hi, kind, _unit in SETTING_FIELDS:
@@ -517,6 +521,19 @@ class AutomationService:
             st["trades"][str(trade_id)] = {"enabled": enabled}
             await self._save()
 
+    async def watch_entry(self, order: dict) -> None:
+        """An opening order placed from the ticket with "Automanage on fill" ticked: the new
+        trade is switched to automanage once it fills. The order itself is left as placed."""
+        async with self.lock:
+            await self.load()
+            self.state["orders"][str(order["id"])] = {
+                "trade_id": order.get("trade_id"),
+                "rule": "entry",
+                "automanage_on_fill": True,
+            }
+            self._log(None, "entry", f"Order #{order['id']}: automanage switches on when it fills")
+            await self._save()
+
     async def set_paused(self, paused: bool, why: str = "by you") -> None:
         async with self.lock:
             st = await self.load()
@@ -779,7 +796,7 @@ class AutomationService:
 
     def _busy(self, tid) -> bool:
         return any(
-            self.state["orders"].get(str(o["id"]), {}).get("rule") not in (None, "profit")
+            self.state["orders"].get(str(o["id"]), {}).get("rule") not in (None, "profit", "entry")
             for o in self._working(tid)
         )
 
@@ -1014,8 +1031,8 @@ class AutomationService:
                         order_id=order["id"],
                     )
                 continue
-            if info["rule"] == "profit":
-                continue
+            if info["rule"] in ("profit", "entry"):
+                continue  # resting orders: never repriced
             if time.time() - info["stepped_at"] < every:
                 continue
             mid, natural = info["mid"], info["natural"]

@@ -139,6 +139,7 @@
         {{ select("a-" ~ rule, "level_" ~ rule, text, levels, auto.levels[rule], auto_defaults.levels[rule]) }}
       {% endfor %}
       {{ select("a-dda", "dte_defined_action", "Defined-risk trades at the DTE mark", [("close", "Close"), ("roll", "Roll")], auto.dte_defined_action, auto_defaults.dte_defined_action, "tastytrade closes defined-risk trades at 21 DTE rather than rolling them.") }}
+      {{ check("ticket_automanage", "Order ticket: automanage new trades instead of a 50% GTC order", auto.ticket_automanage, auto_defaults.ticket_automanage, "Sets which box starts ticked when you open a trade. Automanage on fill switches automanage on for the new trade; the Profit target rule then closes it (at Auto it keeps the GTC order resting itself). Either box can still be changed on the ticket.") }}
     {% endcall %}
     {% call group("Rolling", "How the 21 DTE rule rolls an undefined-risk trade: out to the monthly nearest the target, at the same strikes, for a credit.") %}
       {{ num("a", auto_map.roll_target_dte, auto.roll_target_dte, auto_defaults.roll_target_dte, auto_map.roll_target_dte[5]) }}

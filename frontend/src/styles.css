@@ -263,7 +263,7 @@ button.primary { background: #1f6feb; border: 1px solid #1f6feb; color: #fff; bo
 button.primary:disabled { opacity: .5; cursor: default; }
 
 /* Order ticket */
-.ticket-backdrop { position: fixed; inset: 0; background: #0009; z-index: 10;
+.ticket-backdrop { position: fixed; inset: 0; background: #0009; z-index: 30;
   padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); display: flex; align-items: flex-start;
   justify-content: center; padding: 6vh 12px 12px; overflow-y: auto; }
 .ticket { width: 100%; max-width: 620px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;

@@ -126,6 +126,8 @@ class OrderIn(BaseModel):
     limit_net: float | None = None
     duration: Literal["DAY", "GTC"] = "DAY"
     profit_target: float | None = Field(None, ge=0.05, le=0.95)
+    # Opening orders: switch automanage on for the new trade once it fills.
+    automanage: bool = False
 
 
 class LinkIn(BaseModel):
@@ -1226,7 +1228,10 @@ def create_app(
 
     @app.post("/api/orders", dependencies=[Depends(require_login)])
     async def api_order_place(body: OrderIn):
-        return await place_order(body)
+        order = await place_order(body)
+        if body.automanage and body.intent == "open":
+            await automations[body.account].watch_entry(order)
+        return order
 
     async def auto_submit(raw: dict, place: bool) -> dict:
         """Automanage's way in: the same ticket, guards and checks as a manual order.
