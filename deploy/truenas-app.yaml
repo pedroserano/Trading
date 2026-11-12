@@ -12,6 +12,16 @@ networks:
   internal: {}
 
 configs:
+  # Tailscale serves the app at https://trading.<your-tailnet>.ts.net with a publicly
+  # trusted certificate. $${TS_CERT_DOMAIN} is filled in by the Tailscale container ($$
+  # keeps compose from reading it as one of its own variables).
+  tailscale-serve:
+    content: |
+      {
+        "TCP": {"443": {"HTTPS": true}},
+        "Web": {"$${TS_CERT_DOMAIN}:443": {"Handlers": {"/": {"Proxy": "http://backend:8000"}}}},
+        "AllowFunnel": {"$${TS_CERT_DOMAIN}:443": false}
+      }
   caddyfile:
     content: |
       {
@@ -38,6 +48,34 @@ services:
       internal: {}
     volumes:
       - /mnt/apps/trading/caddy:/data
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # Optional: the app on your tailnet with a real HTTPS certificate, so no device needs
+  # Caddy's root certificate (docs/DEPLOY-TRUENAS.md, Tailscale). Remove this service if
+  # you do not use Tailscale. On first start its log shows a login.tailscale.com link.
+  tailscale:
+    container_name: trading-tailscale
+    image: tailscale/tailscale:stable
+    hostname: trading
+    restart: unless-stopped
+    environment:
+      TS_HOSTNAME: trading
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    configs:
+      - source: tailscale-serve
+        target: /config/serve.json
+    networks:
+      - internal
+    volumes:
+      - /mnt/apps/trading/tailscale:/var/lib/tailscale
     depends_on:
       - backend
     deploy:
