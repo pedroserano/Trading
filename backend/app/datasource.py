@@ -159,6 +159,20 @@ def _friday_after(d: date) -> date:
     return d + timedelta(days=(4 - d.weekday()) % 7)
 
 
+# Dividend fields as Schwab's quotes carry them: SPY with its next ex-date, AAPL with only a
+# past one (so the next is projected), IWM with none.
+_DEMO_DIVIDENDS = {
+    "SPY": {
+        "nextDivExDate": "2026-12-18T00:00:00Z",
+        "divExDate": "2026-09-19T00:00:00Z",
+        "divPayAmount": 1.83,
+        "divAmount": 7.1,
+        "divFreq": 4,
+    },
+    "AAPL": {"divExDate": "2026-08-10T00:00:00Z", "divAmount": 1.04, "divFreq": 4},
+}
+
+
 class DemoDataSource:
     """A plausible account that moves. Prices random-walk; options priced by Black-Scholes."""
 
@@ -303,6 +317,7 @@ class DemoDataSource:
                     "assetMainType": "EQUITY",
                     # As Schwab marks funds; AAPL is a single stock.
                     "assetSubType": "ETF" if sym in ("SPY", "QQQ", "IWM") else None,
+                    "fundamental": _DEMO_DIVIDENDS.get(sym, {}),
                     "quote": {
                         "mark": round(p, 2),
                         "lastPrice": round(p, 2),

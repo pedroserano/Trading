@@ -23,7 +23,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, portfolio_view, targets
+from . import dividends, guards, portfolio_view, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
@@ -47,6 +47,7 @@ from .jobs import DailyJobs
 from .live import LiveBroker
 from .market import MarketService
 from .notify import PushoverNotifier, ReminderService
+from .options import parse_option_symbol
 from .order_check import OrderCheckService
 from .orders import (
     Ticket,
@@ -574,6 +575,7 @@ def create_app(
                 "scan_fields": scan_mod.FIELDS,
                 "earnings": earnings.status(),
                 "earnings_manual": await earnings.manual_text(),
+                "dividend_rows": dividend_rows(),
                 "auto_rules": RULES,
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
@@ -1243,6 +1245,25 @@ def create_app(
         ),
     }
     app.state.automation = automations["sim"]
+
+    def dividend_rows() -> list[dict]:
+        """What Schwab's quotes say about dividends for the symbols the app quotes, and what
+        the app reads from it: shown on Settings so the fields can be checked."""
+        today = portfolio.clock().date()
+        rows = []
+        for sym in sorted(portfolio.quotes):
+            entry = portfolio.quotes[sym]
+            if entry.get("assetMainType") not in ("EQUITY", "MUTUAL_FUND", None):
+                continue
+            if parse_option_symbol(sym) or sym.startswith(("$", "/")):
+                continue
+            f = entry.get("fundamental") or {}
+            raw = {
+                k: f.get(k)
+                for k in ("nextDivExDate", "divExDate", "divPayAmount", "divAmount", "divFreq")
+            }
+            rows.append({"symbol": sym, "raw": raw, "info": dividends.info(entry, today, sym)})
+        return rows
 
     async def apply_live_cap() -> None:
         automations["live"].max_level = live_broker.auto_cap(await live_broker.config())

@@ -505,3 +505,4 @@ td .earn { margin-left: 0; }
 
 .pause-switch { margin-left: 6px; font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--ok); cursor: pointer; white-space: nowrap; }
 .pause-switch.held { color: var(--warn); border-color: var(--warn); }
+.flag.dividend { color: var(--warn); border-color: var(--warn); }

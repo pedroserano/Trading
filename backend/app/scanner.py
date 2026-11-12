@@ -19,7 +19,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
-from . import targets
+from . import dividends, targets
 from .automation import LEVELS, Action, _hm
 from .extremes import compute as compute_extreme
 
@@ -485,6 +485,15 @@ class Scanner:
                     candidates[-1]["label"] = f"{label}, tilted {lean}: {why_lean}"
                 if push:
                     candidates[-1]["label"] += f". Warning: {push}"
+                div = dividends.info(quotes.get(sym), now.date(), sym)
+                if div and div["ex_date"] <= exp["date"]:
+                    # Out of the money at entry, so no early assignment yet; Positions flags
+                    # the short call if it goes in the money near the date.
+                    candidates[-1]["ex_dividend"] = div
+                    candidates[-1]["label"] += (
+                        f". Ex-dividend {'about ' if div['estimated'] else ''}{div['ex_date']} "
+                        f"({div['amount']:.2f}) falls inside the trade"
+                    )
             acted = []
             if act and level != "off":
                 # Trades that keep delta in its band first, then those leaning (back toward the

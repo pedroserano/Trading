@@ -130,6 +130,8 @@ const SHORT: Record<string, string> = {
   tested: "tested",
   loss: "loss",
   expiry: "expiry day",
+  earnings: "earnings",
+  dividend: "ex-dividend",
 };
 
 /** One line: what each level covers, from the defaults in Settings. */

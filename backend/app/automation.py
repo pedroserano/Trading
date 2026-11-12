@@ -30,6 +30,7 @@ RULES = {
     "loss": "Loss at a multiple of credit",
     "expiry": "Expiration day, short in the money",
     "earnings": "Earnings ahead (single stocks)",
+    "dividend": "Ex-dividend, short call likely assigned",
 }
 DEFAULT_SETTINGS = {
     "levels": {
@@ -39,6 +40,7 @@ DEFAULT_SETTINGS = {
         "loss": "notify",
         "expiry": "propose",
         "earnings": "notify",
+        "dividend": "notify",
     },
     "dte_defined_action": "close",  # or "roll"
     "roll_target_dte": 45,
@@ -282,6 +284,16 @@ def decide(
                 "earnings",
                 "close",
                 f"Earnings {earnings['date']} {earnings['label']}: close by {earnings['exit_by']}",
+            )
+        )
+    if levels.get("dividend", "off") != "off" and "dividend" in flags:
+        f = next(f for f in st["flags"] if f["kind"] == "dividend")
+        out.append(
+            Action(
+                "dividend",
+                "close",
+                "Short call likely assigned before the ex-dividend date: "
+                f"close by {f.get('act_by')}",
             )
         )
     if levels.get("loss", "off") != "off" and "loss" in flags:

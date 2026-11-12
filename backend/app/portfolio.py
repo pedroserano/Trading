@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import analytics, targets
+from . import analytics, dividends, targets
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
@@ -493,6 +493,7 @@ class PortfolioService:
                     if ivr["days"] < MIN_IVR_DAYS:
                         # A rank over a few days is noise; show only how much history exists.
                         ivr["rank"] = ivr["percentile"] = None
+            div = dividends.info(self.quotes.get(u), today, u)
             u_tot = {"pl": 0.0, "day_pl": 0.0, "delta": 0.0, "theta": 0.0}
             u_missing = {k: False for k in u_tot}
             out_strats = []
@@ -509,7 +510,11 @@ class PortfolioService:
                         u_missing[k] = True
                     else:
                         u_tot[k] += n[nk]
-                out_strats.append(_strategy_json(st, today))
+                sj = _strategy_json(st, today)
+                risky = dividends.at_risk(sj["legs"], price, div, today)
+                if risky:
+                    sj["flags"] = [*sj["flags"], dividends.flag(risky, div)]
+                out_strats.append(sj)
             delta_bw = None
             if not u_missing["delta"] and beta is not None and price and spy:
                 delta_bw = u_tot["delta"] * beta * price / spy
@@ -532,6 +537,7 @@ class PortfolioService:
                     "beta": None if beta is None else round(beta, 2),
                     "ivr": ivr,
                     "earnings": self.earnings(u) if self.earnings else None,
+                    "dividend": div,
                     "pl": None if u_missing["pl"] else round(u_tot["pl"], 2),
                     "day_pl": None if u_missing["day_pl"] else round(u_tot["day_pl"], 2),
                     "delta": None if u_missing["delta"] else round(u_tot["delta"], 1),
