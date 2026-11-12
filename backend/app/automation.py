@@ -79,6 +79,12 @@ DEFAULT_SETTINGS = {
     "max_order_spread": 0.25,
     "window_start": "09:45",
     "window_end": "15:30",
+    # Expiration day: shorts still in the money are closed from this time (ET), not the
+    # moment they are touched; a 0 DTE trade is on its expiration day from the open.
+    "expiry_close_at": "15:45",
+    # ...and so are shorts out of the money but this close to their strike (share of the
+    # price), which could finish in the money and be assigned.
+    "expiry_pin_margin": 0.0,
     # The order ticket: "Automanage on fill" starts ticked for new trades.
     "ticket_automanage": True,
 }
@@ -136,6 +142,14 @@ SETTING_FIELDS = [
         "%",
     ),
     (
+        "expiry_pin_margin",
+        "Expiration day: also close shorts this close to their strike",
+        0,
+        2,
+        "percent",
+        "% of price",
+    ),
+    (
         "max_order_spread",
         "Skip while the order's bid/ask is wider than",
         1,
@@ -145,6 +159,7 @@ SETTING_FIELDS = [
     ),
 ]
 EARLY_CLOSE_STOP = (12, 30)  # the market closes at 13:00 ET on early-close days
+EARLY_CLOSE_EXPIRY = (12, 45)
 MAX_LEGS = 4
 STRANGLES = ("Strangle", "Straddle")
 
@@ -199,6 +214,13 @@ def parse_settings(form: dict, current: dict) -> dict:
             out[key] = f"{h:02d}:{m:02d}"
     if not ("09:30" <= out["window_start"] < out["window_end"] <= "16:00"):
         raise ValueError("Trading window: start before end, within 09:30 to 16:00")
+    if "expiry_close_at" in form:
+        try:
+            h, m = _hm(form["expiry_close_at"])
+            assert (15, 0) <= (h, m) < (16, 0)
+        except (ValueError, AssertionError):
+            raise ValueError("Expiration day close: a time from 15:00 to 15:59") from None
+        out["expiry_close_at"] = f"{h:02d}:{m:02d}"
     return out
 
 
@@ -237,6 +259,18 @@ def in_window(now: datetime, settings: dict) -> bool:
     return _hm(settings["window_start"]) <= t < end
 
 
+def in_expiry_span(now: datetime, settings: dict) -> bool:
+    """From the expiration-day close time to the market close (13:00 on early-close days)."""
+    et = now.astimezone(ET)
+    if et.weekday() >= 5:
+        return False
+    start = _hm(settings.get("expiry_close_at", "15:45"))
+    end = (16, 0)
+    if early_close(et.date()):
+        start, end = min(start, EARLY_CLOSE_EXPIRY), (13, 0)
+    return start <= (et.hour, et.minute) < end
+
+
 @dataclass
 class Action:
     rule: str
@@ -255,11 +289,13 @@ def decide(
     levels: dict,
     ivr: float | None = None,
     earnings: dict | None = None,
+    now: datetime | None = None,
 ) -> list[Action]:
     """What the rules call for on one strategy (the Positions snapshot's JSON), by priority.
 
     Pure: no orders, no state. Levels decide later whether an action is only a
-    notification, a proposal or an order.
+    notification, a proposal or an order. With now, the expiration-day rule waits for its
+    close time; without it (tests, previews) it acts at any time.
     """
     n = st["numbers"]
     shorts = [x for x in st["legs"] if x["kind"] == "OPTION" and x["quantity"] < 0]
@@ -274,8 +310,33 @@ def decide(
         and (spot < x["strike"] if x["put_call"] == "P" else spot > x["strike"])
         for x in shorts
     )
-    if levels.get("expiry", "off") != "off" and dte == 0 and itm:
-        out.append(Action("expiry", "close", "Expiration day with a short strike in the money"))
+    margin = settings.get("expiry_pin_margin", 0.0) or 0.0
+    near = (
+        not itm
+        and margin > 0
+        and any(
+            spot is not None
+            and x["strike"] is not None
+            and abs(spot - x["strike"]) <= spot * margin
+            for x in shorts
+        )
+    )
+    if (
+        levels.get("expiry", "off") != "off"
+        and dte == 0
+        and (itm or near)
+        and (now is None or in_expiry_span(now, settings))
+    ):
+        out.append(
+            Action(
+                "expiry",
+                "close",
+                "Expiration day with a short strike in the money"
+                if itm
+                else "Expiration day with a short strike near the money: close before "
+                "it can be assigned",
+            )
+        )
     if (
         levels.get("earnings", "off") != "off"
         and earnings
@@ -591,7 +652,10 @@ class AutomationService:
             now = self.clock()
             if st["paused"] or not self.broker.state:
                 return done
-            if snap.get("session") != "open" or not in_window(now, settings):
+            # After the trading window, only the expiration-day close still acts, until the
+            # market closes.
+            expiry_only = not in_window(now, settings) and in_expiry_span(now, settings)
+            if snap.get("session") != "open" or not (in_window(now, settings) or expiry_only):
                 return done
             quotes_at = (snap.get("data") or {}).get("quotes_at")
             if not quotes_at or time.time() - quotes_at > 90:
@@ -609,7 +673,7 @@ class AutomationService:
                 await self._save()
                 return [f"held: {hold}"]
             rules = await self.preferences.rules()
-            await self._step_orders(settings, done)
+            await self._step_orders(settings, done, only=("expiry",) if expiry_only else None)
             open_ids = set()
             for u in snap.get("underlyings", []):
                 for s in u["strategies"]:
@@ -621,7 +685,11 @@ class AutomationService:
                         continue
                     levels = self.levels(settings)
                     ivr = (u.get("ivr") or {}).get("rank")
-                    acts = decide(s, u["price"], rules, settings, levels, ivr, u.get("earnings"))
+                    acts = decide(
+                        s, u["price"], rules, settings, levels, ivr, u.get("earnings"), now
+                    )
+                    if expiry_only:
+                        acts = [a for a in acts if a.rule == "expiry"]
                     for action in acts:
                         await self._handle(s, u, action, levels[action.rule], settings, rules, done)
             # Proposals for trades that have closed no longer apply; the scanner's new
@@ -998,8 +1066,11 @@ class AutomationService:
             )
             done.append("target")
 
-    async def _step_orders(self, settings: dict, done: list[str]) -> None:
-        """Moves working automatic orders a step toward natural, up to the concession cap."""
+    async def _step_orders(
+        self, settings: dict, done: list[str], only: tuple[str, ...] | None = None
+    ) -> None:
+        """Moves working automatic orders a step toward natural, up to the concession cap.
+        With only, just those rules' orders move (fills are still recorded for all)."""
         every = settings["step_minutes"] * 60
         step = settings["step_cents"] / 100
         for oid, info in list(self.state["orders"].items()):
@@ -1032,6 +1103,8 @@ class AutomationService:
                 continue
             if info["rule"] in ("profit", "entry"):
                 continue  # resting orders: never repriced
+            if only is not None and info["rule"] not in only:
+                continue
             if time.time() - info["stepped_at"] < every:
                 continue
             mid, natural = info["mid"], info["natural"]

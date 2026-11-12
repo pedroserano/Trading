@@ -174,6 +174,13 @@
           <input type="time" name="window_end" value="{{ auto.window_end }}" data-default="{{ auto_defaults.window_end }}" required aria-label="Window end">
         </span>
       </div>
+      <div class="rule">
+        {{ label("a-eca", "Expiration day: close shorts still in the money at (ET)", "Not the moment a strike is touched: a 0 DTE trade is on its expiration day from the open, and what matters is where it finishes. Anything in the money by a cent at 4:00 is exercised, so these are closed first. Runs past the window above, until the close. On early-close days it is 12:45 at the latest.") }}
+        <span class="rule-input">
+          <input id="a-eca" type="time" name="expiry_close_at" value="{{ auto.expiry_close_at }}" data-default="{{ auto_defaults.expiry_close_at }}" min="15:00" max="15:59" required>
+        </span>
+      </div>
+      {{ num("a", auto_map.expiry_pin_margin, auto.expiry_pin_margin, auto_defaults.expiry_pin_margin, auto_map.expiry_pin_margin[5], "Also close shorts just out of the money, which could still finish in it: 0.1% is about 76 cents on SPY. 0: in-the-money shorts only.") }}
       {{ num("a", auto_map.grace_minutes, auto.grace_minutes, auto_defaults.grace_minutes, auto_map.grace_minutes[5], "At Auto, the order waits this long as a proposal you can dismiss.") }}
       {{ num("a", auto_map.daily_cap, auto.daily_cap, auto_defaults.daily_cap, auto_map.daily_cap[5]) }}
       {{ num("a", auto_map.daily_loss_limit, auto.daily_loss_limit, auto_defaults.daily_loss_limit, auto_map.daily_loss_limit[5], "Once net liq is down this much since the day began, automation stops until tomorrow.") }}

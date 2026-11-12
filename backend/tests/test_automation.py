@@ -577,3 +577,44 @@ def test_ticket_automanage_default_is_a_checkbox():
     assert parse_settings({"_form": "automation", "ticket_automanage": "on"}, off)[
         "ticket_automanage"
     ]
+
+
+# Expiration day ---------------------------------------------------------------------------
+
+
+def test_expiry_rule_waits_for_its_close_time():
+    s, r = merged_settings(None), Rules()
+    zero = strat(dte=0)  # 555 put / 610 call
+    at = lambda h, m, d=11: datetime(2026, 11, d, h, m, tzinfo=ET)  # noqa: E731
+    # Touched mid-afternoon: a 0 DTE trade is not closed for it.
+    assert not any(a.rule == "expiry" for a in decide(zero, 554, r, s, ALL, now=at(13, 0)))
+    assert ("expiry", "close") in kinds(decide(zero, 554, r, s, ALL, now=at(15, 46)))
+    # The day after Thanksgiving closes at 13:00: the rule acts from 12:45.
+    assert not any(a.rule == "expiry" for a in decide(zero, 554, r, s, ALL, now=at(12, 40, 27)))
+    assert ("expiry", "close") in kinds(decide(zero, 554, r, s, ALL, now=at(12, 46, 27)))
+    # Pin margin: also close a short just out of the money, not one well out of it.
+    pin = {**s, "expiry_pin_margin": 0.001}
+    assert not any(a.rule == "expiry" for a in decide(zero, 555.3, r, s, ALL, now=at(15, 46)))
+    (near,) = [a for a in decide(zero, 555.3, r, pin, ALL, now=at(15, 46)) if a.rule == "expiry"]
+    assert "near the money" in near.reason
+    assert not any(a.rule == "expiry" for a in decide(zero, 557, r, pin, ALL, now=at(15, 46)))
+
+
+def test_expiry_close_settings_are_validated():
+    s = parse_settings({"expiry_close_at": "15:50", "expiry_pin_margin": "0.1"}, None)
+    assert (s["expiry_close_at"], s["expiry_pin_margin"]) == ("15:50", pytest.approx(0.001))
+    with pytest.raises(ValueError, match="Expiration day close"):
+        parse_settings({"expiry_close_at": "14:00"}, None)
+
+
+@pytest.mark.anyio
+async def test_after_the_window_only_the_expiry_close_acts():
+    h = Harness([], QUOTES, settings={"levels": {"loss": "auto"}})
+    tid = await h.open_strangle()
+    h.portfolio.snapshot["underlyings"][0]["price"] = 550.0  # the 555 put is in the money
+    h.portfolio.snapshot["underlyings"][0]["strategies"] = [strat(tid=tid, dte=0, flags=["loss"])]
+    await h.svc.set_trade(tid, True)
+    h.svc.clock = lambda: datetime(2026, 11, 11, 15, 50, tzinfo=ET)  # window ends 15:30
+    assert await h.svc.tick() == ["propose expiry"]
+    h.svc.clock = lambda: datetime(2026, 11, 11, 16, 0, tzinfo=ET)
+    assert await h.svc.tick() == []
