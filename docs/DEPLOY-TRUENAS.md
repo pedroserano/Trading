@@ -203,33 +203,6 @@ Schwab's approval for a few days, during which sign-in may not work. Do it at a 
 The browser will warn about the certificate on the way back unless Caddy's root
 certificate is trusted on that device (section 5).
 
-## Tailscale: a trusted certificate without installing one (recommended)
-
-Caddy's own certificate only works on a device that trusts Caddy's root, and trusting it
-lets that key vouch for any website on the device. With Tailscale the app gets a publicly
-trusted certificate instead, and it is reachable from anywhere on your tailnet but never
-from the internet.
-
-1. In the Tailscale admin console, under DNS, turn on **MagicDNS** and **HTTPS
-   Certificates**.
-2. Option A's YAML includes a `tailscale` service. Create its folder on the app's dataset
-   (`mkdir /mnt/<pool>/trading/tailscale`), install or update the app, and open the
-   `trading-tailscale` container's log (Apps > trading > Logs). It shows a
-   `login.tailscale.com` link: open it and approve the machine `trading`.
-3. In the admin console's Machines list, open `trading` and choose **Disable key expiry**, so
-   it does not drop off the tailnet after six months.
-4. Open `https://trading.<your-tailnet>.ts.net` (the full name is on the machine's page). The
-   first visit can take a few seconds while the certificate is issued.
-5. Set `APP_URL` in `.env` to that address, so notifications link to it, and restart.
-6. On devices that trusted Caddy's root before, remove it: on an iPhone, Settings > General >
-   VPN & Device Management > the Caddy profile > Remove Profile. The LAN address keeps
-   working, with a certificate warning.
-
-The one-tap Schwab sign-in returns to the callback registered with Schwab. If that is the LAN
-address, sign in to Schwab from the LAN address, or add
-`https://trading.<your-tailnet>.ts.net/schwab/callback` to the Schwab app's callbacks (Schwab
-may review the change) and set `SCHWAB_CALLBACK_URL` to it.
-
 ## Trading history from the spreadsheet
 
 The "Options P/L" spreadsheet was imported once into the app's database (the `sheet_rows`
