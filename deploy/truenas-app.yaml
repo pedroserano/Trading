@@ -1,6 +1,8 @@
 # Paste into TrueNAS: Apps > Discover Apps > Custom App menu > Install via YAML.
 # Self-contained: the only other file needed on the NAS is /mnt/apps/trading/.env
 # (copy deploy/.env.example). Adjust the three marked values for your network.
+# /mnt/apps/trading must be a dataset on a data pool (see docs/DEPLOY-TRUENAS.md, Option A);
+# if yours is elsewhere, change every /mnt/apps/trading below to its path.
 networks:
   # The macvlan network that already exists for Homebridge. Docker allows one macvlan
   # network per parent interface, so this app joins it instead of creating another.

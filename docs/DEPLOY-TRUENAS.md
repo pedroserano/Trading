@@ -11,7 +11,19 @@ port of the NAS's own address.
 
 ## Option A: one pasted YAML with its own LAN address
 
-1. Create the folders and the settings file (System > Shell):
+1. Create a dataset for the app on a data pool (Datasets > select the pool > Add Dataset),
+   for example `trading` on a pool named `apps`, so it is mounted at `/mnt/apps/trading`.
+   It must be a dataset on a data pool, not a folder: a plain `mkdir` under `/mnt` where no
+   pool is mounted writes to the boot drive, which TrueNAS does not snapshot and which a
+   TrueNAS update replaces. Check it before going on:
+
+   ```sh
+   df -h /mnt/apps/trading    # the Filesystem column must read apps/trading, not boot-pool/...
+   ```
+
+   If your pool has another name, use its path below and in `deploy/truenas-app.yaml`
+   instead of `/mnt/apps/trading`. Then create the folders and the settings file
+   (System > Shell):
 
    ```sh
    mkdir -p /mnt/apps/trading/config /mnt/apps/trading/postgres /mnt/apps/trading/caddy
@@ -56,7 +68,7 @@ chown 568:568 data/config
 
 `568` is TrueNAS's built-in `apps` user, which the app runs as. Postgres and Caddy manage
 ownership of their own folders. Enabling encryption on the dataset is recommended, and a
-periodic snapshot task is worth adding.
+periodic snapshot task is worth adding (Data Protection > Periodic Snapshot Tasks).
 
 ## 2. Stack files
 
