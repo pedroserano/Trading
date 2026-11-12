@@ -3,7 +3,12 @@
 Off unless two switches are on: LIVE_TRADING=true in the server's .env file, and the Live
 trading switch in Settings. Every live order also passes the same ticket checks, guards and
 Schwab preview as a simulated one, then these limits: an allowlist of underlyings (SPY to
-start), a contract cap per leg, and a cap on one trade's buying power.
+start, or any underlying once that box is ticked), a contract cap per leg, and a cap on one
+trade's buying power.
+
+Automation on this account proposes at most, unless two more switches are on as well:
+LIVE_AUTO=true in .env and Allow Auto in Settings. Then automanage and the scanner may place
+live orders themselves, at the levels set for them.
 
 Like the simulator, a new closing order replaces a working closing order on the same
 contracts (Schwab's replace call), and an opening order placed with a profit target gets
@@ -26,6 +31,8 @@ DEFAULT_CONFIG = {
     "symbols": ["SPY"],
     "max_contracts": 1,
     "max_bp_share": 0.05,
+    "all_symbols": False,  # any underlying, not only the list
+    "auto": False,  # automation may place live orders itself (also needs LIVE_AUTO=true)
 }
 WORKING = {
     "WORKING",
@@ -147,12 +154,14 @@ class LiveBroker:
         notifier=None,
         app_url: str = "",
         demo: bool = False,
+        server_auto: bool = False,
     ):
         self.store = store
         self.schwab = schwab
         self.source = source
         self.resolve_account = resolve_account
         self.server_allowed = server_allowed and not demo
+        self.server_auto = server_auto and self.server_allowed
         self.demo = demo
         self.notifier = notifier
         self.app_url = app_url
@@ -177,6 +186,8 @@ class LiveBroker:
         """Saves the Settings form. Raises ValueError with a message for the page."""
         c = await self.config()
         c["enabled"] = form.get("enabled") in ("on", "true", "1", True)
+        c["all_symbols"] = form.get("all_symbols") in ("on", "true", "1", True)
+        c["auto"] = form.get("auto") in ("on", "true", "1", True)
         if "symbols" in form:
             symbols = [s.strip().upper() for s in str(form["symbols"]).replace(",", " ").split()]
             if not symbols or any(
@@ -210,9 +221,17 @@ class LiveBroker:
             "server_allowed": self.server_allowed,
             "demo": self.demo,
             "on": self.server_allowed and c["enabled"],
+            "server_auto": self.server_auto,
+            "auto_cap": self.auto_cap(c),
             "refreshed_at": self.refreshed_at,
             "error": self.error,
         }
+
+    def auto_cap(self, c: dict) -> str:
+        """The highest automation level on this account: Auto only when live trading is on and
+        both Auto switches (LIVE_AUTO in .env, Allow Auto in Settings) are too."""
+        on = self.server_auto and c["enabled"] and c.get("auto")
+        return "auto" if on else "propose"
 
     async def gate(self, t: Ticket, bp_effect: float | None, net_liq: float | None) -> list[str]:
         """Reasons a live order may not go out. Empty when it may."""
@@ -224,7 +243,7 @@ class LiveBroker:
             out.append("Live trading is not allowed on this server: set LIVE_TRADING=true in .env")
         if not c["enabled"]:
             out.append("Live trading is switched off (Settings, Live trading)")
-        if t.underlying not in c["symbols"]:
+        if not c.get("all_symbols") and t.underlying not in c["symbols"]:
             out.append(
                 f"{t.underlying} is not on the live list ({', '.join(c['symbols'])}); "
                 "trade it on the simulated account or add it in Settings"

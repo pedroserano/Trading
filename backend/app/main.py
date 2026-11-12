@@ -323,6 +323,7 @@ def create_app(
         notifier=notifier,
         app_url=settings.app_url,
         demo=demo,
+        server_auto=settings.live_auto,
     )
     portfolio.trade_info = chain_service.trade_info
     portfolio.chain_holdings = chain_service.holdings
@@ -416,6 +417,7 @@ def create_app(
         await store.open()
         await broker.load()
         await earnings.load()
+        await apply_live_cap()
         schwab.load()
         log.info("Started. Demo: %s. Schwab connected: %s", demo, schwab.status().connected)
         tasks = []
@@ -715,8 +717,13 @@ def create_app(
         form = dict(await request.form())
         try:
             c = await live_broker.set_config(form)
+            await apply_live_cap()
             request.session["notice"] = (
                 "Live trading switched on." if c["enabled"] else "Live trading is off."
+            ) + (
+                " Automation may place live orders itself."
+                if live_broker.auto_cap(c) == "auto"
+                else ""
             )
         except ValueError as e:
             request.session["flash"] = str(e)
@@ -757,6 +764,8 @@ def create_app(
                 await live_broker.set_config(
                     {
                         "enabled": live["enabled"],
+                        "all_symbols": live["all_symbols"],
+                        "auto": live["auto"],
                         "symbols": " ".join(live["symbols"]),
                         "max_contracts": live["max_contracts"],
                         "max_bp_share": share * 100,
@@ -1212,7 +1221,8 @@ def create_app(
             app_url=settings.app_url,
             clock=lambda: sim_portfolio.clock(),
         ),
-        # Live automanage proposes at most: every live order waits for your tap.
+        # Live automanage proposes at most (every live order waits for your tap) unless
+        # LIVE_AUTO and Allow Auto are on too; set at start and when Settings are saved.
         "live": AutomationService(
             store,
             portfolio,
@@ -1228,6 +1238,10 @@ def create_app(
         ),
     }
     app.state.automation = automations["sim"]
+
+    async def apply_live_cap() -> None:
+        automations["live"].max_level = live_broker.auto_cap(await live_broker.config())
+
     Acct = Literal["sim", "live"]
 
     @app.get("/api/automation", dependencies=[Depends(require_login)])

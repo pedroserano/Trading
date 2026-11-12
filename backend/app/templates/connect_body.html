@@ -155,7 +155,8 @@
 <section id="automation">
   <h2>Management rules: automanage</h2>
   <p class="dim">Applies the rules above to trades you switch to automanage: on the simulated
-     account at any level, on the Schwab account up to Propose. Notify sends a message; Propose prepares an order for one tap;
+     account at any level, on the Schwab account up to Propose (Auto too once Allow Auto is on
+     under Live trading). Notify sends a message; Propose prepares an order for one tap;
      Auto places it at mid and steps toward natural. These levels apply to every trade with Automanage ticked on Positions.</p>
   <form method="post" action="/automation/settings">
     <input type="hidden" name="_form" value="automation">
@@ -238,7 +239,7 @@
   <p class="dim">The scanner looks once a day, at the scan time, for premium worth selling: a
      strangle when IV rank is high, an iron condor otherwise, in the monthly expiration nearest the
      target DTE. What it finds follows the level below: Notify, Propose (waits for your tap) or Auto
-     (simulated account only; live stops at Propose). Single stocks open only when their next
+     (the Schwab account stops at Propose unless Allow Auto is on under Live trading). Single stocks open only when their next
      earnings report is known and further away than the buffer; ETFs and indexes have no earnings.</p>
   <form method="post" action="/scanner/settings">
     <input type="hidden" name="_form" value="scanner">
@@ -247,7 +248,7 @@
         <label for="s-{{ acct }}">{{ label }}</label>
         <span class="rule-input">
           <select id="s-{{ acct }}" name="level_{{ acct }}">
-            {% for lv in auto_levels %}{% if acct == "sim" or lv != "auto" %}<option value="{{ lv }}" {% if scan["level_" ~ acct] == lv %}selected{% endif %}>{{ lv|capitalize }}</option>{% endif %}{% endfor %}
+            {% for lv in auto_levels %}{% if acct == "sim" or lv != "auto" or live.auto_cap == "auto" %}<option value="{{ lv }}" {% if scan["level_" ~ acct] == lv %}selected{% endif %}>{{ lv|capitalize }}</option>{% endif %}{% endfor %}
           </select>
         </span>
       </div>
@@ -319,6 +320,8 @@
     <p><label><input type="checkbox" name="enabled" {% if live.enabled %}checked{% endif %}>
        <b>Live trading on</b></label>
        {% if live.on %}<span class="dot ok"></span> orders go to Schwab{% endif %}</p>
+    <p><label><input type="checkbox" name="all_symbols" {% if live.all_symbols %}checked{% endif %}>
+       Any underlying (the list below is then not used; the scanner uses your watchlist)</label></p>
     <div class="rule">
       <label for="l-symbols">Underlyings allowed live</label>
       <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
@@ -335,6 +338,19 @@
         step="0.5" value="{{ '%g'|format(live.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
     </div>
     <p class="warn-note">⚠ Set by the margin type ({{ "portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%" }}) when it is switched; adjustable here.</p>
+    <p><label><input type="checkbox" name="auto" {% if live.auto %}checked{% endif %}>
+       <b>Allow Auto on the Schwab account</b>: automanage and the scanner may place live orders
+       themselves, at the levels set for them</label>
+       {% if live.auto_cap == "auto" %}<span class="dot ok"></span> on{% endif %}</p>
+    {% if live.auto and not live.server_auto %}
+    <p class="warn-note">⚠ Not in effect: the server also needs <code>LIVE_AUTO=true</code> in
+       <code>.env</code> (with <code>LIVE_TRADING=true</code>) and a restart. Until then live
+       automation only proposes.</p>
+    {% endif %}
+    <p class="dim">Every automatic live order still passes the checks above, Schwab's preview, the
+       daily loss limit, the daily order cap and the other automanage limits, and is placed at mid
+       and stepped like a manual one. Off, or without <code>LIVE_AUTO</code>, every live order
+       waits for your tap.</p>
     <p><button class="primary" type="submit">Save live trading</button></p>
   </form>
 </section>

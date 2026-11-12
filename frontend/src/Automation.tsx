@@ -72,7 +72,11 @@ export function AutoBar() {
           {managed} trade{managed === 1 ? "" : "s"} · {view.orders_today}/{view.settings.daily_cap} orders today ·{" "}
           {view.in_window ? "in" : "outside"} its window {view.settings.window_start}–{view.settings.window_end} ET
           {view.early_close ? " (early close: stops at 12:30)" : ""}
-          {live ? " · live: proposes only, every order waits for your tap" : ""}
+          {live
+            ? view.max_level === "auto"
+              ? " · live: Auto allowed, orders at Auto levels go to Schwab by themselves"
+              : " · live: proposes only, every order waits for your tap"
+            : ""}
         </span>
         <a href="#/settings/automation" className="toolbar-link">
           Automanage settings

@@ -415,3 +415,21 @@ def test_delta_bias_from_the_full_settings_form(settings):
             assert r["delta_bias"] == bias and (r["delta_min"], r["delta_max"]) == band
         page = c.get("/connect").text
         assert 'id="r-delta_min"' in page and "0.1% to 0.3% of net liq" in page
+
+
+def test_allow_auto_lifts_live_automation_only_with_the_server_switches(settings):
+    store = MemoryStore()
+    on = settings.model_copy(update={"live_trading": True, "live_auto": True})
+    with make_client(on, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
+        c.post("/live/settings", data={"enabled": "on", "auto": "on", "symbols": "SPY"})
+        assert c.get("/api/automation?account=live").json()["max_level"] == "auto"
+        c.post("/live/settings", data={"enabled": "on", "symbols": "SPY"})
+        assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        c.post("/live/settings", data={"enabled": "on", "auto": "on", "symbols": "SPY"})
+        assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
+        assert "LIVE_AUTO=true" in c.get("/connect").text

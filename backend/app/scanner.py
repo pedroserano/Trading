@@ -293,7 +293,9 @@ class Scanner:
 
     async def symbols(self, account: str) -> list[str]:
         if account == "live":
-            return list((await self.live_broker.config())["symbols"])
+            c = await self.live_broker.config()
+            if not c.get("all_symbols"):
+                return list(c["symbols"])
         out = ["SPY"] + [s for s in await self.preferences.watchlist() if s != "SPY"]
         return out
 
@@ -648,7 +650,7 @@ class Scanner:
                 )
                 await auto._save()
                 return f"propose {c['symbol']}"
-            # Auto (simulated account only).
+            # Auto (the Schwab account only when Allow Auto and LIVE_AUTO are on).
             st["acted"][key] = time.time()
             done: list[str] = []
             wide = await auto._place_all(

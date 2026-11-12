@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # The server-side switch for live orders. Live orders also need the Live trading switch
     # in Settings; both must be on.
     live_trading: bool = False
+    # The server-side switch for automation placing live orders by itself (Auto). Also needs
+    # LIVE_TRADING and the Allow Auto switch in Settings; without it, live automation proposes.
+    live_auto: bool = False
     # Optional: earnings dates from Finnhub (free key at finnhub.io). Without it only the
     # dates entered in Settings are known.
     finnhub_api_key: str = ""

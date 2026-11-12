@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { TicketContext } from "./context";
+import { AccountContext, TicketContext } from "./context";
 import { MAX_LEGS } from "./OrderTicket";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, signed, strike, tone } from "./format";
@@ -182,6 +182,7 @@ export default function Trade({ symbol, shares = 0 }: { symbol: string; shares?:
   const [params, setParams] = useState<Params>({ strangle: 0.16, vertical: 0.3, condor: 0.2, width: 5 });
   const scroller = useRef<HTMLDivElement>(null);
   const openTicket = useContext(TicketContext);
+  const account = useContext(AccountContext);
   const centred = useRef<string | null>(null);
 
   useEffect(() => setInput(symbol), [symbol]);
@@ -550,7 +551,7 @@ export default function Trade({ symbol, shares = 0 }: { symbol: string; shares?:
               onClick={() =>
                 openTicket({
                   title: `Open ${symbol} trade`,
-                  account: "sim",
+                  account,
                   intent: "open",
                   underlying: symbol,
                   tradeId: null,
@@ -562,7 +563,7 @@ export default function Trade({ symbol, shares = 0 }: { symbol: string; shares?:
             </button>
           ) : null}
           {analysis && spot !== null ? <Summary a={analysis} spot={spot} /> : null}
-          <p className="phase-note">Orders go to the simulated account until phase 4.</p>
+
         </div>
       </div>
     </div>

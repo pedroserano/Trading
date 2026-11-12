@@ -176,3 +176,22 @@ def test_normalize_reads_prices_both_ways():
     single = normalize({**debit, "orderId": 2, "status": "FILLED"})
     assert single["limit_net"] == -0.40 and single["intent"] == "close"
     assert normalize({**credit, "orderId": 1, "status": "QUEUED"})["status"] == "WORKING"
+
+
+@pytest.mark.anyio
+async def test_any_underlying_and_the_auto_switches():
+    b, _, _ = broker()
+    qqq = ticket([(option_symbol("QQQ", EXP, "P", 480), -1, "open")], limit_net=2.0)
+    await b.set_config({"enabled": "on", "all_symbols": "on"})
+    assert await b.gate(qqq, 1000, 100_000) == []
+    # Auto needs LIVE_AUTO on the server, live trading on, and Allow Auto in Settings.
+    c = await b.set_config({"enabled": "on", "auto": "on"})
+    assert b.auto_cap(c) == "propose"  # no LIVE_AUTO
+    store, schwab = MemoryStore(), FakeSchwab()
+    a = LiveBroker(store, schwab, Source(schwab), account, True, Notifier(), server_auto=True)
+    assert a.auto_cap(await a.set_config({"enabled": "on"})) == "propose"
+    assert a.auto_cap(await a.set_config({"enabled": "on", "auto": "on"})) == "auto"
+    assert a.auto_cap(await a.set_config({"auto": "on"})) == "propose"  # live trading off
+    off = LiveBroker(store, schwab, Source(schwab), account, False, Notifier(), server_auto=True)
+    assert off.auto_cap(await off.config()) == "propose"  # LIVE_TRADING off
+    assert (await a.status())["server_auto"] is True
