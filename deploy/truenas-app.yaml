@@ -4,6 +4,9 @@
 # Adjust the marked values: the NAS's LAN address (twice), and the dataset path if yours
 # is not /mnt/thor/trading. That path must be a dataset on a data pool, not a folder on the
 # boot drive (see docs/DEPLOY-TRUENAS.md, Option A).
+# Optional, Tailscale: to reach the app at its Tailscale name with a trusted certificate, add
+# that name to the site line, e.g. "https://192.168.7.80, https://nas.tailnet.ts.net {", and
+# see docs/DEPLOY-TRUENAS.md, "Tailscale".
 configs:
   caddyfile:
     content: |

@@ -122,7 +122,8 @@ Save. All three containers should reach Running within a minute.
    dataset). On an iPhone: send the file to the phone (AirDrop or email), open it, install
    the profile under Settings > Profile Downloaded, then turn it on under Settings > General >
    About > Certificate Trust Settings. Until that last switch is on, an icon added to the
-   Home Screen is a plain letter, because the phone cannot fetch the app's icon.
+   Home Screen is a plain letter, because the phone cannot fetch the app's icon. With
+   Tailscale (see "Tailscale" below) none of this is needed.
 2. Sign in with `APP_PASSWORD`.
 3. Under "Connect to Schwab", follow the four steps on the page. On Schwab's consent screen,
    tick only the account the app should trade.
@@ -176,6 +177,43 @@ so the container picks them up.
 | `LIVE_AUTO` | `true` lets automation (automanage and the scanner) place live orders by itself at Auto levels. It needs `LIVE_TRADING=true` and Settings, Live trading, Schwab orders set to Manual and automatic, as well. Leave unset (off) and live automation only proposes; every live order waits for your tap. |
 | `FINNHUB_API_KEY` | Optional. A free key from finnhub.io lets the app look up earnings dates (date, and before the open or after the close) and the industry (for the Portfolio screen's sectors) for single stocks. Without it, only the dates you enter under Settings, Earnings dates are known, and the scanner skips stocks with no date. |
 | `MAX_CONTRACTS_PER_LEG` | Hard limit on contracts per leg in any order, simulated or live. Default 10. |
+
+## Tailscale (optional): a trusted certificate, and access away from home
+
+If the NAS runs the TrueNAS Tailscale app, Tailscale can serve the app at the NAS's Tailscale
+name with a real certificate: no certificate warning, no root certificate to install on each
+device, and the Home Screen icon works on an iPhone. The address at home keeps working.
+
+1. In the Tailscale admin console, DNS page: turn on MagicDNS and click **Enable HTTPS**. The
+   NAS's full name is on the Machines page, e.g. `truenas-scale.rainbow-chickadee.ts.net`.
+2. In the app's YAML (Apps > trading > Edit), add that name to the Caddy site line, then Save:
+
+   ```
+         https://192.168.7.80, https://truenas-scale.rainbow-chickadee.ts.net {
+   ```
+
+   Without it Caddy answers that name with an empty page.
+3. In System > Shell, point Tailscale at the app. Use the NAS's IP address, not `localhost`:
+   Caddy's certificate is for the IP, and it refuses a connection made to `localhost`.
+
+   ```sh
+   sudo docker ps --format '{{.Names}}' | grep -i tailscale    # e.g. ix-tailscale-tailscale-1
+   sudo docker exec ix-tailscale-tailscale-1 tailscale serve --bg https+insecure://192.168.7.80:8443
+   ```
+
+   `https+insecure` only skips checking Caddy's own certificate on that hop inside the NAS.
+   The setting is kept in the Tailscale app's data and survives restarts. To undo it:
+   `tailscale serve --https=443 off`.
+4. Check it from the shell; it should print `200` and a size in the thousands
+   (`200 0` means step 2 has not taken effect: stop and start the app):
+
+   ```sh
+   curl -sk -o /dev/null -w '%{http_code} %{size_download}\n' \
+     -H 'Host: truenas-scale.rainbow-chickadee.ts.net' https://192.168.7.80:8443/login
+   ```
+
+5. Open `https://truenas-scale.rainbow-chickadee.ts.net` on a device with Tailscale on. To
+   have notification links use it, set `APP_URL` to it in `.env` and restart the app.
 
 ## One-tap Schwab sign-in (optional)
 
