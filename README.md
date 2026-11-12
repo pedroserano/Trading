@@ -25,15 +25,15 @@ on TrueNAS. [PLAN.md](PLAN.md) has the design, the phases and what is still open
 
 ## Safety switches
 
-Orders go to Schwab only when `LIVE_TRADING=true` is set in `.env` and the Live trading
-switch in Settings is on. Live orders are also limited to an allowlist of underlyings (or any
-underlying, if ticked), a contract cap per leg and a buying-power cap per trade, and each one
-needs a second confirm.
+Orders go to Schwab only when `LIVE_TRADING=true` is set in `.env` and Settings, Live
+trading, has Schwab orders set to Manual only or Manual and automatic. Live orders are also
+limited to an allowlist of underlyings (or any underlying, if ticked), a contract cap per leg
+and a buying-power cap per trade, and each one you send needs a second confirm.
 
-Automation on the Schwab account only proposes, unless `LIVE_AUTO=true` is also set and
-Allow Auto is ticked in Settings. Automation also stops for the day at a daily loss limit,
-holds while prices are stale or the Schwab sign-in is about to lapse, and can be paused from
-the header.
+Automation places Schwab orders by itself only with `LIVE_AUTO=true` in `.env` as well and
+Schwab orders set to Manual and automatic; otherwise it proposes. Automation also stops for
+the day at a daily loss limit, holds while prices are stale or the Schwab sign-in is about to
+lapse, and can be paused from the header.
 
 ## Layout
 

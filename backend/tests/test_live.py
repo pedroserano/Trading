@@ -195,3 +195,12 @@ async def test_any_underlying_and_the_auto_switches():
     off = LiveBroker(store, schwab, Source(schwab), account, False, Notifier(), server_auto=True)
     assert off.auto_cap(await off.config()) == "propose"  # LIVE_TRADING off
     assert (await a.status())["server_auto"] is True
+    # The Settings page's one control sets both.
+    c = await a.set_config({"mode": "auto"})
+    assert c["enabled"] and c["auto"] and a.auto_cap(c) == "auto"
+    c = await a.set_config({"mode": "manual"})
+    assert c["enabled"] and not c["auto"]
+    c = await a.set_config({"mode": "off"})
+    assert not c["enabled"] and not c["auto"]
+    with pytest.raises(ValueError, match="Schwab orders"):
+        await a.set_config({"mode": "yolo"})

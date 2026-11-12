@@ -52,11 +52,12 @@ class Settings(BaseSettings):
     sim_commission: float = Field(0.45, ge=0, le=10)
     # Hard limit on contracts per leg in any one order.
     max_contracts_per_leg: int = Field(10, ge=1, le=500)
-    # The server-side switch for live orders. Live orders also need the Live trading switch
+    # The server-side switch for live orders. Live orders also need Schwab orders turned on
     # in Settings; both must be on.
     live_trading: bool = False
     # The server-side switch for automation placing live orders by itself (Auto). Also needs
-    # LIVE_TRADING and the Allow Auto switch in Settings; without it, live automation proposes.
+    # LIVE_TRADING, and Schwab orders set to Manual and automatic in Settings; without it,
+    # live automation proposes.
     live_auto: bool = False
     # Optional: earnings dates from Finnhub (free key at finnhub.io). Without it only the
     # dates entered in Settings are known.

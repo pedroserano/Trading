@@ -6,8 +6,8 @@ Schwab preview as a simulated one, then these limits: an allowlist of underlying
 start, or any underlying once that box is ticked), a contract cap per leg, and a cap on one
 trade's buying power.
 
-Automation on this account proposes at most, unless two more switches are on as well:
-LIVE_AUTO=true in .env and Allow Auto in Settings. Then automanage and the scanner may place
+Automation on this account proposes at most, unless LIVE_AUTO=true is in .env as well and
+Settings has Schwab orders set to Manual and automatic. Then automanage and the scanner may place
 live orders themselves, at the levels set for them.
 
 Like the simulator, a new closing order replaces a working closing order on the same
@@ -185,9 +185,16 @@ class LiveBroker:
     async def set_config(self, form: dict) -> dict:
         """Saves the Settings form. Raises ValueError with a message for the page."""
         c = await self.config()
-        c["enabled"] = form.get("enabled") in ("on", "true", "1", True)
+        mode = form.get("mode")
+        if mode is not None:
+            # The Settings page's one control: off, manual only, or manual and automatic.
+            if mode not in ("off", "manual", "auto"):
+                raise ValueError("Schwab orders: off, manual only, or manual and automatic")
+            c["enabled"], c["auto"] = mode != "off", mode == "auto"
+        else:
+            c["enabled"] = form.get("enabled") in ("on", "true", "1", True)
+            c["auto"] = form.get("auto") in ("on", "true", "1", True)
         c["all_symbols"] = form.get("all_symbols") in ("on", "true", "1", True)
-        c["auto"] = form.get("auto") in ("on", "true", "1", True)
         if "symbols" in form:
             symbols = [s.strip().upper() for s in str(form["symbols"]).replace(",", " ").split()]
             if not symbols or any(
@@ -228,8 +235,8 @@ class LiveBroker:
         }
 
     def auto_cap(self, c: dict) -> str:
-        """The highest automation level on this account: Auto only when live trading is on and
-        both Auto switches (LIVE_AUTO in .env, Allow Auto in Settings) are too."""
+        """The highest automation level on this account: Auto only with LIVE_AUTO in .env and
+        Schwab orders set to Manual and automatic; otherwise Propose."""
         on = self.server_auto and c["enabled"] and c.get("auto")
         return "auto" if on else "propose"
 

@@ -650,7 +650,7 @@ class Scanner:
                 )
                 await auto._save()
                 return f"propose {c['symbol']}"
-            # Auto (the Schwab account only when Allow Auto and LIVE_AUTO are on).
+            # Auto (the Schwab account only with LIVE_AUTO and Manual and automatic orders).
             st["acted"][key] = time.time()
             done: list[str] = []
             wide = await auto._place_all(

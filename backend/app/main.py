@@ -718,13 +718,18 @@ def create_app(
         try:
             c = await live_broker.set_config(form)
             await apply_live_cap()
-            request.session["notice"] = (
-                "Live trading switched on." if c["enabled"] else "Live trading is off."
-            ) + (
-                " Automation may place live orders itself."
-                if live_broker.auto_cap(c) == "auto"
-                else ""
-            )
+            if not c["enabled"]:
+                notice = "Schwab orders are off."
+            elif not c["auto"]:
+                notice = "Schwab orders: manual only. Automation proposes."
+            elif live_broker.auto_cap(c) == "auto":
+                notice = "Schwab orders: manual and automatic."
+            else:
+                notice = (
+                    "Schwab orders: manual and automatic, but automatic orders also need "
+                    "LIVE_AUTO=true in .env; until then automation proposes."
+                )
+            request.session["notice"] = notice
         except ValueError as e:
             request.session["flash"] = str(e)
         return RedirectResponse(settings_url("live"), status_code=303)
@@ -1222,7 +1227,7 @@ def create_app(
             clock=lambda: sim_portfolio.clock(),
         ),
         # Live automanage proposes at most (every live order waits for your tap) unless
-        # LIVE_AUTO and Allow Auto are on too; set at start and when Settings are saved.
+        # LIVE_AUTO is set and Schwab orders allow automatic ones; set at start and on save.
         "live": AutomationService(
             store,
             portfolio,
