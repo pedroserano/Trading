@@ -511,3 +511,20 @@ async def test_the_drop_signal_sells_puts_outside_the_move_and_ranks_first():
         scmod.skew = scmod_skew
     assert c["drop_signal"] and c["label"].startswith("Drop signal (IV rank 60, put skew 9.0")
     assert c["strategy"] == "Short put" and "outside the" in c["label"]
+
+
+@pytest.mark.anyio
+async def test_over_the_notional_limit_the_scanner_opens_a_spread_instead():
+    scanner, auto, _ = harness({"min_ic_credit": 0.15})
+    first = auto.submit
+
+    async def submit(raw, place):
+        out = await first(raw, place)
+        naked = all(x["quantity"] < 0 for x in raw["legs"])
+        if not place and naked:
+            out["errors"] = ["... above the 20% notional limit; use a defined-risk spread"]
+        return out
+
+    auto.submit = submit
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["strategy"] == "Iron condor"

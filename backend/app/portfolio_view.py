@@ -7,6 +7,7 @@ Pure: snapshot and sectors in, a dict out.
 import math
 from datetime import date, timedelta
 
+from . import indexweights
 from .analysis import TradeLeg, bp_estimate
 
 # Broad groups for funds and indexes; single stocks take their industry from Finnhub's
@@ -160,6 +161,30 @@ def build(
         s["bp_pct"] = share(s["bp"])
         s["delta_pct"] = share(s["delta_bw"] * spy) if spy else None
         s["bp"], s["delta_bw"], s["theta"] = (round(s[k], 2) for k in ("bp", "delta_bw", "theta"))
+    # Look-through: a stock's share of the SPY and QQQ positions, next to what is held in it.
+    by_sym = {r["symbol"]: r for r in rows}
+    look = []
+    names = sorted({n for w in indexweights.WEIGHTS.values() for n in w})
+    for name in names:
+        via, parts = 0.0, []
+        for idx in indexweights.WEIGHTS:
+            w = indexweights.weight(idx, name)
+            idx_bp = (by_sym.get(idx) or {}).get("bp")
+            if w and idx_bp:
+                via += w * idx_bp
+                parts.append(f"{w:.1%} of {idx}")
+        if via:
+            direct = (by_sym.get(name) or {}).get("bp") or 0.0
+            look.append(
+                {
+                    "symbol": name,
+                    "direct_bp": round(direct, 2),
+                    "via_bp": round(via, 2),
+                    "total_pct": share(direct + via),
+                    "via": parts,
+                }
+            )
+    look.sort(key=lambda x: -(x["direct_bp"] + x["via_bp"]))
     first = _monday(today)
     week_list = [
         {"week": "now", "label": f"Inside {manage_dte} DTE now", "trades": calendar.get("now", [])}
@@ -189,6 +214,8 @@ def build(
         "underlyings": rows,
         "sectors": sorted(sectors.values(), key=lambda s: -s["bp"]),
         "positions": positions,
+        "look_through": look[:8],
+        "look_through_as_of": indexweights.AS_OF,
         "ladder": sorted(ladder.values(), key=lambda e: e["expiration"]),
         "calendar": week_list,
     }

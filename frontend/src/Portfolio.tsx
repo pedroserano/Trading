@@ -57,6 +57,8 @@ interface PortfolioData {
   manage_dte: number;
   underlyings: Row[];
   sectors: SectorRow[];
+  look_through?: { symbol: string; direct_bp: number; via_bp: number; total_pct: number | null; via: string[] }[];
+  look_through_as_of?: string;
   positions: Position[];
   ladder: Rung[];
   calendar: Week[];
@@ -205,6 +207,38 @@ export default function Portfolio() {
               </tbody>
             </table>
           </div>
+          {data.look_through && data.look_through.length ? (
+            <>
+              <h3
+                className="sub-h"
+                title={`Index funds hold their largest stocks: a SPY position is partly an NVDA position. Weights are approximate, as of ${data.look_through_as_of}. These count toward each stock's buying-power and notional limits.`}
+              >
+                Look-through: stocks inside your SPY and QQQ
+              </h3>
+              <div className="table-wrap">
+                <table className="positions compact">
+                  <thead>
+                    <tr>
+                      <th className="l">Stock</th>
+                      <th>Held directly</th>
+                      <th>Through index funds</th>
+                      <th>% net liq</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.look_through.map((r) => (
+                      <tr key={r.symbol}>
+                        <td className="l">{r.symbol}</td>
+                        <td>{r.direct_bp ? money(r.direct_bp) : "–"}</td>
+                        <td title={r.via.join(", ")}>{money(r.via_bp)}</td>
+                        <td>{pct(r.total_pct, 1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
         </section>
       </div>
 

@@ -25,6 +25,25 @@ INDEX_UNDERLYINGS = {
 }
 
 
+def naked_notional(legs) -> float:
+    """Assignment exposure of uncovered short options, per side: for each of puts and calls,
+    the shorts not matched by longs, at the shorts' strikes, times 100. Longs cover the
+    furthest-out shorts first, so what is left uncovered is the worst case.
+    legs: (put_call, strike, signed quantity) for option legs."""
+    total = 0.0
+    for pc in ("P", "C"):
+        side = [(k, q) for p, k, q in legs if p == pc and k is not None]
+        longs = sum(q for _, q in side if q > 0)
+        shorts = sorted(
+            ((k, -q) for k, q in side if q < 0), key=lambda x: x[0] if pc == "P" else -x[0]
+        )
+        for k, n in shorts:
+            covered = min(longs, n)
+            longs -= covered
+            total += (n - covered) * k * 100
+    return total
+
+
 @dataclass
 class Limits:
     max_contracts: int = 10
@@ -50,6 +69,9 @@ def check(
     block_over_ceiling: bool = False,
     underlying_bp_after: float | None = None,
     underlying_cap: float | None = None,
+    notional_after: float | None = None,
+    notional_cap: float | None = None,
+    look_through: str = "",
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -126,6 +148,19 @@ def check(
         errors.append(
             f"{t.underlying} would use {underlying_bp_after / net_liq:.0%} of net liq in buying "
             f"power, above the {underlying_cap:.0%} limit for one underlying"
+        )
+    if (
+        opening
+        and net_liq
+        and notional_after is not None
+        and notional_cap
+        and notional_after > notional_cap * net_liq
+    ):
+        errors.append(
+            f"Uncovered short options on {t.underlying} would carry "
+            f"{notional_after:,.0f} of assignment exposure ({notional_after / net_liq:.0%} of "
+            f"net liq{look_through}), above the {notional_cap:.0%} notional limit; use a "
+            "defined-risk spread or fewer contracts"
         )
     if t.intent == "open":
         for leg in t.legs:

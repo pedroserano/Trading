@@ -93,6 +93,7 @@
       </div>
       {{ num("r", rule_map.max_underlying_bp, rules.max_underlying_bp, rule_defaults.max_underlying_bp, "%", rule_notes.max_underlying_bp, true) }}
       {{ num("r", rule_map.max_index_bp, rules.max_index_bp, rule_defaults.max_index_bp, "%", rule_notes.max_index_bp, true) }}
+      {{ num("r", rule_map.max_notional, rules.max_notional, rule_defaults.max_notional, "%", rule_notes.max_notional, true) }}
       {{ check("block_over_ceiling", "Refuse trades above the VIX buying-power ceiling", rules.block_over_ceiling, rule_defaults.block_over_ceiling, rule_notes.block_over_ceiling ~ " The ceiling rises with VIX: 25% of net liq under 15, 30% to 20, 35% to 30, 40% to 40, 50% above (half under portfolio margin).") }}
     {% endcall %}
     <p class="save"><button class="primary" type="submit">Save rules</button></p>

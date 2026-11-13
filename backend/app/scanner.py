@@ -698,37 +698,49 @@ class Scanner:
                 else:
                     tilt, source = None, None
                 leaned = source in ("band", "bias")
-                if tilt and source in ("view", "extreme"):
-                    # A view on the stock or a sharp move: one side only, outside the expected
-                    # move, so the trade does not depend on calling the turn.
-                    legs, label = one_side(
-                        rows,
-                        vol["spot"],
-                        vol["em"],
-                        "put" if tilt == "down" else "call",
-                        strangle,
-                        s,
-                        _mid,
-                    )
-                else:
-                    legs, label = build_trade(rows, strangle, s, tilt)
-                if legs is None:
-                    skipped.append({"symbol": sym, "reason": label})
-                    continue
                 n = max(1, s["contracts"] // 2) if careful else s["contracts"]
                 if account == "live":
                     n = min(n, (await self.live_broker.config())["max_contracts"])
-                body = {
-                    "account": account,
-                    "intent": "open",
-                    "duration": "DAY",
-                    "profit_target": rules.profit_target,
-                    "legs": [{**x, "quantity": x["quantity"] * n} for x in legs],
-                }
-                try:
-                    pv = await auto.submit({**body, "limit_net": None}, False)
-                except ValueError as e:
-                    skipped.append({"symbol": sym, "reason": f"preview failed: {e}"})
+                # Undefined risk first when allowed; over the notional limit, the same idea as
+                # a defined-risk spread instead.
+                attempts = [True, False] if strangle else [False]
+                legs = pv = None
+                for undefined in attempts:
+                    if tilt and source in ("view", "extreme"):
+                        # A view on the stock or a sharp move: one side only, outside the
+                        # expected move, so the trade does not depend on calling the turn.
+                        legs, label = one_side(
+                            rows,
+                            vol["spot"],
+                            vol["em"],
+                            "put" if tilt == "down" else "call",
+                            undefined,
+                            s,
+                            _mid,
+                        )
+                    else:
+                        legs, label = build_trade(rows, undefined, s, tilt)
+                    if legs is None:
+                        break
+                    body = {
+                        "account": account,
+                        "intent": "open",
+                        "duration": "DAY",
+                        "profit_target": rules.profit_target,
+                        "legs": [{**x, "quantity": x["quantity"] * n} for x in legs],
+                    }
+                    try:
+                        pv = await auto.submit({**body, "limit_net": None}, False)
+                    except ValueError as e:
+                        label, legs = f"preview failed: {e}", None
+                        break
+                    strangle = undefined
+                    if undefined and any("notional limit" in e for e in pv["errors"]):
+                        label += " (over the notional limit: trying a spread)"
+                        continue
+                    break
+                if legs is None or pv is None:
+                    skipped.append({"symbol": sym, "reason": label})
                     continue
                 problems = list(pv["errors"]) + list(pv.get("live_blocks") or [])
                 bp = pv.get("bp_effect")

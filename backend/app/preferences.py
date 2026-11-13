@@ -35,6 +35,13 @@ RULE_FIELDS = [
     ("loss_multiple", "Loss flag at multiple of credit", 0.5, 10.0, "multiple"),
     ("max_underlying_bp", "Buying power in one underlying, at most", 0.01, 1.0, "percent"),
     ("max_index_bp", "Buying power in one index underlying, at most", 0.01, 1.0, "percent"),
+    (
+        "max_notional",
+        "Uncovered short options on one stock, at most (notional)",
+        0.0,
+        2.0,
+        "percent",
+    ),
 ]
 # Portfolio targets, on the Settings page under Portfolio targets. Same shape as RULE_FIELDS.
 BAND_FIELDS = [
@@ -63,6 +70,13 @@ RULE_NOTES = {
     "max_underlying_bp": "Hard limit: an opening order that would take one underlying's buying "
     "power above this share of net liq is refused, for you, automanage and the scanner.",
     "max_index_bp": "The same limit for SPY, QQQ, IWM, DIA and the SPX, XSP, NDX and RUT indexes.",
+    "max_notional": "Hard limit, as a share of net liq: what you could be made to buy (or "
+    "sell) if every uncovered short option on one stock were assigned, strike x 100 x "
+    "contracts. A $160 stock's naked put carries $16,000 of exposure on only about $3,000 of "
+    "buying power, so buying power alone understates it. It also counts the stock's share of "
+    "your SPY and QQQ positions (NVDA is about 8% of SPY), from a dated table of their largest "
+    "holdings. Spreads and covered positions do not count; index funds themselves are exempt. "
+    "Over it, the ticket refuses and the scanner opens a spread instead. 0: off.",
     "margin_type": "Choosing one saves at once and resets the buying-power limits to the "
     "margin type's defaults: under portfolio margin each one is half the Reg T figure (one "
     "underlying 7.5%, an index 25%, one scanner or live trade 2.5%, the VIX ceiling and the "

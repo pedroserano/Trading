@@ -27,6 +27,9 @@ class Rules:
     # Hard limits on opening trades, as shares of net liq.
     max_underlying_bp: float = 0.15
     max_index_bp: float = 0.50  # SPY and other broad index ETFs and indexes
+    # Uncovered short options on one stock, at most this share of net liq in assignment
+    # exposure (strike x 100 x contracts), counting its share of SPY and QQQ positions.
+    max_notional: float = 0.20
     block_over_ceiling: bool = True  # refuse, not just warn, above the VIX-based ceiling
     margin_type: str = "reg_t"  # or "pm" (portfolio margin): sizing limits halve
     # Portfolio targets, as shares of net liq. Delta is beta-weighted to SPY in dollars

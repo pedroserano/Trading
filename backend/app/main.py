@@ -25,7 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, portfolio_view, targets
+from . import guards, indexweights, portfolio_view, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
@@ -1113,6 +1113,38 @@ def create_app(
                 except (ValueError, ZeroDivisionError):
                     existing = None
             under_after = None if existing is None else existing + bp
+        # Look-through: SPY and QQQ positions hold part of their largest stocks.
+        look_bp, look_notional, via = 0.0, 0.0, []
+        opening = t.intent in ("open", "adjust")
+        single = t.underlying not in guards.INDEX_UNDERLYINGS and not t.stock
+        if opening and single and indexweights.covered(t.underlying):
+            look_bp, look_notional, via = indexweights.look_through(
+                t.underlying,
+                pf.legs,
+                lambda sym: pf._price(sym) if hasattr(pf, "_price") else None,
+                today,
+                guards.naked_notional,
+            )
+        if under_after is not None:
+            under_after += look_bp
+        # Notional: uncovered short options on a single stock, with what is already held there
+        # and its share of index positions.
+        notional_after = None
+        new_naked = guards.naked_notional(
+            [(x.put_call, x.strike, x.quantity) for x in t.legs if not x.equity]
+        )
+        if opening and single and new_naked > 0:
+            held_legs = [x for x in pf.legs if x.underlying == t.underlying and x.is_option]
+            notional_after = (
+                guards.naked_notional(
+                    [(x.put_call, x.strike, x.quantity) for x in held_legs]
+                    + [(x.put_call, x.strike, x.quantity) for x in t.legs if not x.equity]
+                )
+                + look_notional
+            )
+        look_text = (
+            f", including {look_notional:,.0f} through {' and '.join(via)}" if look_notional else ""
+        )
         under_cap = (
             rules.max_index_bp
             if t.underlying in guards.INDEX_UNDERLYINGS
@@ -1132,6 +1164,9 @@ def create_app(
             block_over_ceiling=rules.block_over_ceiling,
             underlying_bp_after=under_after,
             underlying_cap=under_cap,
+            notional_after=notional_after,
+            notional_cap=getattr(rules, "max_notional", 0.0),
+            look_through=look_text,
         )
         # Portfolio targets: warn when the trade moves delta or theta further outside its band.
         band_after = None
