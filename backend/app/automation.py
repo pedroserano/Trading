@@ -1030,8 +1030,8 @@ class AutomationService:
                 return done
             # Fills are recorded, and new trades switched on, at any time: paused or not, in
             # the window or not.
-            self._record_fills()
-            if self._enable_pending(snap):
+            recorded = self._record_fills()
+            if self._enable_pending(snap) or recorded:
                 await self._save()
             if st["paused"]:
                 return done
@@ -1450,10 +1450,12 @@ class AutomationService:
             )
             done.append("target")
 
-    def _record_fills(self) -> None:
+    def _record_fills(self) -> bool:
         """Forgets automatic orders that are no longer working, logging fills; a filled order
         ticked "Automanage on fill" queues its new trade to be switched on (_enable_pending).
-        An entry order not seen at the broker yet is kept a while, in case its list lags."""
+        An entry order not seen at the broker yet is kept a while, in case its list lags.
+        Returns whether anything changed."""
+        changed = False
         for oid, info in list(self.state["orders"].items()):
             order = next((o for o in self.broker.state["orders"] if str(o["id"]) == oid), None)
             if order is not None and order["status"] == "WORKING":
@@ -1463,6 +1465,7 @@ class AutomationService:
                     info.setdefault("placed_at", time.time())
                     continue
             self.state["orders"].pop(oid)
+            changed = True
             if order is None or order["status"] != "FILLED":
                 continue
             known = order.get("trade_id")
@@ -1498,6 +1501,7 @@ class AutomationService:
                 ),
                 order_id=order["id"],
             )
+        return changed
 
     def _enable_pending(self, snap: dict) -> bool:
         """Switches automanage on for new trades from fills queued by _record_fills, once the

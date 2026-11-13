@@ -804,3 +804,28 @@ async def test_live_entry_fill_switches_on_the_trade_holding_its_legs_any_time()
     await h.svc.tick()
     assert h.svc.state["trades"]["c-123"] == {"enabled": True}
     assert not h.svc.state["enable_pending"]
+
+
+@pytest.mark.anyio
+async def test_sim_entry_fill_after_hours_is_switched_on_and_saved():
+    h = Harness([], QUOTES)
+    t = Ticket(
+        legs=[
+            TicketLeg.parse(sym("P", 555), -1, "open"),
+            TicketLeg.parse(sym("C", 610), -1, "open"),
+        ],
+        limit_net=5.80,
+    )
+    order = await h.broker.place(
+        t,
+        {"SPY": {"quote": {"mark": 590.0}}, sym("P", 555): q(3.0, 3.2), sym("C", 610): q(2.6, 2.8)},
+    )
+    assert order["status"] == "FILLED"
+    await h.svc.watch_entry(order)
+    h.svc.clock = lambda: datetime(2026, 11, 11, 18, 0, tzinfo=ET)
+    h.portfolio.snapshot["session"] = "closed"
+    await h.svc.tick()
+    tid = str(order["trade_id"])
+    assert h.svc.state["trades"][tid] == {"enabled": True}
+    saved = h.store.settings[h.svc.state_key]
+    assert saved["trades"][tid] == {"enabled": True}
