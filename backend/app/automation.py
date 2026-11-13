@@ -696,7 +696,7 @@ AUTO_STEPS = [
     (
         "2. Manage time",
         [
-            "At ⟦rules:manage_dte⟧ days to expiration (level ⟦level_dte⟧): roll an "
+            "At ⟦rules:manage_dte⟧ days to expiration (⟦level_dte⟧): roll an "
             "undefined-risk trade out to about ⟦roll_target_dte⟧ days for a credit, at the "
             "same strikes. Close it instead when IV rank is under ⟦min_roll_ivr⟧, after "
             "⟦max_rolls⟧ rolls (0: no limit), or when the roll pays under ⟦min_roll_credit⟧ a "
@@ -707,7 +707,7 @@ AUTO_STEPS = [
     (
         "3. Defend a tested side, calmly",
         [
-            "When a short strike reaches ⟦rules:tested_delta⟧ delta (level ⟦level_tested⟧): "
+            "When a short strike reaches ⟦rules:tested_delta⟧ delta (⟦level_tested⟧): "
             "roll the safe side closer for a credit, to ⟦untested_target⟧, at most "
             "⟦max_untested_rolls⟧ times per expiration, leaving the trade leaning with its "
             "view or your bias.",
@@ -721,13 +721,13 @@ AUTO_STEPS = [
             "⟦?roll_single_itm⟧ When a short goes in the money, roll it out in time for a "
             "credit: a single option to ⟦single_roll_strike⟧, a ratio whole, a covered call "
             "up and out, a jade lizard's put down and out.",
-            "No panic exits: a loss of ⟦rules:loss_multiple⟧ the credit (level ⟦level_loss⟧).",
+            "No panic exits: a loss of ⟦rules:loss_multiple⟧ the credit (⟦level_loss⟧).",
         ],
     ),
     (
         "4. Expiration day",
         [
-            "From ⟦expiry_close_at⟧ ET (level ⟦level_expiry⟧), close any short still in the "
+            "From ⟦expiry_close_at⟧ ET (⟦level_expiry⟧), close any short still in the "
             "money, or within ⟦expiry_pin_margin⟧% of its strike (0: in the money only), so "
             "nothing is assigned by surprise.",
             "Except a Would own put you can pay for: it is left to be assigned, so you buy the "
@@ -740,9 +740,9 @@ AUTO_STEPS = [
         "5. Earnings and dividends",
         [
             "Close a single-stock trade ⟦earnings_close_sessions⟧ sessions before the last "
-            "session ahead of an earnings report inside it (level ⟦level_earnings⟧).",
-            "Close a short call likely to be assigned before an ex-dividend date (level "
-            "⟦level_dividend⟧).",
+            "session ahead of an earnings report inside it (⟦level_earnings⟧).",
+            "Close a short call likely to be assigned before an ex-dividend date "
+            "(⟦level_dividend⟧).",
         ],
     ),
     (
