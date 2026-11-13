@@ -1493,14 +1493,7 @@ def create_app(
                         "LIVE_AUTO=true to .env and restart; until then Auto is not offered"
                     )
             n = sum(1 for t in v["trades"].values() if t.get("enabled"))
-            at = {}
-            for rule, lv in v["settings"]["levels"].items():
-                at.setdefault(lv, []).append(rule)
-            auto_rules = ", ".join(RULES[r].lower() for r in at.get("auto", [])) or "none"
-            parts.append(
-                f"automanage on {n} trade{'' if n == 1 else 's'} ticked; rules at Auto: "
-                f"{auto_rules}"
-            )
+            parts.append(f"automanage on {n} trade{'' if n == 1 else 's'}")
             parts.append(f"scanner {scanner.level(scan_s, acct).capitalize()}")
             out.append((name, parts))
         return out
