@@ -275,6 +275,12 @@
         enough premium to bother (a high IV rank in a quiet market can still pay very little),
         is the premium rich enough to sell even at an ordinary IV rank, and are the options
         pricing in more movement than the stock has really been making.</p>
+      <p class="dim small">Why sell when the news is loudest: fear makes options expensive,
+        they usually overstate the move that follows, and the fear tends to fade, so short
+        options lose value even if the stock barely moves. The catch is surviving the noise,
+        which is why the scanner trades small and often, switches to defined risk when VIX
+        is extreme, spreads trades across sectors, and exits mechanically (profit target,
+        21 DTE) rather than in a panic.</p>
       {{ num("s", scan_map.min_ivr, scan.min_ivr, scan_defaults.min_ivr, scan_map.min_ivr[5], "IV rank: where today's implied volatility sits in its own one-year range, 0 at the low, 100 at the high. tastytrade sells premium from 30.") }}
       {{ num("s", scan_map.undefined_ivr, scan.undefined_ivr, scan_defaults.undefined_ivr, scan_map.undefined_ivr[5], "At this IV rank or more, a strangle (undefined risk); below it, an iron condor (defined risk).") }}
       {{ num("s", scan_map.min_iv30, scan.min_iv30, scan_defaults.min_iv30, scan_map.min_iv30[5], "When the whole market is calm, a high IV rank can rest on a tiny range: an IV rank of 60 on implied volatility that moved from 11% to 14% offers little premium for the risk. Below this IV30, nothing opens, whatever the IV rank.") }}
@@ -299,6 +305,8 @@
       {{ num("s", scan_map.max_per_underlying, scan.max_per_underlying, scan_defaults.max_per_underlying, scan_map.max_per_underlying[5], "Never two trades in the same underlying and expiration.") }}
       {{ num("s", scan_map.max_new_per_day, scan.max_new_per_day, scan_defaults.max_new_per_day, scan_map.max_new_per_day[5]) }}
       {{ num("s", scan_map.max_bp_day, scan.max_bp_day, scan_defaults.max_bp_day, scan_map.max_bp_day[5]) }}
+      {{ num("s", scan_map.max_per_sector, scan.max_per_sector, scan_defaults.max_per_sector, scan_map.max_per_sector[5], "Spreads trades out, so one wrong read on a sector (a headline that turns out to be real change) cannot sink the account. Counts trades already open and those from the same scan. Broad index funds (SPY, QQQ, IWM) are one sector; a stock whose sector is unknown counts on its own.") }}
+      {{ num("s", scan_map.defined_vix, scan.defined_vix, scan_defaults.defined_vix, scan_map.defined_vix[5], "When the whole market is in a panic, margin requirements balloon and volatility can keep rising before it falls (2008, 2020, 2022). From this VIX, the scanner opens iron condors instead of strangles, so every new trade has a known worst case.") }}
     {% endcall %}
     {% call group("Earnings", "ETFs and indexes have no earnings. A single stock opens only when its next report is known and further away than this. A coming report also inflates IV rank and IV30: that reflects the event, not options that are expensive in the usual sense, which is another reason not to hold through it.") %}
       {{ num("s", scan_map.earnings_days, scan.earnings_days, scan_defaults.earnings_days, scan_map.earnings_days[5]) }}

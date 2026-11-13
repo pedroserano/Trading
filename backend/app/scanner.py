@@ -20,7 +20,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
-from . import dividends, targets
+from . import dividends, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
 from .extremes import compute as compute_extreme
 
@@ -67,6 +67,11 @@ DEFAULTS = {
     "min_iv30": 15.0,
     "rich_iv30": 40.0,
     "min_iv_hv": 1.0,
+    # Extreme volatility: defined risk only (margin balloons, and volatility can keep
+    # expanding before it contracts). 0 turns it off.
+    "defined_vix": 30.0,
+    # Spread across sectors, so one wrong read cannot sink the account. 0: no limit.
+    "max_per_sector": 2,
     "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
     "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
@@ -93,6 +98,8 @@ FIELDS = [
     ("max_bp_share", "Buying power for one trade, at most", 0.5, 50, "percent", "% net liq"),
     ("max_per_underlying", "Open trades per underlying, at most", 1, 10, "int", "trades"),
     ("max_new_per_day", "New trades per day, at most", 0, 50, "int", "trades"),
+    ("max_per_sector", "Open trades per sector, at most (0: no limit)", 0, 50, "int", "trades"),
+    ("defined_vix", "Iron condors only while VIX is at least (0: off)", 0, 100, "float", "VIX"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
     ("min_pop", "Probability of profit, at least", 0, 95, "percent", "%"),
     ("min_iv30", "IV30 at least (quiet-market floor; 0: off)", 0, 100, "float", "%"),
@@ -237,6 +244,12 @@ def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
                 f"{s['contracts']} contract{'s' if s['contracts'] > 1 else ''} per trade "
                 "(the Schwab account also at most its live contract limit).",
                 (
+                    f"While VIX is {s['defined_vix']:g} or more: iron condors only, since margin "
+                    "balloons and volatility can keep expanding before it contracts."
+                    if s.get("defined_vix")
+                    else "No VIX limit on strangles."
+                ),
+                (
                     "Outside the portfolio delta band: the side that brings delta back is sold "
                     f"closer, at {s['tilt_delta']:.2f}Δ."
                     if s.get("band_lean", True)
@@ -269,6 +282,12 @@ def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
                 "little for implied over realized volatility.",
                 f"At most {s['max_new_per_day']} new trades a day, adding at most "
                 f"{pct(s['max_bp_day'])} of net liq in buying power.",
+                (
+                    f"At most {s['max_per_sector']} open trades per sector, counting this "
+                    "scan's, so one wrong read on a sector cannot sink the account."
+                    if s.get("max_per_sector")
+                    else "No limit per sector."
+                ),
             ],
         ),
         (
@@ -327,6 +346,10 @@ def _score(
     ret = (abs(mid or 0) * 100 * n / bp) if bp else 0.0
     edge = 0.5 * min(max((iv_hv or 1.0) - 1.0, 0.0), 1.0)
     return round(ivr / 100 + min(ret, 1.0) * 2 + (pop or 0) + edge, 4)
+
+
+def _sector_name(key: str) -> str:
+    return key.split(":")[0] if key.startswith(portfolio_view.UNKNOWN) else key
 
 
 def realized_vol(closes: list, sessions: int = 21) -> float | None:
@@ -555,6 +578,18 @@ class Scanner:
                 for u in snap.get("underlyings", [])
                 for x in u["strategies"]
             }
+            vix = (snap.get("market") or {}).get("vix") or (
+                (self.portfolios["live"].snapshot or {}).get("market") or {}
+            ).get("vix")
+            defined_only = (
+                bool(s.get("defined_vix")) and vix is not None and vix >= s["defined_vix"]
+            )
+            by_sector: dict[str, int] = {}
+            for u in snap.get("underlyings", []):
+                n_open = sum(1 for x in u["strategies"] if x.get("trade_id") is not None)
+                if n_open:
+                    key = self._sector(u["symbol"])
+                    by_sector[key] = by_sector.get(key, 0) + n_open
             rules = await self.preferences.rules()
             bands = snap.get("bands") or {}
             full = _theta_full(bands)
@@ -580,9 +615,19 @@ class Scanner:
                         {"symbol": sym, "reason": f"already a trade here in {exp['date']}"}
                     )
                     continue
+                sector = self._sector(sym)
+                if s.get("max_per_sector") and by_sector.get(sector, 0) >= s["max_per_sector"]:
+                    skipped.append(
+                        {
+                            "symbol": sym,
+                            "reason": f"already {by_sector[sector]} open trades in "
+                            f"{_sector_name(sector)} (at most {s['max_per_sector']} per sector)",
+                        }
+                    )
+                    continue
                 # IV rank decides the risk taken; premium admitted on IV30 alone, at a low IV
                 # rank, gets defined risk only.
-                strangle = ivr >= s["undefined_ivr"] and not vol["rich_only"]
+                strangle = ivr >= s["undefined_ivr"] and not vol["rich_only"] and not defined_only
                 ext = await self._extreme(sym, quotes, s)
                 tilt = (ext or {}).get("direction") if s["extreme_tilt"] else None
                 # Outside the delta band the portfolio comes first: lean back toward it.
@@ -681,6 +726,9 @@ class Scanner:
                         f": IV rank under {s['min_ivr']} but IV30 rich, so an iron condor "
                         "(defined risk)"
                     )
+                elif defined_only and ivr >= s["undefined_ivr"]:
+                    volatility += f"; VIX {vix:.0f}: defined risk only"
+                candidates[-1]["sector"] = sector
                 candidates[-1]["volatility"] = volatility
                 if tilt:
                     lean = "bullish" if tilt == "down" else "bearish"
@@ -713,9 +761,21 @@ class Scanner:
                     candidates,
                     key=lambda c: (bool(c.get("delta_push")), not c.get("tilt"), -c["score"]),
                 )
+                run_sector = dict(by_sector)
                 for c in order:
                     if placed_today >= s["max_new_per_day"]:
                         c["note"] = "daily limit of new trades reached"
+                        continue
+                    sec = c.get("sector")
+                    if (
+                        sec
+                        and s.get("max_per_sector")
+                        and run_sector.get(sec, 0) >= s["max_per_sector"]
+                    ):
+                        c["note"] = (
+                            f"{_sector_name(sec)} would go over {s['max_per_sector']} trades "
+                            "per sector"
+                        )
                         continue
                     if net_liq and c["bp"] and bp_today + c["bp"] > s["max_bp_day"] * net_liq:
                         c["note"] = (
@@ -726,6 +786,8 @@ class Scanner:
                     what = await self._act(account, level, c, s, today)
                     if what:
                         acted.append(what)
+                        if sec:
+                            run_sector[sec] = run_sector.get(sec, 0) + 1
                         placed_today += 1
                         bp_today += c["bp"] or 0
             result = {
@@ -752,6 +814,12 @@ class Scanner:
         return compute_extreme(
             closes or [], price, None if change is None else float(change), await self._iv30(sym), s
         )
+
+    def _sector(self, sym: str) -> str:
+        """The sector, for spreading trades; a stock of unknown sector is its own."""
+        industries = getattr(self.earnings, "industries", None) or {}
+        sec = portfolio_view.sector(sym, industries)
+        return f"{sec}:{sym}" if sec == portfolio_view.UNKNOWN else sec
 
     async def _iv30(self, sym: str) -> float | None:
         cache = getattr(self.watchlist, "cache", {}) or {}

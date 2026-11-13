@@ -370,3 +370,46 @@ def test_realized_vol_and_the_volatility_checks():
     off = {**s, "min_iv30": 0, "min_iv_hv": 0, "rich_iv30": 0}
     assert check(62, 10.0, 30.0, off) == (None, False)
     assert "under 30" in check(20, 99.0, 10.0, off)[0]
+
+
+@pytest.mark.anyio
+async def test_extreme_vix_means_defined_risk_only():
+    # The test chain's iron condors collect about a fifth of their width.
+    scanner, _, _ = harness({"min_ic_credit": 0.15})
+    portfolio = scanner.portfolios["sim"]
+    portfolio.snapshot["market"] = {"vix": 35.0}
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["strategy"] == "Iron condor" and "VIX 35: defined risk only" in c["label"]
+    portfolio.snapshot["market"] = {"vix": 20.0}
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["strategy"] == "Strangle"
+    off, _, _ = harness({"defined_vix": 0})
+    portfolio = off.portfolios["sim"]
+    portfolio.snapshot["market"] = {"vix": 50.0}
+    (c,) = (await off.scan("sim", act=False))["candidates"]
+    assert c["strategy"] == "Strangle"
+
+
+@pytest.mark.anyio
+async def test_trades_are_spread_across_sectors():
+    scanner, _, _ = harness({"max_per_sector": 2})
+    portfolio = scanner.portfolios["sim"]
+    # Two broad-index trades open already (QQQ and IWM): SPY would be a third.
+    portfolio.snapshot["underlyings"] = [
+        {"symbol": "QQQ", "strategies": [{"trade_id": 1, "numbers": {}}]},
+        {"symbol": "IWM", "strategies": [{"trade_id": 2, "numbers": {}}]},
+    ]
+    r = await scanner.scan("sim", act=False)
+    reasons = {x["symbol"]: x["reason"] for x in r["skipped"]}
+    assert "already 2 open trades in Broad index" in reasons["SPY"]
+    # Within one run: SPY and AAPL (here also broad index) with room for one more.
+    scanner2, _, _ = harness({"max_per_sector": 1, "max_new_per_day": 5})
+    scanner2.earnings = Earnings({"AAPL": "2027-01-28"})
+    scanner2.earnings.industries = {"AAPL": "Broad index"}
+    r = await scanner2.scan("sim")
+    assert len(r["acted"]) == 1
+    assert any(
+        "would go over 1 trades per sector" in (c.get("note") or "") for c in r["candidates"]
+    )
+    # A stock of unknown sector is its own sector.
+    assert scanner2._sector("ZZZZ") != scanner2._sector("YYYY")
