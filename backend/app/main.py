@@ -1351,7 +1351,9 @@ def create_app(
         c = await live_broker.config()
         live_syms = None if c.get("all_symbols") else list(c["symbols"])
         return scan_mod.scan_map(
-            scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)), live_syms
+            scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
+            live_syms,
+            (await preferences.rules()).delta_bias,
         )
 
     @app.get("/api/scanner/map", dependencies=[Depends(require_login)])

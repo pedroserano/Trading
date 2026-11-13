@@ -70,7 +70,11 @@ RULE_NOTES = {
     "exposure. You can adjust them after.",
     "delta_bias": "Choosing a bias saves at once and sets the delta band to its default: "
     "neutral -5% to +5% of net liq, bullish 0 to +15%, bearish -15% to 0. You can adjust the "
-    "band after.",
+    "band after. Neutral is tastylive's default: new trades are symmetric and a tested trade "
+    "is rolled back to neutral. Bullish: the scanner sells puts closer than calls until "
+    "portfolio delta reaches the middle of the band, and a tested-side roll leaves the trade "
+    "slightly long rather than flat. Bearish is the mirror. Profit targets, 21 DTE and the "
+    "other exits are the same whatever the bias.",
     "block_over_ceiling": "Hard limit: an opening order that would take total buying power in "
     "use above the ceiling for the current VIX is refused. Unticked, it is only a warning.",
 }

@@ -830,3 +830,14 @@ async def test_sim_entry_fill_after_hours_is_switched_on_and_saved():
     assert h.svc.state["trades"][tid] == {"enabled": True}
     saved = h.store.settings[h.svc.state_key]
     assert saved["trades"][tid] == {"enabled": True}
+
+
+def test_untested_roll_leans_toward_the_bias():
+    t = auto.untested_target
+    assert t(0.35, "P", "neutral") == 0.35 and t(0.35, "C", "neutral") == 0.35
+    assert t(0.35, "P", "bullish") == 0.40  # a call tested: the put rolls up past neutral
+    assert t(0.35, "C", "bullish") == 0.30  # a put tested: the call rolls a little less
+    assert t(0.35, "C", "bearish") == 0.40 and t(0.35, "P", "bearish") == 0.30
+    assert t(0.60, "P", "bullish") == 0.5 and t(0.12, "C", "bullish") == 0.10
+    m = auto.rules_map(Rules(delta_bias="bullish"), merged_settings(None))
+    assert "slightly long (bullish bias)" in dict((r[0], r) for r in m["trades"])["Strangle"][3]

@@ -277,7 +277,14 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             f"When: a short strike reaches {rules.tested_delta:.2f} delta or goes in the money "
             "(Rules tab). Does: a strangle rolls its untested side closer for a credit, at "
             f"most {settings['max_untested_rolls']} times per expiration; an iron condor "
-            "rolls its untested vertical; an inverted strangle, or a deeply tested straddle "
+            "rolls its untested vertical"
+            + (
+                f" (to the tested side's delta shifted {BIAS_SHIFT:g} toward your "
+                f"{rules.delta_bias} bias, so the roll leaves it leaning that way)"
+                if getattr(rules, "delta_bias", "neutral") != "neutral"
+                else ""
+            )
+            + "; an inverted strangle, or a deeply tested straddle "
             'or narrow strangle, buys the guts and sells the wings. With "Short option in the '
             'money: roll out for a credit" ticked, these also roll out in time for a credit '
             "once in the money: a front ratio (the whole ratio) at the same strikes; a single "
@@ -640,6 +647,12 @@ def rules_map(rules, settings: dict) -> dict:
     )
     untested = settings["max_untested_rolls"]
     loss = f"{rules.loss_multiple:g}× credit"
+    bias = getattr(rules, "delta_bias", "neutral")
+    bias_note = (
+        f", leaving it slightly {'long' if bias == 'bullish' else 'short'} ({bias} bias)"
+        if bias != "neutral" and settings.get("untested_target", "match") == "match"
+        else ""
+    )
 
     def itm(text: str) -> str:
         return text if switch else f"{text} (switch off: notify)"
@@ -649,7 +662,8 @@ def rules_map(rules, settings: dict) -> dict:
             "Strangle",
             f"{pct(rules.profit_target)} of credit",
             out_to,
-            f"Roll untested side closer (≤{untested} per expiration); inverted: guts to wings",
+            f"Roll untested side closer (≤{untested} per expiration){bias_note}; inverted: "
+            "guts to wings",
             "As tested",
             loss,
         ),
@@ -665,7 +679,7 @@ def rules_map(rules, settings: dict) -> dict:
             "Iron condor",
             f"{pct(rules.profit_target)} of credit",
             defined,
-            "Roll untested vertical, same width"
+            f"Roll untested vertical, same width{bias_note}"
             if settings.get("roll_ic_untested", True)
             else "Notify",
             "As tested",
@@ -787,6 +801,21 @@ def rules_map(rules, settings: dict) -> dict:
             "(and LIVE_AUTO=true)",
         ],
     }
+
+
+BIAS_SHIFT = 0.05
+
+
+def untested_target(tested_delta: float, untested_pc: str, bias: str) -> float:
+    """The delta to roll the untested side to: the tested side's (re-centring the trade to
+    neutral), shifted a little toward a bullish or bearish bias so the roll leaves the trade
+    leaning that way. A short put adds long delta, a short call short delta."""
+    target = min(tested_delta, 0.5)
+    if bias == "neutral":
+        return target
+    toward = (untested_pc == "P") == (bias == "bullish")
+    shifted = target + BIAS_SHIFT if toward else target - BIAS_SHIFT
+    return round(min(max(shifted, 0.10), 0.5), 4)
 
 
 def roll_strike(rows: list[dict], side: str, short: dict, settings: dict) -> dict | None:
@@ -1723,11 +1752,12 @@ class AutomationService:
         untested = min(shorts, key=lambda x: abs(x["delta"]))
         tested = next(x for x in shorts if x is not untested)
         rules = await self.preferences.rules()
-        target = (
-            min(abs(tested["delta"]), 0.5)
-            if settings.get("untested_target", "match") == "match"
-            else rules.tested_delta
-        )
+        if settings.get("untested_target", "match") == "match":
+            target = untested_target(
+                abs(tested["delta"]), untested["put_call"], getattr(rules, "delta_bias", "neutral")
+            )
+        else:
+            target = rules.tested_delta
         exp = date.fromisoformat(untested["expiration"])
         chain = chain_mod.chain_rows(
             await self.source.option_chain(u["symbol"], exp, exp, strike_count=None) or {}

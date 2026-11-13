@@ -190,3 +190,26 @@ async def test_a_trade_pushing_delta_out_is_flagged_and_only_proposed():
     assert c["delta_push"].startswith("Beta-weighted delta would be +7%")
     assert "Warning: Beta-weighted" in c["label"]
     assert r["acted"] == ["propose SPY"] and not (broker.state or {}).get("orders")
+
+
+def test_a_bias_leans_new_trades_until_the_middle_of_the_band():
+    def b(bias, value, lo, hi):
+        return {
+            "bias": bias,
+            "delta": {
+                "value": value,
+                "min": lo,
+                "max": hi,
+                "state": targets.state(value, lo, hi),
+            },
+        }
+
+    assert targets.lean(b("neutral", 0.03, -0.05, 0.05)) is None  # neutral: unchanged
+    assert targets.lean(b("neutral", -0.08, -0.05, 0.05)) == "down"
+    assert targets.lean(b("bullish", 0.02, 0.0, 0.15)) == "down"  # under the 7.5% middle
+    assert targets.lean(b("bullish", 0.10, 0.0, 0.15)) is None
+    assert targets.lean(b("bullish", 0.20, 0.0, 0.15)) == "up"  # past the band: back down
+    assert targets.lean(b("bearish", -0.02, -0.15, 0.0)) == "up"
+    assert targets.lean(b("bearish", -0.10, -0.15, 0.0)) is None
+    why = targets.lean_reason(b("bullish", 0.02, 0.0, 0.15))
+    assert "your bullish bias" in why and "under the +7.5% middle" in why

@@ -161,7 +161,7 @@ def parse_form(form: dict, current: dict | None) -> dict:
     return out
 
 
-def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
+def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral") -> dict:
     """What the scanner does, step by step, from the current settings: for the Scanner map on
     Settings. live_symbols: the Schwab account's allowlist, or None for any underlying."""
 
@@ -252,6 +252,14 @@ def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
                 (
                     "Outside the portfolio delta band: the side that brings delta back is sold "
                     f"closer, at {s['tilt_delta']:.2f}Δ."
+                    + (
+                        f" Your bias is {bias}: inside the band too, new trades lean "
+                        f"{bias} (the {'put' if bias == 'bullish' else 'call'} sold closer) "
+                        "until portfolio delta reaches the middle of the band."
+                        if bias != "neutral"
+                        else " Your bias is neutral (tastylive's default): inside the band, "
+                        "trades are symmetric."
+                    )
                     if s.get("band_lean", True)
                     else "Delta band lean: off."
                 ),
@@ -733,11 +741,7 @@ class Scanner:
                 if tilt:
                     lean = "bullish" if tilt == "down" else "bearish"
                     if leaned:
-                        d = bands["delta"]
-                        why_lean = (
-                            f"portfolio delta {d['value']:+.1%} of net liq, {d['state']} the "
-                            f"{d['min']:+.0%} to {d['max']:+.0%} band"
-                        )
+                        why_lean = targets.lean_reason(bands)
                     else:
                         why_lean = "; ".join(ext["reasons"])
                     candidates[-1]["label"] = f"{label}, tilted {lean}: {why_lean}"

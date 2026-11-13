@@ -413,3 +413,21 @@ async def test_trades_are_spread_across_sectors():
     )
     # A stock of unknown sector is its own sector.
     assert scanner2._sector("ZZZZ") != scanner2._sector("YYYY")
+
+
+@pytest.mark.anyio
+async def test_a_bullish_bias_leans_new_trades_inside_the_band():
+    scanner, _, _ = harness()
+    snap = scanner.portfolios["sim"].snapshot
+    snap["bands"] = {
+        "bias": "bullish",
+        "delta": {"value": 0.02, "min": 0.0, "max": 0.15, "state": "inside"},
+        "theta": {},
+    }
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] == "down" and c["band_lean"]
+    assert "tilted bullish: your bullish bias" in c["label"]
+    snap["bands"]["bias"] = "neutral"
+    snap["bands"]["delta"] = {"value": 0.02, "min": -0.05, "max": 0.05, "state": "inside"}
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] is None

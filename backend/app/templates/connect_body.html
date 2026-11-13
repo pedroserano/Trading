@@ -313,7 +313,7 @@
       {{ check("avoid_through_earnings", "No trade that expires after the next report", scan.avoid_through_earnings, scan_defaults.avoid_through_earnings) }}
     {% endcall %}
     {% call group("Leaning") %}
-      {{ check("band_lean", "Lean back toward the portfolio delta band", scan.band_lean, scan_defaults.band_lean, "Outside the band, sell the put closer when too short, the call closer when too long. Comes before the price-extreme lean.") }}
+      {{ check("band_lean", "Lean toward the portfolio delta band and bias", scan.band_lean, scan_defaults.band_lean, "Outside the band, sell the put closer when too short, the call closer when too long. With a bullish or bearish bias (Portfolio tab), also inside the band: lean that way until delta reaches the middle of the band. Neutral, tastylive's default, does not lean inside the band. Comes before the price-extreme lean.") }}
       {{ check("extreme_tilt", "Lean at price extremes", scan.extreme_tilt, scan_defaults.extreme_tilt, "After a drop sell the put side closer (bullish), after a rise the call side (bearish).") }}
       {{ num("s", scan_map.tilt_delta, scan.tilt_delta, scan_defaults.tilt_delta, scan_map.tilt_delta[5]) }}
     {% endcall %}

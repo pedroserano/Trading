@@ -54,10 +54,40 @@ def bands(totals: dict, account: dict | None, spy: float | None, rules) -> dict:
 
 
 def lean(b: dict | None) -> str | None:
-    """The scanner's lean back toward the delta band: "down" sells the put closer (adds
-    delta, bullish), "up" sells the call closer (takes delta away, bearish)."""
-    st = ((b or {}).get("delta") or {}).get("state")
-    return {"below": "down", "above": "up"}.get(st)
+    """The scanner's lean on new trades: "down" sells the put closer (adds delta, bullish),
+    "up" sells the call closer (takes delta away, bearish).
+
+    Outside the delta band, back toward it. Inside it, a bullish or bearish bias keeps
+    leaning its way until delta reaches the middle of the band; neutral does not lean.
+    """
+    d = (b or {}).get("delta") or {}
+    st = d.get("state")
+    if st in ("below", "above"):
+        return {"below": "down", "above": "up"}[st]
+    bias, v = (b or {}).get("bias", "neutral"), d.get("value")
+    if st == "inside" and v is not None and bias != "neutral":
+        mid = (d["min"] + d["max"]) / 2
+        if bias == "bullish" and v < mid - 1e-12:
+            return "down"
+        if bias == "bearish" and v > mid + 1e-12:
+            return "up"
+    return None
+
+
+def lean_reason(b: dict) -> str:
+    """Why the scanner leaned, for the trade's label."""
+    d = b["delta"]
+    if d["state"] in ("below", "above"):
+        return (
+            f"portfolio delta {d['value']:+.1%} of net liq, {d['state']} the "
+            f"{d['min']:+.0%} to {d['max']:+.0%} band"
+        )
+    mid = (d["min"] + d["max"]) / 2
+    side = "under" if d["value"] < mid else "over"
+    return (
+        f"your {b['bias']} bias, portfolio delta {d['value']:+.1%} of net liq, {side} the "
+        f"{mid:+.1%} middle of the band"
+    )
 
 
 def after(b: dict | None, d_delta: float | None, d_theta: float | None) -> dict:
