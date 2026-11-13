@@ -60,14 +60,6 @@ export function AutoBar() {
     <>
       <div className="toolbar auto-bar">
         <span className="dim-text">Automanage</span>
-        <div className="seg" role="group" aria-label="Automation">
-          <button aria-pressed={!view.paused} disabled={busy} onClick={() => run("/api/automation/pause", { paused: false })}>
-            Running
-          </button>
-          <button aria-pressed={view.paused} disabled={busy} onClick={() => run("/api/automation/pause", { paused: true })}>
-            Paused
-          </button>
-        </div>
         <span className="dim-text">
           {managed} trade{managed === 1 ? "" : "s"} · {view.orders_today}/{view.settings.daily_cap} orders today ·{" "}
           {view.in_window ? "in" : "outside"} its window {view.settings.window_start}–{view.settings.window_end} ET
