@@ -214,6 +214,8 @@ device, and the Home Screen icon works on an iPhone. The address at home keeps w
 
 5. Open `https://truenas-scale.rainbow-chickadee.ts.net` on a device with Tailscale on. To
    have notification links use it, set `APP_URL` to it in `.env` and restart the app.
+7. One-tap Schwab sign-in can return to this address too, from anywhere Tailscale is on:
+   see the next section.
 
 ## One-tap Schwab sign-in (optional)
 
@@ -231,6 +233,25 @@ Schwab's approval for a few days, during which sign-in may not work. Do it at a 
 
 The browser will warn about the certificate on the way back unless Caddy's root
 certificate is trusted on that device (section 5).
+
+### Through Tailscale (works away from home, no certificate warning)
+
+With Tailscale set up (above), use the ts.net address instead. Replace
+`truenas-scale.rainbow-chickadee.ts.net` with yours.
+
+1. In the Schwab developer portal, set the callback URLs to all three, separated by commas:
+   `https://127.0.0.1:8182,https://192.168.7.80:8443/schwab/callback,https://truenas-scale.rainbow-chickadee.ts.net/schwab/callback`.
+   Schwab accepts several; the app uses the one in `.env`. This edit can also put the app
+   back through Schwab's approval for a few days.
+2. Wait until the app shows "Ready For Use" again.
+3. In `.env`, set both, then stop and start the app:
+   ```
+   SCHWAB_CALLBACK_URL=https://truenas-scale.rainbow-chickadee.ts.net/schwab/callback
+   APP_URL=https://truenas-scale.rainbow-chickadee.ts.net
+   ```
+   `APP_URL` makes the sign-in reminders open the same address.
+4. Start the sign-in from the ts.net address, not 192.168.7.80: the page Schwab returns to
+   needs your app login for the same address. Tailscale must be on on that device.
 
 ## Trading history from the spreadsheet
 
