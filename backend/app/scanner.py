@@ -14,6 +14,7 @@ guards and preview as a manual one.
 import asyncio
 import copy
 import logging
+import math
 import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -60,6 +61,12 @@ DEFAULTS = {
     # A single stock's trade never holds through its next report.
     "avoid_through_earnings": True,
     "min_pop": 0.55,  # probability of profit at entry, at least
+    # Absolute IV, alongside IV rank (which alone selects and ranks): a floor for quiet
+    # markets, premium rich enough to sell at any IV rank (iron condors only), and implied
+    # over realized volatility. 0 turns each off.
+    "min_iv30": 15.0,
+    "rich_iv30": 40.0,
+    "min_iv_hv": 1.0,
     "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
     "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
@@ -88,6 +95,9 @@ FIELDS = [
     ("max_new_per_day", "New trades per day, at most", 0, 50, "int", "trades"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
     ("min_pop", "Probability of profit, at least", 0, 95, "percent", "%"),
+    ("min_iv30", "IV30 at least (quiet-market floor; 0: off)", 0, 100, "float", "%"),
+    ("rich_iv30", "Or IV30 at least, at any IV rank (0: off)", 0, 200, "float", "%"),
+    ("min_iv_hv", "IV30 over 30-day realized volatility, at least (0: off)", 0, 3, "float", "×"),
     ("max_bp_day", "Buying power added in one day, at most", 0.5, 100, "percent", "% net liq"),
     ("scan_every", "Scan again every (0: once a day)", 0, 240, "int", "min"),
     ("range_band", "Price extreme: near a 52-week high or low, within", 0.5, 25, "percent", "%"),
@@ -170,7 +180,27 @@ def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
         (
             "2. Each underlying must pass",
             [
-                f"IV rank at least {s['min_ivr']} (none yet: skipped).",
+                f"IV rank at least {s['min_ivr']}: options expensive for that stock, against its "
+                "own year (none yet: skipped). Raw IV30 never ranks stocks, since some are "
+                "always jumpier than others."
+                + (
+                    f" Or, at any IV rank, IV30 of {s['rich_iv30']:g}% or more: premium rich "
+                    "enough to sell anyway, as an iron condor only."
+                    if s.get("rich_iv30")
+                    else ""
+                ),
+                (
+                    f"IV30 at least {s['min_iv30']:g}%: in a calm market a high IV rank can "
+                    "still pay too little."
+                    if s.get("min_iv30")
+                    else "No IV30 floor."
+                ),
+                (
+                    f"IV30 at least {s['min_iv_hv']:g}× the stock's realized volatility over "
+                    "30 sessions: the options must price more movement than the stock makes."
+                    if s.get("min_iv_hv")
+                    else "No implied-versus-realized check."
+                ),
                 (
                     "No open trade in it yet."
                     if s["max_per_underlying"] == 1
@@ -235,7 +265,8 @@ def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
             "6. Which first, and how many",
             [
                 "Trades that keep delta in its band first, then those leaning, then by score: "
-                "IV rank, credit per dollar of buying power, and probability of profit.",
+                "IV rank, credit per dollar of buying power, probability of profit, and a "
+                "little for implied over realized volatility.",
                 f"At most {s['max_new_per_day']} new trades a day, adding at most "
                 f"{pct(s['max_bp_day'])} of net liq in buying power.",
             ],
@@ -282,11 +313,52 @@ def _mid(c: dict | None) -> float | None:
     return None
 
 
-def _score(ivr: float, mid: float | None, n: int, bp: float | None, pop: float | None) -> float:
-    """Ranking: IV rank, the credit per dollar of buying power, and the probability of
-    profit, each roughly on a 0 to 1 scale."""
+def _score(
+    ivr: float,
+    mid: float | None,
+    n: int,
+    bp: float | None,
+    pop: float | None,
+    iv_hv: float | None = None,
+) -> float:
+    """Ranking: IV rank (IV against its own history, never raw IV30, which would always
+    favour naturally volatile names), the credit per dollar of buying power (premium size),
+    the probability of profit, and a little for implied over realized volatility."""
     ret = (abs(mid or 0) * 100 * n / bp) if bp else 0.0
-    return round(ivr / 100 + min(ret, 1.0) * 2 + (pop or 0), 4)
+    edge = 0.5 * min(max((iv_hv or 1.0) - 1.0, 0.0), 1.0)
+    return round(ivr / 100 + min(ret, 1.0) * 2 + (pop or 0) + edge, 4)
+
+
+def realized_vol(closes: list, sessions: int = 21) -> float | None:
+    """Annualised standard deviation of the last sessions' daily log returns, in percent,
+    from (date, close) pairs; None with too little history."""
+    values = [c for _, c in closes if c and c > 0][-(sessions + 1) :]
+    if len(values) < sessions // 2 + 1:
+        return None
+    rets = [math.log(b / a) for a, b in zip(values, values[1:], strict=False)]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / max(len(rets) - 1, 1)
+    return round(math.sqrt(var) * math.sqrt(252) * 100, 2)
+
+
+def vol_check(ivr: float, iv30: float | None, hv: float | None, s: dict) -> tuple[str | None, bool]:
+    """(reason to skip or None, admitted on rich IV30 alone). IV rank selects; absolute IV30
+    and realized volatility only veto, or admit premium rich enough at any IV rank."""
+    rich = bool(s.get("rich_iv30")) and iv30 is not None and iv30 >= s["rich_iv30"]
+    if ivr < s["min_ivr"] and not rich:
+        return f"IV rank {ivr:.0f}, under {s['min_ivr']}", False
+    if s.get("min_iv30") and iv30 is not None and iv30 < s["min_iv30"]:
+        return (
+            f"IV30 {iv30:.1f}% is under {s['min_iv30']:g}%: IV rank {ivr:.0f} rests on a tiny "
+            "range, so the premium is not worth the risk"
+        ), False
+    if s.get("min_iv_hv") and iv30 is not None and hv:
+        if iv30 / hv < s["min_iv_hv"] - 1e-9:
+            return (
+                f"IV30 {iv30:.1f}% vs realized {hv:.1f}%: options price less movement than the "
+                "stock is making"
+            ), False
+    return None, rich and ivr < s["min_ivr"]
 
 
 def _theta_full(bands: dict) -> str | None:
@@ -502,13 +574,15 @@ class Scanner:
                 if isinstance(why, str):
                     skipped.append({"symbol": sym, "reason": why})
                     continue
-                ivr, exp, rows = why
+                ivr, exp, rows, vol = why
                 if (sym, exp["date"]) in held_exps:
                     skipped.append(
                         {"symbol": sym, "reason": f"already a trade here in {exp['date']}"}
                     )
                     continue
-                strangle = ivr >= s["undefined_ivr"]
+                # IV rank decides the risk taken; premium admitted on IV30 alone, at a low IV
+                # rank, gets defined risk only.
+                strangle = ivr >= s["undefined_ivr"] and not vol["rich_only"]
                 ext = await self._extreme(sym, quotes, s)
                 tilt = (ext or {}).get("direction") if s["extreme_tilt"] else None
                 # Outside the delta band the portfolio comes first: lean back toward it.
@@ -583,9 +657,31 @@ class Scanner:
                         "tilt": tilt,
                         "band_lean": leaned,
                         "delta_push": push,
-                        "score": _score(ivr, pv["prices"]["mid"], n, bp, pop),
+                        "iv30": vol["iv30"],
+                        "hv": vol["hv"],
+                        "score": _score(
+                            ivr,
+                            pv["prices"]["mid"],
+                            n,
+                            bp,
+                            pop,
+                            vol["iv30"] / vol["hv"] if vol["iv30"] and vol["hv"] else None,
+                        ),
                     }
                 )
+                volatility = (
+                    f"IV rank {ivr:.0f} · IV30 {vol['iv30']:.0f}%"
+                    if vol["iv30"] is not None
+                    else f"IV rank {ivr:.0f} · IV30 unknown"
+                )
+                if vol["iv30"] is not None and vol["hv"]:
+                    volatility += f" vs realized {vol['hv']:.0f}%"
+                if vol["rich_only"]:
+                    volatility += (
+                        f": IV rank under {s['min_ivr']} but IV30 rich, so an iron condor "
+                        "(defined risk)"
+                    )
+                candidates[-1]["volatility"] = volatility
                 if tilt:
                     lean = "bullish" if tilt == "down" else "bearish"
                     if leaned:
@@ -608,6 +704,7 @@ class Scanner:
                         f". Ex-dividend {'about ' if div['estimated'] else ''}{div['ex_date']} "
                         f"({div['amount']:.2f}) falls inside the trade"
                     )
+                candidates[-1]["label"] += f" ({candidates[-1]['volatility']})"
             acted = []
             if act and level != "off":
                 # Trades that keep delta in its band first, then those leaning (back toward the
@@ -670,8 +767,16 @@ class Scanner:
         ivr = await self._ivr(account, sym)
         if ivr is None:
             return "no IV rank yet (it needs IV history)"
-        if ivr < s["min_ivr"]:
-            return f"IV rank {ivr:.0f}, under {s['min_ivr']}"
+        iv30 = await self._iv30(sym)
+        hv = None
+        if self.history is not None:
+            try:
+                hv = realized_vol(await self.history.ensure(sym) or [])
+            except Exception as e:  # history is a refinement, never a block
+                log.warning("Scanner history for %s failed: %s", sym, e)
+        why, rich_only = vol_check(ivr, iv30, hv, s)
+        if why:
+            return why
         q = quotes.get(sym) or {}
         kind = {q.get("assetMainType"), q.get("assetSubType"), q.get("assetType")}
         fund = bool(kind & FUNDS) or sym.startswith("$")
@@ -703,7 +808,12 @@ class Scanner:
                 f"{s['min_dte']}-{s['max_dte']} DTE"
             )
         if report and s.get("avoid_through_earnings", True) and report <= exp["date"]:
-            return f"earnings {report} fall before the {exp['date']} expiration"
+            # A report inside the trade also lifts IV rank: the event, not volatility that is
+            # expensive in the usual sense.
+            return (
+                f"earnings {report} fall before the {exp['date']} expiration (and the report "
+                "inflates IV rank)"
+            )
         d = date.fromisoformat(exp["date"])
         chain = chain_mod.chain_rows(
             await self.source.option_chain(sym, d, d, strike_count=None) or {}
@@ -721,7 +831,7 @@ class Scanner:
             return f"at-the-money spread {sum(spreads) / len(spreads):.1%} is too wide"
         if oi < s["min_oi"]:
             return f"at-the-money open interest {oi:,.0f}, under {s['min_oi']:,}"
-        return ivr, exp, rows
+        return ivr, exp, rows, {"iv30": iv30, "hv": hv, "rich_only": rich_only}
 
     async def _act(self, account, level, c, s, today) -> str | None:
         auto = self.automations[account]

@@ -266,9 +266,22 @@
       </div>
       {{ check("automanage_new", "Switch automanage on for new trades", scan.automanage_new, scan_defaults.automanage_new) }}
     {% endcall %}
+    {% call group("Volatility: is the premium worth selling?", "IV rank picks the trades; IV30 and realized volatility only check them.") %}
+      <p class="dim small">Every stock has its own normal level of volatility: an IV30 of 35% is
+        high for SPY but low for TSLA. So the scanner never compares stocks by raw IV30, which
+        would always favour the naturally jumpy ones. It asks whether each stock's options are
+        expensive <em>for that stock</em>, using IV rank, because high volatility tends to fall
+        back to its own normal. Then three checks on the actual level of volatility: is there
+        enough premium to bother (a high IV rank in a quiet market can still pay very little),
+        is the premium rich enough to sell even at an ordinary IV rank, and are the options
+        pricing in more movement than the stock has really been making.</p>
+      {{ num("s", scan_map.min_ivr, scan.min_ivr, scan_defaults.min_ivr, scan_map.min_ivr[5], "IV rank: where today's implied volatility sits in its own one-year range, 0 at the low, 100 at the high. tastytrade sells premium from 30.") }}
+      {{ num("s", scan_map.undefined_ivr, scan.undefined_ivr, scan_defaults.undefined_ivr, scan_map.undefined_ivr[5], "At this IV rank or more, a strangle (undefined risk); below it, an iron condor (defined risk).") }}
+      {{ num("s", scan_map.min_iv30, scan.min_iv30, scan_defaults.min_iv30, scan_map.min_iv30[5], "When the whole market is calm, a high IV rank can rest on a tiny range: an IV rank of 60 on implied volatility that moved from 11% to 14% offers little premium for the risk. Below this IV30, nothing opens, whatever the IV rank.") }}
+      {{ num("s", scan_map.rich_iv30, scan.rich_iv30, scan_defaults.rich_iv30, scan_map.rich_iv30[5], "Premium size: a stock whose IV30 is this high pays plenty even when its IV rank is unremarkable, so it can still be sold under the IV rank minimum, as an iron condor only (defined risk).") }}
+      {{ num("s", scan_map.min_iv_hv, scan.min_iv_hv, scan_defaults.min_iv_hv, scan_map.min_iv_hv[5], "Implied versus realized: IV30 divided by how much the stock has actually moved over the last 30 sessions. Below 1, the options price less movement than the stock is making, so selling them has no edge. Trades with more edge also rank a little higher.") }}
+    {% endcall %}
     {% call group("What it opens") %}
-      {{ num("s", scan_map.min_ivr, scan.min_ivr, scan_defaults.min_ivr, scan_map.min_ivr[5], "tastytrade sells premium when IV rank is 30 or more.") }}
-      {{ num("s", scan_map.undefined_ivr, scan.undefined_ivr, scan_defaults.undefined_ivr, scan_map.undefined_ivr[5], "Below this, an iron condor (defined risk) instead.") }}
       {{ num("s", scan_map.short_delta, scan.short_delta, scan_defaults.short_delta, scan_map.short_delta[5]) }}
       {{ num("s", scan_map.ic_short_delta, scan.ic_short_delta, scan_defaults.ic_short_delta, scan_map.ic_short_delta[5]) }}
       {{ num("s", scan_map.min_ic_credit, scan.min_ic_credit, scan_defaults.min_ic_credit, scan_map.min_ic_credit[5], "tastytrade collects about a third of the width.") }}
@@ -287,7 +300,7 @@
       {{ num("s", scan_map.max_new_per_day, scan.max_new_per_day, scan_defaults.max_new_per_day, scan_map.max_new_per_day[5]) }}
       {{ num("s", scan_map.max_bp_day, scan.max_bp_day, scan_defaults.max_bp_day, scan_map.max_bp_day[5]) }}
     {% endcall %}
-    {% call group("Earnings", "ETFs and indexes have no earnings. A single stock opens only when its next report is known and further away than this.") %}
+    {% call group("Earnings", "ETFs and indexes have no earnings. A single stock opens only when its next report is known and further away than this. A coming report also inflates IV rank and IV30: that reflects the event, not options that are expensive in the usual sense, which is another reason not to hold through it.") %}
       {{ num("s", scan_map.earnings_days, scan.earnings_days, scan_defaults.earnings_days, scan_map.earnings_days[5]) }}
       {{ check("avoid_through_earnings", "No trade that expires after the next report", scan.avoid_through_earnings, scan_defaults.avoid_through_earnings) }}
     {% endcall %}

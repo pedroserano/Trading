@@ -23,7 +23,9 @@ async def test_no_single_stock_trade_holds_through_earnings():
     scanner.earnings = Earnings({"AAPL": "2026-12-03"})
     r = await scanner.scan("sim", act=False)
     reasons = {x["symbol"]: x["reason"] for x in r["skipped"]}
-    assert reasons["AAPL"] == f"earnings 2026-12-03 fall before the {EXP.isoformat()} expiration"
+    assert reasons["AAPL"].startswith(
+        f"earnings 2026-12-03 fall before the {EXP.isoformat()} expiration"
+    )
     scanner2, _, _ = harness({"avoid_through_earnings": False})
     scanner2.earnings = Earnings({"AAPL": "2026-12-03"})
     r = await scanner2.scan("sim", act=False)

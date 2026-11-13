@@ -318,7 +318,7 @@ async def test_a_price_extreme_tilts_the_trade_and_ranks_first():
     # Tilting switched off: neutral as before.
     scanner.store.settings[sc.SETTINGS_KEY] = {"extreme_tilt": False}
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
-    assert c["tilt"] is None and c["label"] == "Strangle 570/610"
+    assert c["tilt"] is None and c["label"].startswith("Strangle 570/610 (IV rank")
 
 
 def test_scanner_map_follows_the_settings():
@@ -338,3 +338,35 @@ def test_scanner_map_follows_the_settings():
     assert "Price-extreme lean: off." in changed["4. The trade"]
     assert any("every 30 min" in x for x in changed["1. When and what"])
     assert any("SPY and your watchlist" in x for x in changed["1. When and what"][2:3])
+
+
+def test_realized_vol_and_the_volatility_checks():
+    import math
+    from datetime import date, timedelta
+
+    from app import scanner as scan_mod
+
+    # Alternating +1% / -1% days: about 1% a day, so about 15.9% a year.
+    closes, p = [], 100.0
+    for i in range(30):
+        p *= 1.01 if i % 2 else 0.99
+        closes.append((date(2026, 10, 1) + timedelta(days=i), p))
+    hv = scan_mod.realized_vol(closes)
+    assert hv == pytest.approx(math.sqrt(252) * 1.0, rel=0.05)
+    assert scan_mod.realized_vol(closes[:5]) is None
+
+    s = scan_mod.merged(None)
+    check = scan_mod.vol_check
+    assert check(45, 25.0, 18.0, s) == (None, False)  # elevated, enough premium, edge
+    # A high IV rank on a tiny IV in a calm market.
+    assert "tiny range" in check(62, 13.8, 10.0, s)[0]
+    # Rich premium at an ordinary IV rank: admitted, defined risk only.
+    assert check(20, 55.0, 40.0, s) == (None, True)
+    assert "under 30" in check(20, 30.0, 20.0, s)[0]
+    # Options pricing less movement than the stock is making.
+    assert "less movement" in check(45, 18.0, 21.0, s)[0]
+    # Missing data never blocks; each check can be switched off.
+    assert check(45, None, None, s) == (None, False)
+    off = {**s, "min_iv30": 0, "min_iv_hv": 0, "rich_iv30": 0}
+    assert check(62, 10.0, 30.0, off) == (None, False)
+    assert "under 30" in check(20, 99.0, 10.0, off)[0]
