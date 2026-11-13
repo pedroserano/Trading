@@ -267,6 +267,7 @@ export default function Trade({ symbol, shares = 0 }: { symbol: string; shares?:
           vol: chain.atm_iv,
           legs: legs.map(({ symbol: _s, ...l }) => l),
           held_shares: coveredNow,
+          account,
         };
         let a = await postJson<Analysis>("/api/analyze", body);
         if (coveredNow) {

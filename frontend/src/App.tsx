@@ -1,5 +1,6 @@
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AccountContext, TicketContext, type Account } from "./context";
+import { AccountContext, AccountsContext, TicketContext, type Account, type SchwabAccount } from "./context";
+import { getJson } from "./api";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
 import MarketStrip from "./MarketStrip";
@@ -88,8 +89,37 @@ function useNow(ms: number) {
   return now;
 }
 
+/** The Schwab accounts the app runs, by their Schwab names; read again every few minutes. */
+function useSchwabAccounts(): SchwabAccount[] | null {
+  const [accounts, setAccounts] = useState<SchwabAccount[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    const read = async () => {
+      try {
+        const r = await getJson<{ accounts: SchwabAccount[] }>("/api/accounts/in-use");
+        if (live) setAccounts(r.accounts);
+      } catch {
+        /* kept as it was; the next read tries again */
+      }
+    };
+    read();
+    const t = window.setInterval(read, 300_000);
+    return () => {
+      live = false;
+      window.clearInterval(t);
+    };
+  }, []);
+  return accounts;
+}
+
 export default function App() {
-  const [account, setAccount] = usePersisted<Account>("account", "live");
+  const [stored, setAccount] = usePersisted<Account>("account", "live");
+  const accounts = useSchwabAccounts();
+  // A remembered account no longer in use falls back to the first Schwab account.
+  const account =
+    stored === "sim" || accounts === null || accounts.some((a) => a.key === stored)
+      ? stored
+      : (accounts[0]?.key ?? "live");
   const { snapshot, link } = useSnapshot(account);
   const route = useRoute();
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
@@ -107,8 +137,9 @@ export default function App() {
   return (
     <TicketContext.Provider value={setTicket}>
       <AccountContext.Provider value={account}>
+      <AccountsContext.Provider value={accounts ?? []}>
       <AutomationContext.Provider value={automation}>
-      <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} />
+      <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} accounts={accounts ?? []} />
       <main>
         <Banner s={snapshot} />
         {route.page === "watchlist" ? <Watchlist /> : null}
@@ -149,6 +180,7 @@ export default function App() {
       </main>
       {ticket ? <OrderTicket spec={ticket} onClose={() => setTicket(null)} /> : null}
       </AutomationContext.Provider>
+      </AccountsContext.Provider>
       </AccountContext.Provider>
     </TicketContext.Provider>
   );
@@ -289,6 +321,7 @@ function Header(props: {
   route: Route;
   account: Account;
   setAccount: (a: Account) => void;
+  accounts: SchwabAccount[];
 }) {
   const { s, link, route } = props;
   const stacked = useStackedStats();
@@ -323,9 +356,16 @@ function Header(props: {
         <strong>Trading</strong>
         {s.mode === "demo" ? <span className="badge demo">DEMO</span> : null}
         <div className="seg acct-switch" role="group" aria-label="Account">
-          <button aria-pressed={props.account === "live"} onClick={() => props.setAccount("live")}>
-            Schwab
-          </button>
+          {(props.accounts.length ? props.accounts : [{ key: "live", name: "Schwab", last4: "" }]).map((x) => (
+            <button
+              key={x.key}
+              aria-pressed={props.account === x.key}
+              onClick={() => props.setAccount(x.key)}
+              title={x.last4 ? `Schwab account …${x.last4}` : undefined}
+            >
+              {x.name}
+            </button>
+          ))}
           <button aria-pressed={props.account === "sim"} onClick={() => props.setAccount("sim")}>
             Simulated
           </button>
@@ -403,14 +443,6 @@ function Banner({ s }: { s: Snapshot }) {
         <a href="#/settings">
           {s.needs.what === "connect" ? "Connect to Schwab" : "Choose account"}
         </a>
-      </div>
-    );
-  }
-  if (s.connection.visible_accounts && s.connection.visible_accounts > 1) {
-    return (
-      <div className="banner warn">
-        The Schwab sign-in can see {s.connection.visible_accounts} accounts. Live trading will
-        require it to see only the trading account. <a href="#/settings">Details</a>
       </div>
     );
   }
@@ -731,7 +763,7 @@ function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | und
   return (
     <tr className="leg actions">
       <td className="l" colSpan={cols}>
-        {shares && account === "live" ? (
+        {shares && account !== "sim" ? (
           <button type="button" className="small" onClick={() => open(closeStockSpec(st, under, account))}>
             Close shares
           </button>

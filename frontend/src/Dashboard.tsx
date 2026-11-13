@@ -44,7 +44,7 @@ interface Finding {
   better: boolean;
 }
 interface DashData {
-  account: "live" | "sim";
+  account: string;
   count: number;
   prices_pending: number | null;
   coverage: Record<string, number>;
@@ -84,7 +84,7 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const q = account === "live" ? `account=live&futures=${futures}` : "account=sim";
+      const q = account !== "sim" ? `account=${encodeURIComponent(account)}&futures=${futures}` : "account=sim";
       setData(await getJson<DashData>(`/api/dashboard?${q}`));
       setError(null);
     } catch (e) {
@@ -110,7 +110,7 @@ export default function Dashboard() {
           </button>
 
         </div>
-        {account === "live" ? (
+        {account !== "sim" ? (
           <>
             <label className="check">
               <input type="checkbox" checked={futures} onChange={(e) => setFutures(e.target.checked)} /> Include futures options in totals
@@ -119,7 +119,7 @@ export default function Dashboard() {
         ) : (
           <span className="dim-text">Simulated account</span>
         )}
-        {account === "live" ? <ExportForm /> : null}
+        {account !== "sim" ? <ExportForm account={account} /> : null}
       </div>
       {error ? <div className="banner warn">{error}</div> : null}
       {data && data.prices_pending ? (
@@ -137,7 +137,7 @@ export default function Dashboard() {
   );
 }
 
-function ExportForm() {
+function ExportForm({ account }: { account: string }) {
   const year = new Date().getFullYear();
   const [start, setStart] = useState(`${year}-01-01`);
   const [end, setEnd] = useState(new Date().toISOString().slice(0, 10));
@@ -146,7 +146,7 @@ function ExportForm() {
       className="export"
       onSubmit={(e) => {
         e.preventDefault();
-        window.location.href = `/api/export/sheet?start=${start}&end=${end}`;
+        window.location.href = `/api/export/sheet?start=${start}&end=${end}&account=${encodeURIComponent(account)}`;
       }}
     >
       <span className="dim-text">Export in the spreadsheet's format</span>

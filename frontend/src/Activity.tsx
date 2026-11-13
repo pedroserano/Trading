@@ -36,7 +36,7 @@ export default function Activity() {
 
   const cancel = async (o: SimOrder) => {
     try {
-      if (account === "live" && !window.confirm(`Cancel order #${o.id} at Schwab?`)) return;
+      if (account !== "sim" && !window.confirm(`Cancel order #${o.id} at Schwab?`)) return;
       await postJson(`/api/orders/${o.id}/cancel?account=${account}`, {});
       load();
     } catch (e) {
@@ -58,7 +58,7 @@ export default function Activity() {
   };
 
   if (!data) return error ? <div className="banner warn">{error}</div> : <div className="empty">Loading…</div>;
-  const live = data.account === "live";
+  const live = data.account !== "sim";
   const working = data.orders.filter((o) => o.status === "WORKING");
   const done = data.orders.filter((o) => o.status !== "WORKING").slice(0, 50);
   const realized = data.trades.reduce((a, t) => a + (t.realized_pl ?? 0), 0);
@@ -280,7 +280,7 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
   );
 }
 
-function TradeRows(props: { t: SimTrade; account: "live" | "sim"; open: boolean; toggle: () => void; onChanged: () => void }) {
+function TradeRows(props: { t: SimTrade; account: string; open: boolean; toggle: () => void; onChanged: () => void }) {
   const { t, open, toggle } = props;
   const sum = chainSummary(t);
   return (

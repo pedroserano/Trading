@@ -5,7 +5,7 @@ import type { Chain, Expiration, OrderLeg, Preview, SimOrder, StrategyView } fro
 
 export interface TicketSpec {
   title: string;
-  account: "sim" | "live";
+  account: string;
   intent: "open" | "close" | "roll" | "adjust";
   underlying: string;
   tradeId: number | string | null;
@@ -33,7 +33,7 @@ function sideName(side: Side): string {
 }
 
 /** Close the option legs of a strategy, or of one side of it. */
-export function closeSpec(st: StrategyView, underlying: string, account: "sim" | "live", side: Side = null): TicketSpec {
+export function closeSpec(st: StrategyView, underlying: string, account: string, side: Side = null): TicketSpec {
   return {
     title: `Close ${underlying} ${st.name}${sideName(side)}`,
     account,
@@ -45,7 +45,7 @@ export function closeSpec(st: StrategyView, underlying: string, account: "sim" |
 }
 
 /** Close the shares of a strategy (Schwab account only): an order of their own. */
-export function closeStockSpec(st: StrategyView, underlying: string, account: "sim" | "live"): TicketSpec {
+export function closeStockSpec(st: StrategyView, underlying: string, account: string): TicketSpec {
   const shares = st.legs.filter((l) => l.kind === "EQUITY");
   return {
     title: `Close ${underlying} shares`,
@@ -58,7 +58,7 @@ export function closeStockSpec(st: StrategyView, underlying: string, account: "s
 }
 
 /** Roll the option legs of a strategy, or of one side of it (closing and opening legs count toward the limit). */
-export function rollSpec(st: StrategyView, underlying: string, account: "sim" | "live", side: Side = null): TicketSpec {
+export function rollSpec(st: StrategyView, underlying: string, account: string, side: Side = null): TicketSpec {
   return {
     ...closeSpec(st, underlying, account, side),
     title: `Roll ${underlying} ${st.name}${sideName(side)}`,
@@ -197,7 +197,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legs, limit, duration]);
 
-  const live = spec.account === "live";
+  const live = spec.account !== "sim";
   const liveBlocks = preview?.live_blocks ?? [];
   const canPlace =
     !!preview && preview.errors.length === 0 && (!live || liveBlocks.length === 0) && !busy && limit !== null;

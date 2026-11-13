@@ -29,12 +29,12 @@ const KIND: Record<string, string> = {
 };
 
 /** The roll history of one trade chain, oldest first, with a running total. */
-export function ChainTimeline({ chain, account, onChanged }: { chain: SimTrade; account: "live" | "sim"; onChanged?: () => void }) {
+export function ChainTimeline({ chain, account, onChanged }: { chain: SimTrade; account: string; onChanged?: () => void }) {
   const [error, setError] = useState<string | null>(null);
   let running = 0;
   const split = async (group: string) => {
     try {
-      await postJson("/api/chains/split", { group });
+      await postJson(`/api/chains/split?account=${encodeURIComponent(account)}`, { group });
       onChanged?.();
     } catch (e) {
       setError((e as Error).message);
@@ -69,7 +69,7 @@ export function ChainTimeline({ chain, account, onChanged }: { chain: SimTrade; 
               {e.note ? (
                 <div className="ev-note">
                   {e.note}
-                  {account === "live" && e.group && (e.auto_linked || e.note === "Linked by you") ? (
+                  {account !== "sim" && e.group && (e.auto_linked || e.note === "Linked by you") ? (
                     <button type="button" className="small" onClick={() => split(String(e.group))}>
                       Split into its own trade
                     </button>
@@ -92,7 +92,7 @@ export function chainSummary(c: SimTrade) {
   return { net, fees, rolls, days };
 }
 
-export default function ChainHistory({ account, chainId, onClose }: { account: "live" | "sim"; chainId: string | number; onClose: () => void }) {
+export default function ChainHistory({ account, chainId, onClose }: { account: string; chainId: string | number; onClose: () => void }) {
   const [chain, setChain] = useState<SimTrade | null>(null);
   const [error, setError] = useState<string | null>(null);
 

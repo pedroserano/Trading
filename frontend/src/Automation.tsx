@@ -8,7 +8,7 @@ type Ctx = { view: AutomationView | null; update: (v: AutomationView) => void };
 /** Automanage state, shared by the Positions toolbar and every position's actions row. */
 export const AutomationContext = createContext<Ctx>({ view: null, update: () => {} });
 
-export function useAutomation(account: "sim" | "live"): Ctx {
+export function useAutomation(account: string): Ctx {
   const [view, setView] = useState<AutomationView | null>(null);
   useEffect(() => {
     setView(null);
@@ -42,7 +42,7 @@ export function AutoBar() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (!view) return null;
-  const live = view.account === "live";
+  const live = view.account !== "sim";
   const run = async (url: string, body: unknown = {}) => {
     if (live && url.endsWith("/accept") && !window.confirm("Send this order to Schwab at mid?")) return;
     setBusy(true);

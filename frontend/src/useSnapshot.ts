@@ -4,7 +4,7 @@ import type { Snapshot } from "./types";
 export type Link = "connecting" | "open" | "retrying";
 
 /** Live portfolio snapshot pushed by the backend over server-sent events. */
-export function useSnapshot(account: "live" | "sim" = "live"): {
+export function useSnapshot(account: string = "live"): {
   snapshot: Snapshot | null;
   link: Link;
 } {

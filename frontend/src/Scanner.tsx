@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
-import { AccountContext } from "./context";
+import { AccountContext, AccountsContext } from "./context";
 import { clock, money, pct } from "./format";
 
 type Candidate = {
@@ -39,6 +39,7 @@ function done(acted: string[], symbol: string): string {
 /** The scanner's last look for new trades, and Scan now. */
 export default function Scanner() {
   const account = useContext(AccountContext);
+  const accountName = useContext(AccountsContext).find((a) => a.key === account)?.name ?? "Schwab account";
   const [view, setView] = useState<ScanView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +78,7 @@ export default function Scanner() {
         <span>
           <b>Scanner</b>{" "}
           <span className="dim-text">
-            {account === "live" ? "Schwab account" : "Simulated account"}: {what}. Daily at {view.settings.scan_time} ET;
+            {account !== "sim" ? accountName : "Simulated account"}: {what}. Daily at {view.settings.scan_time} ET;
             opens when IV rank ≥ {view.settings.min_ivr}, strangles from {view.settings.undefined_ivr}.
             {last ? ` Last scan ${clock(last.at)}.` : " No scan yet."}
           </span>

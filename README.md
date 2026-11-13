@@ -30,6 +30,12 @@ in Settings. Live orders are also limited to an allowlist of underlyings (or any
 ticked), a contract cap per leg and a buying-power cap per trade, and each one you send needs
 Schwab's preview and a second confirm.
 
+Every account ticked on Schwab's consent screen at sign-in is used at once, named as in Schwab
+(the header picker switches between them): each has its own positions, trade history,
+automanage levels, scanner level and Schwab limits, while the rules are shared. The
+trading-history workbook can be imported on Settings, Connection: Joint rows go to the first
+account, Individual rows to the account named Individual.
+
 Automation places Schwab orders by itself only with `LIVE_AUTO=true` in `.env` as well; without
 it, Auto is not offered for the Schwab account. Each account has its own automanage levels and
 scanner level (Settings, Automation and Scanner), and the top of both tabs lists what runs by

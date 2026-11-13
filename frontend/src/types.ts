@@ -240,7 +240,7 @@ export interface OrderLeg {
 }
 
 export interface Preview {
-  account: "sim" | "live";
+  account: string;
   intent: string;
   strategy: string;
   underlying: string;
@@ -348,7 +348,7 @@ export interface Mismatch {
 }
 
 export interface Activity {
-  account: "live" | "sim";
+  account: string;
   cash?: number;
   start_cash?: number;
   net_liq?: number | null;
@@ -388,7 +388,7 @@ export interface AutoLogEntry {
 }
 
 export interface AutomationView {
-  account: "sim" | "live";
+  account: string;
   max_level: AutoLevel;
   auto_possible?: boolean;
   auto_why?: string | null;
