@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 import pytest
 
-from app.accounts import AccountSelector
+from app.accounts import AccountRegistry
 from app.config import Settings
 from app.datasource import DemoDataSource
 from app.jobs import DailyJobs
@@ -29,7 +29,11 @@ def demo_portfolio(store=None, resolver=None):
     source = DemoDataSource(today=TODAY)
     store = store or MemoryStore()
     clock = lambda: datetime(2026, 11, 11, 11, 0, tzinfo=ET)  # noqa: E731
-    resolver = resolver or AccountSelector(store, source, lambda: None, demo_hash="DEMOHASH")
+    if resolver is None:
+
+        async def resolver():
+            return DemoDataSource.HASH
+
     p = PortfolioService(
         source, store, settings(), lambda: {"connected": True}, resolver, "demo", clock=clock
     )
@@ -90,25 +94,49 @@ async def test_iv_recorded_once_per_day_after_close():
 
 
 class Numbers:
+    def __init__(self, nums, names=None):
+        self.nums, self.names = nums, names or {}
+
     async def account_numbers(self):
-        return [{"accountNumber": "11116789", "hashValue": "H1"}]
+        return [{"accountNumber": n, "hashValue": f"H{n}"} for n in self.nums]
+
+    async def account_names(self):
+        return self.names
 
 
 @pytest.mark.anyio
-async def test_account_selector_needs_choice_then_resolves_hash():
+async def test_the_registry_keeps_the_old_account_as_live_and_names_every_other():
     store = MemoryStore()
-    sel = AccountSelector(store, Numbers(), lambda: ConnectionStatus(True, created_at=5))
-    with pytest.raises(NeedsSetup) as e:
-        await sel()
-    assert e.value.what == "select_account"
-    with pytest.raises(ValueError):
-        await sel.select("99990000")
-    await sel.select("11116789")
-    assert await sel() == "H1"
-    store.settings["account"] = {"number": "55550000", "last4": "0000"}
-    sel._cache = None
-    with pytest.raises(NeedsSetup, match="ending 0000 is not visible"):
-        await sel()
+    # The account chosen before several were supported stays "live", whatever the order.
+    store.settings["account"] = {"number": "22225678", "last4": "5678"}
+    src = Numbers(["11111234", "22225678"], {"11111234": "Individual", "22225678": "Joint"})
+    reg = AccountRegistry(store, src, lambda: ConnectionStatus(True, created_at=5))
+    added, gone = await reg.refresh()
+    assert {a["key"]: a["name"] for a in reg.in_use()} == {
+        "live": "Joint",
+        "live-1234": "Individual",
+    }
+    assert set(added) == {"live-1234"} and gone == []
+    assert await reg.resolver("live-1234")() == "H11111234"
+    # Unticked at the next sign-in: out of use, its data kept; ticked again: back as before.
+    src.nums = ["22225678"]
+    assert await reg.refresh() == ([], ["live-1234"])
+    assert reg.keys() == ["live"]
+    with pytest.raises(NeedsSetup, match="Individual is not visible"):
+        await reg.resolver("live-1234")()
+    src.nums = ["11111234", "22225678"]
+    assert await reg.refresh() == (["live-1234"], [])
+    # Without a nickname: "Account …1234"; two with one name: told apart by the last 4.
+    src.names = {"11111234": "", "22225678": ""}
+    reg.entry("live-1234")["name"] = ""
+    reg.entry("live")["name"] = ""
+    assert reg.name("live-1234") == "Account …1234"
+    reg.entry("live-1234")["name"] = reg.entry("live")["name"] = "Trading"
+    assert reg.name("live") == "Trading …5678"
+    # A fresh install: the first account listed is "live".
+    fresh = AccountRegistry(MemoryStore(), Numbers(["33339999"]), lambda: ConnectionStatus(True))
+    await fresh.refresh()
+    assert fresh.keys() == ["live"] and fresh.name("live") == "Account …9999"
 
 
 @pytest.mark.anyio

@@ -13,6 +13,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
+from .acctkeys import key_for
 from .orders import Ticket, TicketError, TicketLeg, schwab_order, validate_shape
 from .schwab_service import SchwabError, SchwabNotConnected
 
@@ -206,7 +207,8 @@ def check(order: dict) -> dict:
 
 
 class OrderCheckService:
-    def __init__(self, source, store, resolve_account, enabled=lambda: True):
+    def __init__(self, source, store, resolve_account, enabled=lambda: True, account="live"):
+        self.store_key = key_for(STORE_KEY, account)
         self.source = source
         self.store = store
         self.resolve_account = resolve_account
@@ -242,7 +244,7 @@ class OrderCheckService:
         account_hash = await self.resolve_account()
         now = datetime.now(UTC)
         orders = await self.source.orders(account_hash, now - timedelta(days=LOOKBACK_DAYS), now)
-        saved = await self.store.get_setting(STORE_KEY) or {}
+        saved = await self.store.get_setting(self.store_key) or {}
         for order in orders or []:
             if order.get("orderId") is None:
                 continue
@@ -252,13 +254,13 @@ class OrderCheckService:
             saved[str(order["orderId"])] = entry
         # Keep the newest, so orders older than the look-back stay in the log for a while.
         kept = sorted(saved.values(), key=lambda e: e.get("entered_at") or "", reverse=True)[:KEEP]
-        await self.store.set_setting(STORE_KEY, {str(e["order_id"]): e for e in kept})
+        await self.store.set_setting(self.store_key, {str(e["order_id"]): e for e in kept})
         self.checked_at = time.time()
         self.error = None
         return len(orders or [])
 
     async def view(self) -> dict:
-        saved = await self.store.get_setting(STORE_KEY) or {}
+        saved = await self.store.get_setting(self.store_key) or {}
         entries = sorted(saved.values(), key=lambda e: e.get("entered_at") or "", reverse=True)
         counts: dict[str, int] = {}
         for e in entries:

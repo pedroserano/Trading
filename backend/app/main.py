@@ -29,7 +29,7 @@ from . import chain as chain_mod
 from . import dashboard as dash
 from . import guards, indexweights, plain, portfolio_view, signals, targets
 from . import scanner as scan_mod
-from .accounts import AccountSelector
+from .accounts import AccountRegistry
 from .analysis import TradeLeg, analyze
 from .automation import (
     AUTO_STEPS,
@@ -302,9 +302,8 @@ def create_app(
             return ConnectionStatus(connected=True, token_age_s=86400.0, created_at=0)
         return schwab.status()
 
-    selector = AccountSelector(
-        store, source, connection_status, demo_hash=DemoDataSource.HASH if demo else None
-    )
+    # Every Schwab account ticked at the sign-in, each by its key ("live" for the first).
+    registry = AccountRegistry(store, source, connection_status)
 
     def connection_json() -> dict:
         s = connection_status()
@@ -312,7 +311,7 @@ def create_app(
             "connected": s.connected,
             "expires_in_days": s.expires_in_days,
             "detail": s.detail,
-            "visible_accounts": selector.visible_count,
+            "visible_accounts": registry.visible_count,
         }
 
     preferences = Preferences(store, settings)
@@ -321,7 +320,7 @@ def create_app(
         store,
         settings,
         connection_json,
-        selector,
+        registry.resolver("live"),
         mode="demo" if demo else "live",
         preferences=preferences,
         notifier=notifier,
@@ -332,30 +331,37 @@ def create_app(
             schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
         )
         portfolio.stream = stream
-    chain_service = ChainService(source, store, portfolio, selector)
+    chain_service = ChainService(source, store, portfolio, registry.resolver("live"))
     order_check = OrderCheckService(
-        source, store, selector, enabled=lambda: connection_status().connected
+        source, store, registry.resolver("live"), enabled=lambda: connection_status().connected
     )
     live_broker = LiveBroker(
         store,
         schwab,
         source,
-        selector,
+        registry.resolver("live"),
         server_allowed=settings.live_trading,
         notifier=notifier,
         app_url=settings.app_url,
         demo=demo,
         server_auto=settings.live_auto,
+        name=lambda: registry.name("live"),
     )
     portfolio.trade_info = chain_service.trade_info
     portfolio.chain_holdings = chain_service.holdings
+    # Each Schwab account's own services, by key; the first ("live") is built here and the
+    # others when the registry is read (add_account, below).
+    chains = {"live": chain_service}
+    checks = {"live": order_check}
+    brokers = {"live": live_broker}
     if stream is not None:
 
         def on_activity():
-            portfolio.refresh_soon()
-            chain_service.refresh_soon()
-            order_check.refresh_soon()
-            live_broker.refresh_soon()
+            for k in list(brokers):
+                portfolios[k].refresh_soon()
+                chains[k].refresh_soon()
+                checks[k].refresh_soon()
+                brokers[k].refresh_soon()
 
         stream.on_account_activity = on_activity
     broker = SimBroker(
@@ -379,16 +385,22 @@ def create_app(
         after_quotes=broker.on_quotes,
         trade_info=lambda: broker.trade_info() if broker.state else {},
     )
+    portfolios = {"live": portfolio, "sim": sim_portfolio}
     if stream is not None:
         sim_portfolio.stream = stream
-        stream.wanted = lambda: portfolio.wanted_symbols() | sim_portfolio.wanted_symbols()
 
-        def both(batch):
-            portfolio.on_stream_quotes(batch)
-            sim_portfolio.on_stream_quotes(batch)
+        def wanted():
+            out = set()
+            for pf in list(portfolios.values()):
+                out |= pf.wanted_symbols()
+            return out
 
-        stream.on_quotes = both
-    portfolios = {"live": portfolio, "sim": sim_portfolio}
+        def every(batch):
+            for pf in list(portfolios.values()):
+                pf.on_stream_quotes(batch)
+
+        stream.wanted = wanted
+        stream.on_quotes = every
     limits = guards.Limits(max_contracts=settings.max_contracts_per_leg)
 
     def margin_limits(rules) -> guards.Limits:
@@ -405,9 +417,10 @@ def create_app(
 
     async def earnings_symbols() -> set[str]:
         out = set(await preferences.watchlist())
-        for pf in (portfolio, sim_portfolio):
+        for pf in list(portfolios.values()):
             out |= {u["symbol"] for u in (pf.snapshot or {}).get("underlyings", [])}
-        out |= set((await live_broker.config())["symbols"])
+        for b in list(brokers.values()):
+            out |= set((await b.config())["symbols"])
         return out
 
     earnings = EarningsService(
@@ -451,8 +464,17 @@ def create_app(
         await store.open()
         await broker.load()
         await earnings.load()
-        await apply_live_cap()
         schwab.load()
+        await registry.load()
+        if connection_status().connected:
+            try:
+                await registry.refresh()
+            except Exception as e:  # the services retry; the app still starts
+                log.warning("Could not read the Schwab accounts: %s", e)
+        for key in registry.keys():
+            if key not in brokers:
+                add_account(key)
+        await apply_live_cap()
         log.info("Started. Demo: %s. Schwab connected: %s", demo, schwab.status().connected)
         tasks = []
         if start_background:
@@ -481,10 +503,16 @@ def create_app(
                 asyncio.create_task(supervise(name, fn, health), name=name)
                 for name, fn in services.items()
             ]
+            running["on"] = True
+            for key in list(brokers):
+                if key != "live":
+                    start_account(key)
         yield
-        for t in tasks:
+        running["on"] = False
+        every_task = tasks + [t for ts in account_tasks.values() for t in ts]
+        for t in every_task:
             t.cancel()
-        for t in tasks:
+        for t in every_task:
             with suppress(asyncio.CancelledError):
                 await t
         await schwab.close()
@@ -493,7 +521,8 @@ def create_app(
     app = FastAPI(title="Trading", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.portfolio = portfolio
     app.state.chain_service = chain_service
-    app.state.selector = selector
+    app.state.registry = registry
+    app.state.accounts = {"portfolios": portfolios, "chains": chains, "brokers": brokers}
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.secret_key,
@@ -583,12 +612,7 @@ def create_app(
         status = connection_status()
         error = request.session.pop("flash", None)
         notice = request.session.pop("notice", None)
-        accounts, selected = [], await selector.selected()
-        if status.connected and not demo:
-            try:
-                accounts = await selector.visible()
-            except SchwabError as e:
-                error = error or str(e)
+        accounts = registry.in_use()
         return templates.TemplateResponse(
             request,
             "connect_body.html" if fragment else "connect.html",
@@ -596,7 +620,6 @@ def create_app(
                 "demo": demo,
                 "status": status,
                 "accounts": accounts,
-                "selected": selected,
                 "error": error,
                 "notice": notice,
                 "db_error": await store.ping(),
@@ -663,7 +686,12 @@ def create_app(
     async def _finish_sign_in(request: Request, received_url: str):
         try:
             await schwab.complete_authorization(received_url)
-            portfolio.refresh_soon()
+            try:
+                await sync_accounts()
+            except Exception as e:
+                log.warning("Could not read the Schwab accounts after sign-in: %s", e)
+            for pf in list(portfolios.values()):
+                pf.refresh_soon()
             request.session["notice"] = "Schwab sign-in renewed."
         except SchwabError as e:
             request.session["flash"] = str(e)
@@ -683,16 +711,6 @@ def create_app(
     @app.post("/schwab/disconnect", dependencies=[Depends(require_login)])
     async def schwab_disconnect():
         await schwab.disconnect()
-        return RedirectResponse(settings_url("connection"), status_code=303)
-
-    @app.post("/account/select", dependencies=[Depends(require_login)])
-    async def account_select(request: Request, number: str = Form()):
-        try:
-            await selector.select(number)
-            portfolio.refresh_soon()
-            request.session["notice"] = f"Using the account ending {number[-4:]}."
-        except (ValueError, SchwabError) as e:
-            request.session["flash"] = str(e)
         return RedirectResponse(settings_url("connection"), status_code=303)
 
     @app.post("/notify/test", dependencies=[Depends(require_login)])
@@ -1276,7 +1294,9 @@ def create_app(
             else:
                 try:
                     preview = summarize_preview(
-                        await schwab.call("preview_order", await selector(), body_json)
+                        await schwab.call(
+                            "preview_order", await registry.resolver(body.account)(), body_json
+                        )
                     )
                 except Exception as e:
                     preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
@@ -1418,6 +1438,95 @@ def create_app(
         ),
     }
     app.state.automation = automations["sim"]
+    running = {"on": False}
+    account_tasks: dict[str, list[asyncio.Task]] = {}
+
+    def add_account(key: str) -> None:
+        """Builds a Schwab account's own services: its portfolio, trade chains, order check,
+        orders and automanage. The first account ("live") is built above."""
+        resolve = registry.resolver(key)
+        pf = PortfolioService(
+            source,
+            store,
+            settings,
+            connection_json,
+            resolve,
+            mode="demo" if demo else "live",
+            preferences=preferences,
+            notifier=notifier,
+            account=key,
+            name=lambda: registry.name(key),
+        )
+        pf.stream = stream
+        pf.earnings = earnings.info
+        cs = ChainService(source, store, pf, resolve, account=key)
+        pf.trade_info = cs.trade_info
+        pf.chain_holdings = cs.holdings
+        portfolios[key] = pf
+        chains[key] = cs
+        checks[key] = OrderCheckService(
+            source, store, resolve, enabled=lambda: connection_status().connected, account=key
+        )
+        brokers[key] = LiveBroker(
+            store,
+            schwab,
+            source,
+            resolve,
+            server_allowed=settings.live_trading,
+            notifier=notifier,
+            app_url=settings.app_url,
+            demo=demo,
+            server_auto=settings.live_auto,
+            account=key,
+            name=lambda: registry.name(key),
+        )
+        automations[key] = AutomationService(
+            store,
+            pf,
+            brokers[key],
+            source,
+            preferences,
+            notifier,
+            auto_submit,
+            app_url=settings.app_url,
+            clock=lambda: portfolio.clock(),
+            account=key,
+            max_level=brokers[key].auto_cap(),
+            name=lambda: registry.name(key),
+        )
+
+    def start_account(key: str) -> None:
+        """Starts a Schwab account's background services (when the app's are running)."""
+        if not running["on"] or account_tasks.get(key):
+            return
+        name = registry.name(key)
+        jobs_ = {
+            f"{name}: portfolio": portfolios[key].run,
+            f"{name}: publisher": portfolios[key].publisher,
+            f"{name}: trade chains": chains[key].run,
+            f"{name}: order check": checks[key].run,
+            f"{name}: orders": brokers[key].run,
+            f"{name}: automation": automations[key].run,
+        }
+        account_tasks[key] = [
+            asyncio.create_task(supervise(n, fn, health), name=n) for n, fn in jobs_.items()
+        ]
+
+    def stop_account(key: str) -> None:
+        for t in account_tasks.pop(key, []):
+            t.cancel()
+
+    async def sync_accounts() -> None:
+        """After a sign-in: start the accounts newly ticked, stop the ones no longer ticked."""
+        added, gone = await registry.refresh()
+        for key in added:
+            if key not in brokers:
+                add_account(key)
+            start_account(key)
+        for key in gone:
+            if key != "live":
+                stop_account(key)
+        await apply_live_cap()
 
     def rule_defaults(rules: Rules) -> dict:
         """Each rule's default for the current margin type and delta bias, for the Settings
@@ -1433,7 +1542,8 @@ def create_app(
         return d
 
     async def apply_live_cap() -> None:
-        automations["live"].max_level = live_broker.auto_cap()
+        for key, b in brokers.items():
+            automations[key].max_level = b.auto_cap()
 
     Acct = Literal["sim", "live"]
 

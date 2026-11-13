@@ -21,6 +21,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
+from .acctkeys import key_for
 from .orders import Ticket, TicketLeg, schwab_order
 
 log = logging.getLogger(__name__)
@@ -155,7 +156,14 @@ class LiveBroker:
         app_url: str = "",
         demo: bool = False,
         server_auto: bool = False,
+        account: str = "live",
+        name=None,
     ):
+        self.account = account
+        self.config_key = key_for(CONFIG_KEY, account)
+        self.state_key = key_for(STATE_KEY, account)
+        # The account's name in Schwab, for notifications ("[Joint] Order filled").
+        self.name = name or (lambda: "Live")
         self.store = store
         self.schwab = schwab
         self.source = source
@@ -176,7 +184,7 @@ class LiveBroker:
     # Settings ------------------------------------------------------------------------------
 
     async def config(self) -> dict:
-        saved = await self.store.get_setting(CONFIG_KEY) or {}
+        saved = await self.store.get_setting(self.config_key) or {}
         return {
             **copy.deepcopy(DEFAULT_CONFIG),
             **{k: v for k, v in saved.items() if k in DEFAULT_CONFIG},
@@ -209,7 +217,7 @@ class LiveBroker:
             if not 0.005 <= v <= 0.5:
                 raise ValueError("Live buying power per trade: between 0.5% and 50%")
             c["max_bp_share"] = v
-        await self.store.set_setting(CONFIG_KEY, c)
+        await self.store.set_setting(self.config_key, c)
         return c
 
     async def status(self) -> dict:
@@ -262,7 +270,7 @@ class LiveBroker:
 
     async def _load(self) -> dict:
         if self._mem is None:
-            self._mem = await self.store.get_setting(STATE_KEY) or {}
+            self._mem = await self.store.get_setting(self.state_key) or {}
         self._mem.setdefault("tracked", {})
         self._mem.setdefault("audit", [])
         return self._mem
@@ -273,7 +281,7 @@ class LiveBroker:
         self._mem["tracked"] = {
             k: v for k, v in self._mem["tracked"].items() if v.get("placed_at", 0) > cutoff
         }
-        await self.store.set_setting(STATE_KEY, self._mem)
+        await self.store.set_setting(self.state_key, self._mem)
 
     def _audit(self, action: str, **fields) -> None:
         self._mem["audit"].append({"at": time.time(), "action": action, **fields})
@@ -432,7 +440,7 @@ class LiveBroker:
     async def _notify(self, title: str, message: str) -> None:
         if self.notifier is not None and self.notifier.enabled:
             try:
-                await self.notifier.send(f"[Live] {title}", message, self.app_url)
+                await self.notifier.send(f"[{self.name()}] {title}", message, self.app_url)
             except Exception as e:
                 log.warning("Live notification failed: %s", e)
 

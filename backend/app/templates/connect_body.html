@@ -335,7 +335,7 @@
   <h2>{{ "Renew Schwab sign-in" if status.connected else "Connect to Schwab" }}</h2>
   {% if one_tap %}
   <p><a class="button primary" href="/schwab/authorize">Sign in with Schwab</a></p>
-  <p class="dim small">Sign in, tick only the trading account, and approve. Schwab sends you back here.</p>
+  <p class="dim small">Sign in, tick the accounts the app should use, and approve. Schwab sends you back here.</p>
   {% else %}
   <ol>
     <li><a class="button primary" href="/schwab/authorize" target="_blank" rel="noopener">Open Schwab sign-in</a>
@@ -361,31 +361,17 @@
 </section>
 {% endif %}
 
-{% if not demo and status.connected %}
+{% if status.connected %}
 <section id="account">
-  <h2>Account</h2>
+  <h2>Accounts</h2>
   {% if accounts %}
-  <form method="post" action="/account/select">
-    <table>
-      <tr><th></th><th>Account</th></tr>
-      {% for a in accounts %}
-      <tr>
-        <td style="width:32px"><input type="radio" name="number" value="{{ a.number }}"
-            {% if selected and selected.number == a.number %}checked{% endif %} required></td>
-        <td style="text-align:left">…{{ a.last4 }}
-          {% if selected and selected.number == a.number %}<span class="dim">&nbsp;in use</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    <p><button class="primary" type="submit">Use this account</button></p>
-  </form>
-  {% if accounts|length > 1 %}
-  <p class="dim small">The Schwab sign-in shows {{ accounts|length }} accounts. For the strongest
-     separation, sign in again and tick only the trading account on Schwab's consent screen.</p>
-  {% endif %}
+  <p class="small">Used in the app, each with its own positions, history, automanage and limits:</p>
+  <ul class="small rmap-list">{% for a in accounts %}<li><b>{{ a.name }}</b> <span class="dim">…{{ a.last4 }}</span></li>{% endfor %}</ul>
   {% elif not error %}
   <p class="dim">Schwab returned no accounts.</p>
   {% endif %}
+  <p class="dim small">Every account ticked on Schwab's consent screen at sign-in is used, by the
+     name it has in Schwab. To add or drop one, sign in again and tick or untick it.</p>
 </section>
 {% endif %}
 

@@ -72,6 +72,9 @@ class FakeSource:
             {"accountNumber": "22224321", "hashValue": "H2"},
         ]
 
+    async def account_names(self):
+        return {"11116789": "Joint"}
+
 
 class FakeNotifier:
     def __init__(self, enabled=True):
@@ -122,7 +125,6 @@ def test_posts_require_login(settings):
     schwab = FakeSchwab(connected=True)
     with make_client(settings, schwab) as c:
         assert c.post("/schwab/disconnect").status_code == 303
-        assert c.post("/account/select", data={"number": "11116789"}).status_code == 303
         assert c.post("/notify/test").status_code == 303
         assert c.post("/schwab/complete", data={"received_url": "x"}).status_code == 303
         assert schwab.connected and schwab.completed_with is None
@@ -156,28 +158,17 @@ def test_root_serves_frontend_build(settings, tmp_path):
         assert "id=root" in c.get("/").text
 
 
-def test_connect_page_lists_masked_accounts_and_selects_one(settings):
+def test_connect_page_lists_every_ticked_account_by_its_schwab_name(settings):
     store = MemoryStore()
     with make_client(settings, FakeSchwab(connected=True), store=store) as c:
         login(c)
         r = c.get("/connect")
         assert r.status_code == 200
-        assert "…6789" in r.text and "…4321" in r.text
-        assert "11116789" in r.text  # form value; the page is behind the app login
-        assert "shows 2 accounts" in r.text
+        assert "<b>Joint</b>" in r.text and "<b>Account …4321</b>" in r.text
+        assert "11116789" not in r.text  # full numbers never on the page
         assert "Notifications off" in r.text
-        c.post("/account/select", data={"number": "22224321"})
-        assert store.settings["account"] == {"number": "22224321", "last4": "4321"}
-        assert "Using the account ending 4321" in c.get("/connect").text
-
-
-def test_selecting_an_invisible_account_is_refused(settings):
-    store = MemoryStore()
-    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
-        login(c)
-        c.post("/account/select", data={"number": "99990000"})
-        assert "account" not in store.settings
-        assert "not visible" in c.get("/connect").text
+        keys = [a["key"] for a in store.settings["schwab_accounts"]]
+        assert keys == ["live", "live-4321"]
 
 
 def test_connect_flow(settings):
@@ -565,3 +556,44 @@ def test_the_header_auto_switch_on_schwab_follows_the_env_only(settings):
         login(c)
         v = c.get("/api/automation?account=live").json()  # whatever the levels are
         assert v["auto_possible"] is True and v["auto_why"] is None
+
+
+def test_two_schwab_accounts_each_keep_their_own_positions_and_history(tmp_path):
+    import asyncio
+
+    from app.datasource import DemoDataSource
+
+    s = Settings(
+        _env_file=None, app_password=PASSWORD, secret_key=SECRET, demo_mode=True, data_dir=tmp_path
+    )
+    store = MemoryStore()
+    app = create_app(
+        s,
+        FakeSchwab(connected=True),
+        store=store,
+        source=DemoDataSource(),
+        notifier=FakeNotifier(enabled=False),
+        start_background=False,
+        static_dir=tmp_path / "none",
+    )
+    with TestClient(app, follow_redirects=False):
+        reg = app.state.registry
+        assert {a["key"]: a["name"] for a in reg.in_use()} == {
+            "live": "Joint",
+            "live-5678": "Individual",
+        }
+        acc = app.state.accounts
+        pf, cs = acc["portfolios"], acc["chains"]
+
+        async def go():
+            for k in ("live", "live-5678"):
+                await pf[k].tick()
+                await cs[k].sync()
+
+        asyncio.run(go())
+        joint = {u["symbol"] for u in pf["live"].snapshot["underlyings"]}
+        indiv = {u["symbol"] for u in pf["live-5678"].snapshot["underlyings"]}
+        assert {"SPY", "QQQ", "IWM", "AAPL"} <= joint and indiv == {"SPY"}
+        assert store.transactions_raw and all(a == "live" for a, _ in store.transactions_raw)
+        assert "transactions_synced_to:live-5678" in store.settings
+        assert acc["brokers"]["live-5678"].config_key == "live_trading:live-5678"

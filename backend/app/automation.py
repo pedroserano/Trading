@@ -60,6 +60,9 @@ DEFAULT_SETTINGS = {
         "earnings": "notify",
         "dividend": "notify",
     },
+    # Every other Schwab account's own levels, by account key; missing: a Propose-capped copy
+    # of levels_live (account_levels).
+    "levels_by_account": {},
     "dte_defined_action": "close",  # or "roll"
     "roll_target_dte": 45,
     # tastytrade keeps rolling for a credit while premium is worth selling; IV rank decides.
@@ -199,6 +202,21 @@ def merged_settings(saved: dict | None) -> dict:
         cap = LEVELS.index("propose")
         s["levels_live"] = {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in s["levels"].items()}
     return s
+
+
+def account_levels(settings: dict, account: str) -> dict:
+    """An account's own automanage levels: the simulated account's, the first Schwab
+    account's (levels_live), or another Schwab account's (levels_by_account), which start as
+    a Propose-capped copy of the first's."""
+    if account == "sim":
+        return settings["levels"]
+    if account == "live":
+        return settings["levels_live"]
+    own = settings.get("levels_by_account", {}).get(account)
+    if own:
+        return {**settings["levels_live"], **own}
+    cap = LEVELS.index("propose")
+    return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in settings["levels_live"].items()}
 
 
 def as_run(settings: dict, live_auto: bool) -> dict:
@@ -1154,7 +1172,10 @@ class AutomationService:
         clock=lambda: datetime.now(ET),
         account: str = "sim",
         max_level: str = "auto",
+        name=None,
     ):
+        # The account's name in Schwab, for notifications ("[Joint] Profit target placed").
+        self.name = name or (lambda: "Simulated" if account == "sim" else "Live")
         self.store = store
         self.portfolio = portfolio
         self.broker = broker
@@ -1285,9 +1306,9 @@ class AutomationService:
             "max_level": self.max_level,
             # The header's Auto switch means something only where orders can go out by
             # themselves: always on the simulated account, on Schwab only with the .env.
-            "auto_possible": self.account != "live" or self.max_level == "auto",
+            "auto_possible": self.account == "sim" or self.max_level == "auto",
             "auto_why": None
-            if self.account != "live" or self.max_level == "auto"
+            if self.account == "sim" or self.max_level == "auto"
             else "automatic Schwab orders need LIVE_TRADING=true and LIVE_AUTO=true in .env",
             "account": self.account,
             "trades": st["trades"],
@@ -1464,7 +1485,7 @@ class AutomationService:
     def levels(self, settings: dict) -> dict:
         """This account's levels. The cap is only a safety net: without LIVE_AUTO the
         Settings page never offers Auto for the Schwab account."""
-        own = settings["levels_live"] if self.account == "live" else settings["levels"]
+        own = account_levels(settings, self.account)
         cap = LEVELS.index(self.max_level)
         return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in own.items()}
 
@@ -1832,7 +1853,7 @@ class AutomationService:
             known = order.get("trade_id")
             if (
                 info.get("automanage_on_fill")
-                and self.account != "live"
+                and self.account == "sim"
                 and known is not None
                 and not str(known).startswith("new:")
             ):
@@ -2139,7 +2160,7 @@ class AutomationService:
         self.state["notified"].append(key)
         if self.notifier is not None and self.notifier.enabled:
             try:
-                prefix = "[Simulated]" if self.account == "sim" else "[Live]"
+                prefix = f"[{self.name()}]"
                 await self.notifier.send(f"{prefix} {title}", message, self.app_url)
             except Exception as e:
                 log.warning("Automation notification failed: %s", e)

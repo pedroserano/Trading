@@ -60,7 +60,13 @@ class PortfolioService:
         after_quotes=None,
         trade_info=None,
         chain_holdings=None,
+        account: str = "",
+        name=None,
     ):
+        # Which account, for notification keys and titles (empty: the first Schwab account
+        # or the simulated one, whose keys predate several accounts).
+        self.account = account
+        self.name = name
         self.source = source
         self.store = store
         self.settings = settings
@@ -323,7 +329,8 @@ class PortfolioService:
                 for f in st["flags"]:
                     if f["kind"] == "data":
                         continue
-                    if not await self.store.mark_notified(f"flag:{ident}:{f['kind']}"):
+                    scope = f"{self.account}:" if self.account else ""
+                    if not await self.store.mark_notified(f"flag:{scope}{ident}:{f['kind']}"):
                         continue
                     title = f"{u['symbol']} {st['name']} {n['expiration'] or ''}".strip()
                     try:
@@ -342,11 +349,13 @@ class PortfolioService:
             return
         bands = self.snapshot.get("bands") or {}
         today = self.clock().date().isoformat()
+        scope = f":{self.account}" if self.account else ""
         for key, what, fmt in (("delta", "Beta-weighted delta", "+.1%"), ("theta", "Theta", ".2%")):
             b = bands.get(key) or {}
             if b.get("state") not in ("below", "above"):
                 continue
-            if not await self.store.mark_notified(f"band:{self.mode}:{key}:{b['state']}:{today}"):
+            marker = f"band:{self.mode}{scope}:{key}:{b['state']}:{today}"
+            if not await self.store.mark_notified(marker):
                 continue
             hint = ""
             if key == "delta":

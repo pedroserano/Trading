@@ -33,6 +33,16 @@ class SchwabDataSource:
     async def account_numbers(self) -> list[dict]:
         return await self.schwab.call("get_account_numbers") or []
 
+    async def account_names(self) -> dict[str, str]:
+        """Each account's name in Schwab (its nickname), by account number."""
+        raw = await self.schwab.call("get_user_preferences")
+        prefs = raw[0] if isinstance(raw, list) and raw else raw or {}
+        return {
+            str(a.get("accountNumber")): (a.get("nickName") or "").strip()
+            for a in (prefs.get("accounts") or [])
+            if a.get("accountNumber")
+        }
+
     async def account(self, account_hash: str) -> dict:
         c = self.schwab.client()
         return await self.schwab.call(
@@ -177,6 +187,8 @@ class DemoDataSource:
     """A plausible account that moves. Prices random-walk; options priced by Black-Scholes."""
 
     HASH = "DEMOHASH"
+    # A second account, so several Schwab accounts can be tried in demo mode.
+    HASH2 = "DEMOHASH2"
 
     def __init__(self, today: date | None = None, seed: int = 7):
         self.rng = random.Random(seed)  # noqa: S311 - simulated prices
@@ -264,9 +276,17 @@ class DemoDataSource:
         self.vix = max(10.0, self.vix * math.exp(self.rng.gauss(0, 0.002)))
 
     async def account_numbers(self) -> list[dict]:
-        return [{"accountNumber": "00001234", "hashValue": self.HASH}]
+        return [
+            {"accountNumber": "00001234", "hashValue": self.HASH},
+            {"accountNumber": "00005678", "hashValue": self.HASH2},
+        ]
+
+    async def account_names(self) -> dict[str, str]:
+        return {"00001234": "Joint", "00005678": "Individual"}
 
     async def account(self, account_hash: str) -> dict:
+        if account_hash == self.HASH2:
+            return self._second_account()
         positions = []
         maint = 0.0
         for p in self.positions:
@@ -292,6 +312,36 @@ class DemoDataSource:
                     "cashBalance": 78500.0,
                     "buyingPower": 140000.0,
                     "maintenanceRequirement": round(maint, 2),
+                },
+            }
+        }
+
+    def _second_account(self) -> dict:
+        """The second demo account: a cash-secured SPY put and cash."""
+        sym = option_symbol("SPY", self._exp(31), "P", 540)
+        mark = self._option_quote(sym)["quote"]["mark"]
+        pos = {
+            "longQuantity": 0,
+            "shortQuantity": 1,
+            "averagePrice": 4.10,
+            "marketValue": round(-mark * 100, 2),
+            "instrument": {
+                "assetType": "OPTION",
+                "symbol": sym,
+                "underlyingSymbol": "SPY",
+                "putCall": "PUT",
+            },
+        }
+        return {
+            "securitiesAccount": {
+                "accountNumber": "00005678",
+                "type": "MARGIN",
+                "positions": [pos],
+                "currentBalances": {
+                    "liquidationValue": round(42000 + pos["marketValue"], 2),
+                    "cashBalance": 42000.0,
+                    "buyingPower": 42000.0,
+                    "maintenanceRequirement": 10800.0,
                 },
             }
         }
@@ -445,9 +495,11 @@ class DemoDataSource:
         return day.weekday() < 5
 
     async def orders(self, account_hash: str, start: datetime, end: datetime) -> list:
-        return _demo_orders(self)
+        return [] if account_hash == self.HASH2 else _demo_orders(self)
 
     async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list:
+        if account_hash == self.HASH2:
+            return []
         return [
             x
             for x in _demo_history(self)

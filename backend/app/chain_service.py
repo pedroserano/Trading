@@ -10,6 +10,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from . import chains, sheet_import
+from .acctkeys import key_for
 from .schwab_service import SchwabError, SchwabNotConnected
 
 log = logging.getLogger(__name__)
@@ -23,11 +24,15 @@ CURSOR_KEY = "transactions_synced_to"
 
 
 class ChainService:
-    def __init__(self, source, store, portfolio, resolve_account):
+    def __init__(self, source, store, portfolio, resolve_account, account="live", sheet_label=None):
         self.source = source
         self.store = store
         self.portfolio = portfolio
         self.resolve_account = resolve_account
+        # Which Schwab account this is, and which of the sheet's Account labels is its history
+        # ("Joint" for the account the app first used).
+        self.account = account
+        self.sheet_label = sheet_label or (lambda: SHEET_ACCOUNT if account == "live" else None)
         self.result: dict = {"chains": [], "proposals": [], "unmatched": [], "mismatches": []}
         self.synced_at: float | None = None
         self.error: str | None = None
@@ -43,6 +48,9 @@ class ChainService:
             "realized": [],
             "window_start": None,
         }
+
+    def key(self, base: str) -> str:
+        return key_for(base, self.account)
 
     def refresh_soon(self) -> None:
         self._wake.set()
@@ -68,7 +76,7 @@ class ChainService:
     async def sync(self) -> int:
         account_hash = await self.resolve_account()
         now = datetime.now(UTC)
-        cursor = await self.store.get_setting(CURSOR_KEY)
+        cursor = await self.store.get_setting(self.key(CURSOR_KEY))
         if cursor:
             start = datetime.fromtimestamp(cursor, UTC) - timedelta(days=2)
         else:
@@ -77,12 +85,13 @@ class ChainService:
         while start < now:
             end = min(start + timedelta(days=CHUNK_DAYS), now)
             items = await self.source.transactions(account_hash, start, end)
-            new += await self.store.upsert_transactions(list(items or []))
+            new += await self.store.upsert_transactions(list(items or []), self.account)
             start = end
-        await self.store.set_setting(CURSOR_KEY, now.timestamp())
+        await self.store.set_setting(self.key(CURSOR_KEY), now.timestamp())
         if cursor is None:
             await self.store.set_setting(
-                "transactions_history_start", (now - timedelta(days=BACKFILL_DAYS)).timestamp()
+                self.key("transactions_history_start"),
+                (now - timedelta(days=BACKFILL_DAYS)).timestamp(),
             )
         await self.rebuild()
         self.synced_at = time.time()
@@ -93,7 +102,7 @@ class ChainService:
         return new
 
     async def rebuild(self) -> None:
-        raws = await self.store.transactions()
+        raws = await self.store.transactions(self.account)
         groups = chains.merge([g for r in raws if (g := chains.normalize(r)) is not None])
         positions = {}
         acct = (self.portfolio.account_raw or {}).get("securitiesAccount", {})
@@ -108,20 +117,21 @@ class ChainService:
                 "underlying": inst.get("underlyingSymbol") or inst["symbol"],
                 "multiplier": 100 if inst.get("assetType") == "OPTION" else 1,
             }
-        overrides = await self.store.get_setting(OVERRIDES_KEY) or {}
-        start = await self.store.get_setting("transactions_history_start")
+        overrides = await self.store.get_setting(self.key(OVERRIDES_KEY)) or {}
+        start = await self.store.get_setting(self.key("transactions_history_start"))
 
         # The spreadsheet's history: used as is before Schwab's record starts, reconciled
         # against Schwab's fills after.
         schwab_only, schwab_start = list(groups), start
-        rows = await self.store.sheet_rows(SHEET_ACCOUNT)
+        label = self.sheet_label()
+        rows = await self.store.sheet_rows(label) if label else []
         if rows:
             try:
                 conv = sheet_import.convert(
-                    [sheet_import.SheetRow(key=k, account=SHEET_ACCOUNT, data=d) for k, d in rows]
+                    [sheet_import.SheetRow(key=k, account=label, data=d) for k, d in rows]
                 )
                 window = sheet_import.window_start_from(groups, start) if groups else None
-                decisions = await self.store.get_setting(REVIEW_KEY) or {}
+                decisions = await self.store.get_setting(self.key(REVIEW_KEY)) or {}
                 rec = sheet_import.reconcile(conv.groups, groups, window or float("inf"), decisions)
                 first_sheet = min((g.time for g in conv.groups), default=None)
                 self.history = {
@@ -173,18 +183,18 @@ class ChainService:
     async def link(self, group_key: str, chain_id: str) -> None:
         if chain_id not in self._by_id:
             raise ValueError("No such chain")
-        o = await self.store.get_setting(OVERRIDES_KEY) or {}
+        o = await self.store.get_setting(self.key(OVERRIDES_KEY)) or {}
         o.setdefault("link", {})[group_key] = chain_id
         o["split"] = [g for g in o.get("split", []) if g != group_key]
-        await self.store.set_setting(OVERRIDES_KEY, o)
+        await self.store.set_setting(self.key(OVERRIDES_KEY), o)
         await self.rebuild()
 
     async def split(self, group_key: str) -> None:
-        o = await self.store.get_setting(OVERRIDES_KEY) or {}
+        o = await self.store.get_setting(self.key(OVERRIDES_KEY)) or {}
         o.setdefault("link", {}).pop(group_key, None)
         if group_key not in o.setdefault("split", []):
             o["split"].append(group_key)
-        await self.store.set_setting(OVERRIDES_KEY, o)
+        await self.store.set_setting(self.key(OVERRIDES_KEY), o)
         await self.rebuild()
 
 
