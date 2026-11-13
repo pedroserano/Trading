@@ -20,6 +20,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -1494,6 +1495,13 @@ def create_app(
                     )
             n = sum(1 for t in v["trades"].values() if t.get("enabled"))
             parts.append(f"automanage on {n} trade{'' if n == 1 else 's'}")
+            k = sum(1 for lv in v["settings"]["levels"].values() if lv == "auto")
+            parts.append(
+                Markup(  # noqa: S704 - only numbers and fixed words
+                    f"{k} rule{'' if k == 1 else 's'} on Auto "
+                    '(see <a href="#/settings/automation">automation</a>)'
+                )
+            )
             parts.append(f"scanner {scanner.level(scan_s, acct).capitalize()}")
             out.append((name, parts))
         return out

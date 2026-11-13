@@ -544,3 +544,11 @@ def test_settings_written_into_the_explanations_save_as_they_are(settings):
         auto = form_data("/automation/settings")
         c.post("/automation/settings", data=auto)
         assert store.settings[SETTINGS_KEY] == DEFAULT_SETTINGS
+
+
+def test_what_runs_by_itself_counts_rules_on_auto_and_links_to_them(settings):
+    with make_client(settings, FakeSchwab(connected=True)) as c:
+        login(c)
+        page = c.get("/connect").text
+        assert '1 rule on Auto (see <a href="#/settings/automation">automation</a>)' in page
+        assert "rules at Auto" not in page
