@@ -140,20 +140,30 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   }, [spec.roll, rollExp, spec.underlying]);
 
   const strikes = useMemo(() => (chain ? chain.rows.map((r) => r.strike) : []), [chain]);
+  // The new strike for a leg: the same strike if listed, else the nearest; then any shift
+  // chosen on the ticket. null until the new expiration's chain is in.
+  const newStrike = useCallback(
+    (symbol: string, k: number): number | null => {
+      if (!strikes.length) return null;
+      let i = strikes.reduce((bi, s, j) => (Math.abs(s - k) < Math.abs(strikes[bi] - k) ? j : bi), 0);
+      i = Math.max(0, Math.min(strikes.length - 1, i + (shift[symbol] ?? 0)));
+      return strikes[i];
+    },
+    [strikes, shift],
+  );
 
   useEffect(() => {
     if (!spec.roll || !rollExp || !strikes.length) return;
     const opening: OrderLeg[] = spec.roll.legs
       .filter((l) => l.kind === "OPTION" && l.strike !== null)
-      .map((l) => {
-        // Same strike if listed, else the nearest; then any shift chosen on the ticket.
-        let i = strikes.reduce((bi, k, j) => (Math.abs(k - l.strike!) < Math.abs(strikes[bi] - l.strike!) ? j : bi), 0);
-        i = Math.max(0, Math.min(strikes.length - 1, i + (shift[l.symbol] ?? 0)));
-        return { symbol: occ(spec.underlying, rollExp, l.put_call!, strikes[i]), quantity: l.quantity, effect: "open" as const };
-      });
+      .map((l) => ({
+        symbol: occ(spec.underlying, rollExp, l.put_call!, newStrike(l.symbol, l.strike!)!),
+        quantity: l.quantity,
+        effect: "open" as const,
+      }));
     setLegs([...spec.legs, ...opening]);
     setLimit(null);
-  }, [spec.roll, spec.legs, spec.underlying, rollExp, strikes, shift]);
+  }, [spec.roll, spec.legs, spec.underlying, rollExp, strikes, newStrike]);
 
   const run = useCallback(
     async (lim: number | null) => {
@@ -287,13 +297,38 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                 </label>
                 {spec.roll.legs
                   .filter((l) => l.kind === "OPTION")
-                  .map((l) => (
-                    <span key={l.symbol} className="shift">
-                      {l.put_call === "P" ? "Put" : "Call"} {strike(l.strike)}
-                      <button type="button" aria-label="Lower strike" onClick={() => setShift({ ...shift, [l.symbol]: (shift[l.symbol] ?? 0) - 1 })}>−</button>
-                      <button type="button" aria-label="Higher strike" onClick={() => setShift({ ...shift, [l.symbol]: (shift[l.symbol] ?? 0) + 1 })}>+</button>
-                    </span>
-                  ))}
+                  .map((l) => {
+                    const to = l.strike !== null ? newStrike(l.symbol, l.strike) : null;
+                    const moved = to !== null && l.strike !== null && to !== l.strike;
+                    return (
+                      <span key={l.symbol} className="shift">
+                        {l.put_call === "P" ? "Put" : "Call"} {strike(l.strike)}
+                        <span
+                          className={`shift-to ${moved ? (to! < l.strike! ? "down" : "up") : ""}`}
+                          title="The strike this leg rolls to in the new expiration"
+                        >
+                          {" → "}
+                          {to === null ? "…" : strike(to)}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Lower strike"
+                          title="Roll to one strike lower"
+                          onClick={() => setShift({ ...shift, [l.symbol]: (shift[l.symbol] ?? 0) - 1 })}
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Higher strike"
+                          title="Roll to one strike higher"
+                          onClick={() => setShift({ ...shift, [l.symbol]: (shift[l.symbol] ?? 0) + 1 })}
+                        >
+                          +
+                        </button>
+                      </span>
+                    );
+                  })}
               </div>
             ) : null}
 
