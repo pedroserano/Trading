@@ -693,3 +693,20 @@ async def test_lizard_put_roll_leaves_the_call_spread():
     )
     assert body["intent"] == "roll"
     assert {x["symbol"] for x in body["legs"]} == {sym("P", 555), sym("P", 555, NEXT)}
+
+
+def test_roll_strike_goes_as_far_out_as_a_credit_allows():
+    def row(k, mark):
+        return {"strike": k, "put": {"mark": mark}, "call": {"mark": mark}}
+
+    # The old put is worth 4.00; in the new expiration 555 pays 6.00, 545 4.30, 540 3.90.
+    rows = [row(540, 3.9), row(545, 4.3), row(550, 5.1), row(555, 6.0), row(560, 7.2)]
+    s = merged_settings(None)
+    put = {"strike": 555, "mark": 4.0}
+    assert auto.roll_strike(rows, "put", put, s)["strike"] == 545  # down as far as pays
+    assert auto.roll_strike(rows, "put", put, {**s, "min_roll_credit": 1.0})["strike"] == 550
+    assert auto.roll_strike(rows, "put", {**put, "mark": 9.0}, s) is None  # nothing pays
+    assert auto.roll_strike(rows, "put", {"strike": 555, "mark": None}, s) is None
+    # A covered call goes up: the old call worth 4.00 rolls to the highest strike paying.
+    calls = [row(600, 7.0), row(605, 5.0), row(610, 4.2), row(615, 3.0)]
+    assert auto.roll_strike(calls, "call", {"strike": 600, "mark": 4.0}, s)["strike"] == 610

@@ -273,10 +273,11 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             "rolls its untested vertical; an inverted strangle, or a deeply tested straddle "
             'or narrow strangle, buys the guts and sells the wings. With "Short option in the '
             'money: roll out for a credit" ticked, these also roll out in time for a credit '
-            "once in the money: a single short option, a front ratio (the whole ratio), a "
-            "covered call (the call; the shares stay) and a jade lizard's put (the call spread "
-            "stays: it holds no upside risk while the credit covers its width). Anything else "
-            "is a notification. Details under Tested side and Guts to wings."
+            "once in the money: a single short option and a front ratio (the whole ratio) at "
+            "the same strikes; a covered call's call up and out, and a jade lizard's put down "
+            "and out, to the furthest strike that still pays a credit (the shares, and the "
+            "lizard's call spread, stay: it holds no upside risk while the credit covers its "
+            "width). Anything else is a notification. Details under Tested side and Guts to wings."
         ),
         "loss": (
             f"When: an undefined-risk trade is down {rules.loss_multiple:g}x the credit it "
@@ -537,7 +538,7 @@ def decide(
                 Action(
                     "tested",
                     "roll_calls",
-                    "The covered call is in the money: roll the call out in time for a credit; "
+                    "The covered call is in the money: roll the call up and out for a credit; "
                     "the shares stay",
                 )
             )
@@ -552,7 +553,7 @@ def decide(
                 Action(
                     "tested",
                     "roll_puts",
-                    "The lizard's short put is in the money: roll the put out in time for a "
+                    "The lizard's short put is in the money: roll the put down and out for a "
                     "credit; the call spread stays",
                 )
             )
@@ -599,6 +600,35 @@ def _exp(st: dict) -> date:
 
 def profit_target(st: dict, rules) -> float:
     return target_for(st["name"], rules)
+
+
+def roll_strike(rows: list[dict], side: str, short: dict, settings: dict) -> dict | None:
+    """The chain row to roll a short to in the new expiration: as far out of the money as a
+    credit allows (a put down, a call up), never closer to the money than its strike now.
+
+    The credit is the new option's mid less the old one's mark, per unit, and must be at least
+    the least roll credit set (and above zero). None when no strike pays: the roll then keeps
+    the strike, and the least-credit check closes it instead.
+    """
+    old = short.get("mark")
+    if old is None:
+        return None
+    least = max(settings.get("min_roll_credit", 0.0), 0.01)
+    k = short["strike"]
+    paying = [
+        r
+        for r in rows
+        if r[side].get("mark") is not None
+        and (r["strike"] <= k if side == "put" else r["strike"] >= k)
+        and r[side]["mark"] - old >= least - 1e-9
+    ]
+    if not paying:
+        return None
+    return (
+        min(paying, key=lambda r: r["strike"])
+        if side == "put"
+        else max(paying, key=lambda r: r["strike"])
+    )
 
 
 def target_limit(st: dict, rules) -> float | None:
@@ -1351,6 +1381,8 @@ class AutomationService:
                     if not rows:
                         return []
                     row = min(rows, key=lambda r: abs(r["strike"] - x["strike"]))
+                    if only and x["quantity"] < 0:
+                        row = roll_strike(rows, side, x, settings) or row
                     body_legs.append(
                         {"symbol": x["symbol"], "quantity": -int(x["quantity"]), "effect": "close"}
                     )
