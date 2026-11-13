@@ -76,11 +76,32 @@ def summarize_account(raw: dict) -> AccountSummary:
     )
 
 
+def callback_list(value: str) -> list[str]:
+    """SCHWAB_CALLBACK_URL as a list: one address, or several separated by commas, written
+    as in the Schwab developer portal."""
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def pick_callback(callbacks: list[str], host: str | None) -> str:
+    """The callback to send Schwab for a sign-in started at this host (the address the app
+    was opened at): the one on the same host name, else the first that returns to the app
+    (/schwab/callback), else the first."""
+    from urllib.parse import urlsplit
+
+    name = (host or "").split(":")[0].lower()
+    if name:
+        for c in callbacks:
+            if (urlsplit(c).hostname or "").lower() == name:
+                return c
+    return next((c for c in callbacks if c.rstrip("/").endswith("/schwab/callback")), callbacks[0])
+
+
 class SchwabService:
     def __init__(self, app_key: str, app_secret: str, callback_url: str, store: TokenStore):
         self._app_key = app_key
         self._app_secret = app_secret
-        self._callback_url = callback_url
+        self._callbacks = callback_list(callback_url) or ["https://127.0.0.1:8182"]
+        self._callback_url = self._callbacks[0]
         self._store = store
         self._client = None
         self._auth_context = None
@@ -122,9 +143,11 @@ class SchwabService:
             )
         return ConnectionStatus(connected=True, token_age_s=age, created_at=created)
 
-    def authorization_url(self) -> str:
-        """Start a sign-in. Returns the Schwab URL to open in a browser."""
-        self._auth_context = auth.get_auth_context(self._app_key, self._callback_url)
+    def authorization_url(self, host: str | None = None) -> str:
+        """Start a sign-in. Returns the Schwab URL to open in a browser. host: the address
+        the app was opened at, to have Schwab return there (see pick_callback)."""
+        chosen = pick_callback(self._callbacks, host) if host else self._callback_url
+        self._auth_context = auth.get_auth_context(self._app_key, chosen)
         return self._auth_context.authorization_url
 
     async def complete_authorization(self, received_url: str) -> None:
@@ -132,9 +155,10 @@ class SchwabService:
         if self._auth_context is None:
             raise SchwabError("No sign-in in progress. Start again from the Schwab link.")
         received_url = received_url.strip()
-        if not received_url.startswith(self._callback_url):
+        expected = self._auth_context.callback_url
+        if not received_url.startswith(expected):
             raise SchwabError(
-                f"That address does not start with the callback URL ({self._callback_url}). "
+                f"That address does not start with the callback URL ({expected}). "
                 "Copy the whole address from the browser bar after Schwab redirects."
             )
         ctx = self._auth_context

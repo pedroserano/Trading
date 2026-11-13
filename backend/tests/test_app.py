@@ -34,7 +34,8 @@ class FakeSchwab:
     def status(self):
         return ConnectionStatus(connected=self.connected, token_age_s=86400.0, created_at=1)
 
-    def authorization_url(self):
+    def authorization_url(self, host=None):
+        self.auth_host = host
         return "https://api.schwabapi.com/v1/oauth/authorize?client_id=x"
 
     async def complete_authorization(self, url):
@@ -196,6 +197,21 @@ def test_one_tap_callback(settings):
         assert schwab.completed_with.endswith("/schwab/callback?code=abc&state=xyz")
 
 
+def test_connect_page_follows_the_address_it_is_opened_at(settings):
+    settings.schwab_callback_url = (
+        "https://127.0.0.1:8182,https://192.168.7.80:8443/schwab/callback"
+    )
+    schwab = FakeSchwab()
+    with make_client(settings, schwab) as c:
+        login(c)
+        home = c.get("/connect", headers={"host": "192.168.7.80:8443"}).text
+        assert "Sign in with Schwab" in home and "not this" not in home
+        away = c.get("/connect", headers={"host": "nas.tail1.ts.net"}).text
+        assert "https://nas.tail1.ts.net/schwab/callback" in away and "not this" in away
+        c.get("/schwab/authorize", headers={"host": "nas.tail1.ts.net"})
+        assert schwab.auth_host == "nas.tail1.ts.net"
+
+
 def test_connect_failure_is_shown_once(settings):
     schwab = FakeSchwab()
     schwab.fail_with = "Schwab rejected the sign-in"
@@ -281,6 +297,27 @@ async def test_service_rejects_wrong_callback_address(tmp_path):
     assert "client_id=k" in url and "redirect_uri=https%3A%2F%2F127.0.0.1%3A8182" in url
     with pytest.raises(SchwabError, match="does not start with the callback URL"):
         await svc.complete_authorization("https://evil.example/?code=a")
+
+
+@pytest.mark.anyio
+async def test_sign_in_returns_to_the_address_it_was_started_at(tmp_path):
+    from app.schwab_service import pick_callback
+
+    three = (
+        "https://127.0.0.1:8182, https://192.168.7.80:8443/schwab/callback,"
+        "https://nas.tail1.ts.net/schwab/callback"
+    )
+    svc = SchwabService("k", "s", three, TokenStore(tmp_path / "t", SECRET))
+    url = svc.authorization_url(host="nas.tail1.ts.net")
+    assert "redirect_uri=https%3A%2F%2Fnas.tail1.ts.net%2Fschwab%2Fcallback" in url
+    with pytest.raises(SchwabError, match="nas.tail1.ts.net/schwab/callback"):
+        await svc.complete_authorization("https://192.168.7.80:8443/schwab/callback?code=a")
+    url = svc.authorization_url(host="192.168.7.80:8443")
+    assert "redirect_uri=https%3A%2F%2F192.168.7.80%3A8443%2Fschwab%2Fcallback" in url
+    # An address not registered: the first that returns to the app; none given: the first.
+    cbs = [x.strip() for x in three.split(",")]
+    assert pick_callback(cbs, "other.example") == cbs[1]
+    assert "redirect_uri=https%3A%2F%2F127.0.0.1%3A8182" in svc.authorization_url()
 
 
 @pytest.fixture

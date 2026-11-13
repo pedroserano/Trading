@@ -340,12 +340,20 @@
   <h2>{{ "Renew Schwab sign-in" if status.connected else "Connect to Schwab" }}</h2>
   {% if one_tap %}
   <p><a class="button primary" href="/schwab/authorize">Sign in with Schwab</a></p>
+  {% if here_unregistered %}
+  <p class="warn-note small">⚠ Schwab will return to <code>{{ callback_url }}</code>, not this
+     address ({{ here_host }}). To come back here in one tap, add
+     <code>https://{{ here_host }}/schwab/callback</code> to the app's callback URLs in the Schwab
+     developer portal and to <code>SCHWAB_CALLBACK_URL</code> in <code>.env</code> (comma-separated,
+     the same list), then restart the app.</p>
+  {% else %}
   <p class="dim small">Sign in, tick the accounts the app should use, and approve. Schwab sends you back here.</p>
+  {% endif %}
   {% else %}
   <ol>
     <li><a class="button primary" href="/schwab/authorize" target="_blank" rel="noopener">Open Schwab sign-in</a>
         <span class="dim">&nbsp;opens in a new tab</span></li>
-    <li>Sign in, tick only the account this app should trade, and approve.</li>
+    <li>Sign in, tick the accounts the app should use, and approve.</li>
     <li>Schwab then sends the browser to <code>{{ callback_url }}</code>, which shows a
         "can't connect" error. That is expected. Copy the whole address from the address bar.</li>
     <li>Paste it here within about 30 seconds:

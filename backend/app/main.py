@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
@@ -89,6 +90,8 @@ from .schwab_service import (
     SchwabError,
     SchwabNotConnected,
     SchwabService,
+    callback_list,
+    pick_callback,
 )
 from .sim import SimBroker, SimDataSource, stats
 from .store import PgStore
@@ -619,6 +622,9 @@ def create_app(
         if not fragment and (static_dir / "index.html").exists():
             return RedirectResponse("/#/settings", status_code=303)
         status = connection_status()
+        callbacks_all = callback_list(settings.schwab_callback_url) or ["https://127.0.0.1:8182"]
+        here_host = (request.headers.get("host") or "").split(":")[0].lower()
+        here_cb = pick_callback(callbacks_all, here_host)
         error = request.session.pop("flash", None)
         notice = request.session.pop("notice", None)
         accounts = [{**a, "sheet_label": registry.sheet_label(a["key"])} for a in registry.in_use()]
@@ -633,8 +639,13 @@ def create_app(
                 "error": error,
                 "notice": notice,
                 "db_error": await store.ping(),
-                "callback_url": settings.schwab_callback_url,
-                "one_tap": settings.schwab_callback_url.endswith("/schwab/callback"),
+                "callback_url": here_cb,
+                "one_tap": here_cb.rstrip("/").endswith("/schwab/callback"),
+                "here_host": here_host,
+                "here_unregistered": here_host
+                and not any(
+                    (urlsplit(c).hostname or "").lower() == here_host for c in callbacks_all
+                ),
                 "pushover": notifier.enabled,
                 "reminder_error": reminders.last_error,
                 "reminder_day": [
@@ -696,8 +707,11 @@ def create_app(
         )
 
     @app.get("/schwab/authorize", dependencies=[Depends(require_login)])
-    async def schwab_authorize():
-        return RedirectResponse(schwab.authorization_url(), status_code=303)
+    async def schwab_authorize(request: Request):
+        # Schwab returns the browser to the registered callback on this same address, so a
+        # sign-in started at the Tailscale name comes back there, and at home to the NAS.
+        url = schwab.authorization_url(host=request.headers.get("host"))
+        return RedirectResponse(url, status_code=303)
 
     async def _finish_sign_in(request: Request, received_url: str):
         try:

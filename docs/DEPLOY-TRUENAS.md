@@ -241,17 +241,17 @@ With Tailscale set up (above), use the ts.net address instead. Replace
 
 1. In the Schwab developer portal, set the callback URLs to all three, separated by commas:
    `https://127.0.0.1:8182,https://192.168.7.80:8443/schwab/callback,https://truenas-scale.rainbow-chickadee.ts.net/schwab/callback`.
-   Schwab accepts several; the app uses the one in `.env`. This edit can also put the app
-   back through Schwab's approval for a few days.
+   This edit can put the app back through Schwab's approval for a few days.
 2. Wait until the app shows "Ready For Use" again.
-3. In `.env`, set both, then stop and start the app:
+3. In `.env`, set the same list (the app picks the one matching the address you sign in
+   from), and the Tailscale address for links, then stop and start the app:
    ```
-   SCHWAB_CALLBACK_URL=https://truenas-scale.rainbow-chickadee.ts.net/schwab/callback
+   SCHWAB_CALLBACK_URL=https://127.0.0.1:8182,https://192.168.7.80:8443/schwab/callback,https://truenas-scale.rainbow-chickadee.ts.net/schwab/callback
    APP_URL=https://truenas-scale.rainbow-chickadee.ts.net
    ```
-   `APP_URL` makes the sign-in reminders open the same address.
-4. Start the sign-in from the ts.net address, not 192.168.7.80: the page Schwab returns to
-   needs your app login for the same address. Tailscale must be on on that device.
+4. Sign in from whichever address you have the app open at: Schwab returns to that same
+   address. If Settings, Connection warns that Schwab will return somewhere else, that
+   address is missing from the list in the portal or in `.env`.
 
 ## Trading history from the spreadsheet
 
