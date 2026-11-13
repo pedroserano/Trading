@@ -1473,7 +1473,9 @@ def create_app(
         for acct, name in (("sim", "Simulated"), ("live", "Schwab")):
             v = await automations[acct].view()
             parts = []
-            if v["paused"]:
+            if not v.get("auto_possible", True):
+                parts.append("Auto off (header)")
+            elif v["paused"]:
                 parts.append("Auto paused (header): nothing automatic")
             elif v.get("blocked"):
                 parts.append(f"Auto holding: {v['blocked']}")

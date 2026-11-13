@@ -1283,6 +1283,12 @@ class AutomationService:
             "paused": st["paused"],
             "settings": {**settings, "levels": self.levels(settings)},
             "max_level": self.max_level,
+            # The header's Auto switch means something only where orders can go out by
+            # themselves: always on the simulated account, on Schwab only with the .env.
+            "auto_possible": self.account != "live" or self.max_level == "auto",
+            "auto_why": None
+            if self.account != "live" or self.max_level == "auto"
+            else "automatic Schwab orders need LIVE_TRADING=true and LIVE_AUTO=true in .env",
             "account": self.account,
             "trades": st["trades"],
             "proposals": [p for p in st["proposals"] if p["status"] == "pending"],

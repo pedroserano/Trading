@@ -194,6 +194,18 @@ export function PauseSwitch() {
   const { view, update } = useContext(AutomationContext);
   const [busy, setBusy] = useState(false);
   if (!view) return null;
+  if (view.auto_possible === false) {
+    return (
+      <button
+        type="button"
+        className="pause-switch held"
+        disabled
+        title={`Nothing on the Schwab account can run by itself: ${view.auto_why ?? "LIVE_AUTO is off"}. Proposals and notifications still work as set.`}
+      >
+        Auto off
+      </button>
+    );
+  }
   const held = view.paused || !!view.blocked;
   const toggle = async () => {
     setBusy(true);

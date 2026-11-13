@@ -390,6 +390,8 @@ export interface AutoLogEntry {
 export interface AutomationView {
   account: "sim" | "live";
   max_level: AutoLevel;
+  auto_possible?: boolean;
+  auto_why?: string | null;
   paused: boolean;
   settings: { levels: Record<string, AutoLevel>; window_start: string; window_end: string; daily_cap: number };
   /** view: the trade's own direction for automanage's rolls; absent follows the portfolio bias. */

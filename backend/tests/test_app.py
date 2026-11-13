@@ -552,3 +552,16 @@ def test_what_runs_by_itself_counts_rules_on_auto_and_links_to_them(settings):
         page = c.get("/connect").text
         assert '1 rule on Auto (see <a href="#/settings/automation">automation</a>)' in page
         assert "rules at Auto" not in page
+
+
+def test_the_header_auto_switch_on_schwab_follows_the_env_only(settings):
+    with make_client(settings, FakeSchwab(connected=True)) as c:
+        login(c)
+        v = c.get("/api/automation?account=live").json()
+        assert v["auto_possible"] is False and "LIVE_AUTO=true" in v["auto_why"]
+        assert c.get("/api/automation?account=sim").json()["auto_possible"] is True
+    on = settings.model_copy(update={"live_trading": True, "live_auto": True})
+    with make_client(on, FakeSchwab(connected=True)) as c:
+        login(c)
+        v = c.get("/api/automation?account=live").json()  # whatever the levels are
+        assert v["auto_possible"] is True and v["auto_why"] is None
