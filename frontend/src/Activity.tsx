@@ -102,13 +102,6 @@ export default function Activity() {
       )}
 
       {live && data.error ? <div className="msg warn">History sync: {data.error}</div> : null}
-      {live && data.mismatches?.length ? (
-        <div className="msg warn">
-          The trade history does not fully explain what Schwab holds now:{" "}
-          {data.mismatches.map((m) => `${legText(m.symbol, m.schwab)} (history says ${signed(m.chains)})`).join("; ")}. It usually settles after the next sync.
-        </div>
-      ) : null}
-
       {live && data.live ? (
         <div className={`msg ${data.live.on ? "warn" : ""}`}>
           Live trading is <b>{data.live.on ? "on" : "off"}</b>
