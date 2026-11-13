@@ -135,6 +135,7 @@ class EarningsService:
         self.manual: dict = {}
         self.funds: set[str] = set()
         self.industries: dict[str, str] = {}  # stock -> Finnhub industry, for the Portfolio screen
+        self.past: dict[str, str] = {}  # stock -> its last report date, once past
         self.refreshed_at: float | None = None
         self.error: str | None = None
         self._wake = asyncio.Event()
@@ -149,6 +150,7 @@ class EarningsService:
         self.cache = saved.get("symbols", {})
         self.funds = set(saved.get("funds", []))
         self.industries = saved.get("industries", {})
+        self.past = saved.get("past", {})
         self.refreshed_at = saved.get("refreshed_at")
         self.manual, _ = parse_manual(await self.store.get_setting(MANUAL_KEY) or "", self.today())
 
@@ -168,6 +170,16 @@ class EarningsService:
         if symbol in self.funds or symbol.startswith("$"):
             return None
         return describe(self.raw(symbol), self.today())
+
+    def last_report(self, symbol: str) -> str | None:
+        """The most recent report date already past (ISO), when known."""
+        today = self.today().isoformat()
+        dates = [self.past.get(symbol)]
+        for info in (self.manual.get(symbol), self.cache.get(symbol)):
+            if info and info["date"] < today:
+                dates.append(info["date"])
+        dates = [d for d in dates if d]
+        return max(dates) if dates else None
 
     def is_fund(self, symbol: str) -> bool:
         return symbol in self.funds or symbol.startswith("$")
@@ -239,6 +251,8 @@ class EarningsService:
         # Keep a known future date if this pass missed it (a source hiccup), drop past ones.
         for sym, info in list(self.cache.items()):
             if info["date"] < today:
+                # Remembered as the last report, so a gap after it is not taken for a shock.
+                self.past[sym] = info["date"]
                 del self.cache[sym]
         self.cache.update(found)
         self.refreshed_at = time.time()
@@ -249,6 +263,7 @@ class EarningsService:
                 "symbols": self.cache,
                 "funds": sorted(self.funds),
                 "industries": self.industries,
+                "past": self.past,
                 "refreshed_at": self.refreshed_at,
             },
         )

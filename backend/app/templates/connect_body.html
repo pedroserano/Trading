@@ -287,6 +287,20 @@
       {{ num("s", scan_map.rich_iv30, scan.rich_iv30, scan_defaults.rich_iv30, scan_map.rich_iv30[5], "Premium size: a stock whose IV30 is this high pays plenty even when its IV rank is unremarkable, so it can still be sold under the IV rank minimum, as an iron condor only (defined risk).") }}
       {{ num("s", scan_map.min_iv_hv, scan.min_iv_hv, scan_defaults.min_iv_hv, scan_map.min_iv_hv[5], "Implied versus realized: IV30 divided by how much the stock has actually moved over the last 30 sessions. Below 1, the options price less movement than the stock is making, so selling them has no edge. Trades with more edge also rank a little higher.") }}
     {% endcall %}
+    {% call group("Selling into a drop", "When fear is loudest puts are dearest: the scanner looks for that, and sells without trying to call the bottom.") %}
+      <p class="dim small">A sharp drop with a high IV rank and steep put skew (puts priced well
+        above calls) is when selling puts pays best, so the scanner looks at those first. It
+        does not try to call the bottom: it sells the put side only, at a strike outside the
+        expected move, so the trade still works if the stock bounces, stalls, or falls a bit
+        further. If the move looks like news rather than an earnings report (an unusually big
+        day, or IV jumping), it treats it as a possible shock: part of that IV is real risk of
+        another gap, so it only opens defined-risk spreads, at half size, for a while.</p>
+      {{ num("s", scan_map.drop_ivr, scan.drop_ivr, scan_defaults.drop_ivr, scan_map.drop_ivr[5], "With a sharp drop (a price extreme pointing down), IV rank this high or more is part of the drop signal.") }}
+      {{ num("s", scan_map.steep_skew, scan.steep_skew, scan_defaults.steep_skew, scan_map.steep_skew[5], "Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. Steep skew means puts are especially expensive after a drop.") }}
+      {{ num("s", scan_map.shock_day_ratio, scan.shock_day_ratio, scan_defaults.shock_day_ratio, scan_map.shock_day_ratio[5], "A day's move this many times bigger than the stock's usual daily move, with no earnings report behind it, counts as a possible shock (a CEO leaving, an investigation).") }}
+      {{ num("s", scan_map.shock_iv_jump, scan.shock_iv_jump, scan_defaults.shock_iv_jump, scan_map.shock_iv_jump[5], "Or implied volatility jumping this much in 5 sessions with no earnings report: the options market pricing news.") }}
+      {{ num("s", scan_map.shock_sessions, scan.shock_sessions, scan_defaults.shock_sessions, scan_map.shock_sessions[5], "How far back a shock counts, and so how long the scanner stays careful after one: defined-risk spreads only, at half size.") }}
+    {% endcall %}
     {% call group("What it opens") %}
       {{ num("s", scan_map.short_delta, scan.short_delta, scan_defaults.short_delta, scan_map.short_delta[5]) }}
       {{ num("s", scan_map.ic_short_delta, scan.ic_short_delta, scan_defaults.ic_short_delta, scan_map.ic_short_delta[5]) }}
@@ -310,7 +324,8 @@
     {% endcall %}
     {% call group("Earnings", "ETFs and indexes have no earnings. A single stock opens only when its next report is known and further away than this. A coming report also inflates IV rank and IV30: that reflects the event, not options that are expensive in the usual sense, which is another reason not to hold through it.") %}
       {{ num("s", scan_map.earnings_days, scan.earnings_days, scan_defaults.earnings_days, scan_map.earnings_days[5]) }}
-      {{ check("avoid_through_earnings", "No trade that expires after the next report", scan.avoid_through_earnings, scan_defaults.avoid_through_earnings) }}
+      {{ check("avoid_through_earnings", "Check for a report inside the trade", scan.avoid_through_earnings, scan_defaults.avoid_through_earnings, "Unticked, a report inside the trade is ignored.") }}
+      {{ select("s-ei", "earnings_inside", "A report inside the trade", [("skip", "Skip the stock"), ("defined", "Defined risk, half size")], scan.earnings_inside, scan_defaults.earnings_inside, "A known event can move a stock more than its options expect. Skip it (the default), or allow only a defined-risk spread at half size.") }}
     {% endcall %}
     {% call group("Leaning") %}
       {{ check("band_lean", "Lean toward the portfolio delta band and bias", scan.band_lean, scan_defaults.band_lean, "Outside the band, sell the put closer when too short, the call closer when too long. With a bullish or bearish bias (Portfolio tab), also inside the band: lean that way until delta reaches the middle of the band. Neutral, tastylive's default, does not lean inside the band. Comes before the price-extreme lean.") }}

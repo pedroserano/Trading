@@ -37,6 +37,7 @@ def contract(sym, pc, k, delta, mid, oi=4000):
 
 # Strike: (put delta, put mid, call delta, call mid)
 BOOK = {
+    550: (0.06, 0.70, 0.96, 41.0),
     560: (0.10, 1.20, 0.92, 31.0),
     565: (0.13, 1.60, 0.90, 26.5),
     570: (0.16, 2.10, 0.86, 22.0),
@@ -44,6 +45,7 @@ BOOK = {
     610: (0.85, 21.0, 0.16, 2.00),
     615: (0.89, 25.5, 0.13, 1.50),
     620: (0.92, 30.0, 0.10, 1.10),
+    630: (0.96, 40.0, 0.06, 0.60),
 }
 
 
@@ -309,7 +311,8 @@ class QuoteSource(Source):
 
 @pytest.mark.anyio
 async def test_a_price_extreme_tilts_the_trade_and_ranks_first():
-    scanner, _, _ = harness()
+    # The quiet year and a -2.5% day would also read as a possible shock: off here.
+    scanner, _, _ = harness({"shock_day_ratio": 1000})
     year = [600 - i * 0.05 for i in range(250)]  # drifting down to about 588
     scanner.history = History(year)
     scanner.source = QuoteSource({"SPY": "ETF", "XLE": "ETF"}, 585.0, -2.5)
@@ -317,7 +320,7 @@ async def test_a_price_extreme_tilts_the_trade_and_ranks_first():
     (c,) = r["candidates"]
     assert c["tilt"] == "down" and "tilted bullish" in c["label"]
     # Tilting switched off: neutral as before.
-    scanner.store.settings[sc.SETTINGS_KEY] = {"extreme_tilt": False}
+    scanner.store.settings[sc.SETTINGS_KEY] = {"extreme_tilt": False, "shock_day_ratio": 1000}
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["tilt"] is None and c["label"].startswith("Strangle 570/610 (IV rank")
 
@@ -477,3 +480,34 @@ async def test_a_view_on_the_underlying_beats_extremes_and_the_bias():
     }
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["tilt"] == "up" and c["view"] == "bearish" and "your view on SPY" in c["label"]
+
+
+@pytest.mark.anyio
+async def test_a_report_inside_the_trade_can_mean_defined_risk_and_half_size():
+    scanner, _, _ = harness(
+        {"earnings_inside": "defined", "min_ic_credit": 0.15, "max_bp_share": 0.1}
+    )
+    scanner.earnings = Earnings({"AAPL": "2026-12-03"})  # before the Dec 18 expiration
+    r = await scanner.scan("sim", act=False)
+    c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
+    assert c["strategy"] == "Iron condor" and "Defined risk, half size: earnings" in c["label"]
+    skip, _, _ = harness()
+    skip.earnings = Earnings({"AAPL": "2026-12-03"})
+    r = await skip.scan("sim", act=False)
+    assert "AAPL" not in [x["symbol"] for x in r["candidates"]]
+
+
+@pytest.mark.anyio
+async def test_the_drop_signal_sells_puts_outside_the_move_and_ranks_first():
+    scanner, _, _ = harness({"shock_day_ratio": 1000})
+    _extreme_drop(scanner)
+    import app.scanner as scmod
+
+    scmod_skew = scmod.skew
+    scmod.skew = lambda rows: 9.0
+    try:
+        (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    finally:
+        scmod.skew = scmod_skew
+    assert c["drop_signal"] and c["label"].startswith("Drop signal (IV rank 60, put skew 9.0")
+    assert c["strategy"] == "Short put" and "outside the" in c["label"]

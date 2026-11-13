@@ -23,6 +23,7 @@ from . import chain as chain_mod
 from . import dividends, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
 from .extremes import compute as compute_extreme
+from .signals import drop_signal, one_side, shock, skew
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -72,6 +73,19 @@ DEFAULTS = {
     "defined_vix": 30.0,
     # Spread across sectors, so one wrong read cannot sink the account. 0: no limit.
     "max_per_sector": 2,
+    # Selling into a sharp drop: a drop, IV rank at least drop_ivr and put skew at least
+    # steep_skew (vol points) is the drop signal, considered first.
+    "drop_ivr": 60,
+    "steep_skew": 5.0,
+    # A possible unscheduled shock (not an earnings report): a day's move this many times
+    # its average, or IV30 up this share in 5 sessions, within shock_sessions. Then defined
+    # risk and half size.
+    "shock_day_ratio": 3.0,
+    "shock_iv_jump": 0.30,
+    "shock_sessions": 10,
+    # A single stock whose report falls inside the trade: "skip" it, or "defined" risk at
+    # half size.
+    "earnings_inside": "skip",
     "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
     "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
@@ -100,6 +114,11 @@ FIELDS = [
     ("max_new_per_day", "New trades per day, at most", 0, 50, "int", "trades"),
     ("max_per_sector", "Open trades per sector, at most (0: no limit)", 0, 50, "int", "trades"),
     ("defined_vix", "Iron condors only while VIX is at least (0: off)", 0, 100, "float", "VIX"),
+    ("drop_ivr", "Drop signal: IV rank at least", 0, 100, "int", "IVR"),
+    ("steep_skew", "Drop signal: put skew at least", 0, 30, "float", "vol pts"),
+    ("shock_day_ratio", "Possible shock: a day's move at least", 1, 20, "float", "× average"),
+    ("shock_iv_jump", "Possible shock: or IV30 up in 5 sessions at least", 5, 300, "percent", "%"),
+    ("shock_sessions", "Possible shock: look back and stay careful for", 1, 60, "int", "sessions"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
     ("min_pop", "Probability of profit, at least", 0, 95, "percent", "%"),
     ("min_iv30", "IV30 at least (quiet-market floor; 0: off)", 0, 100, "float", "%"),
@@ -147,6 +166,8 @@ def parse_form(form: dict, current: dict | None) -> dict:
         out["extreme_tilt"] = form.get("extreme_tilt") in ("on", "true", "1")
         out["band_lean"] = form.get("band_lean") in ("on", "true", "1")
         out["avoid_through_earnings"] = form.get("avoid_through_earnings") in ("on", "true", "1")
+    if form.get("earnings_inside") in ("skip", "defined"):
+        out["earnings_inside"] = form["earnings_inside"]
     if "scan_time" in form:
         try:
             h, m = _hm(form["scan_time"])
@@ -646,11 +667,20 @@ class Scanner:
                     continue
                 # IV rank decides the risk taken; premium admitted on IV30 alone, at a low IV
                 # rank, gets defined risk only.
-                strangle = ivr >= s["undefined_ivr"] and not vol["rich_only"] and not defined_only
+                # An earnings report inside the trade (when allowed) or a possible unscheduled
+                # shock: defined risk and half size.
+                careful = bool(vol["caution"])
+                strangle = (
+                    ivr >= s["undefined_ivr"]
+                    and not vol["rich_only"]
+                    and not defined_only
+                    and not careful
+                )
                 ext = await self._extreme(sym, quotes, s)
+                drop = drop_signal((ext or {}).get("direction"), ivr, vol["skew"], s)
                 ext_dir = (
                     (ext or {}).get("direction")
-                    if s["extreme_tilt"] or bias == "contrarian"
+                    if s["extreme_tilt"] or bias == "contrarian" or drop
                     else None
                 )
                 view = symbol_views.get(sym)
@@ -668,11 +698,24 @@ class Scanner:
                 else:
                     tilt, source = None, None
                 leaned = source in ("band", "bias")
-                legs, label = build_trade(rows, strangle, s, tilt)
+                if tilt and source in ("view", "extreme"):
+                    # A view on the stock or a sharp move: one side only, outside the expected
+                    # move, so the trade does not depend on calling the turn.
+                    legs, label = one_side(
+                        rows,
+                        vol["spot"],
+                        vol["em"],
+                        "put" if tilt == "down" else "call",
+                        strangle,
+                        s,
+                        _mid,
+                    )
+                else:
+                    legs, label = build_trade(rows, strangle, s, tilt)
                 if legs is None:
                     skipped.append({"symbol": sym, "reason": label})
                     continue
-                n = s["contracts"]
+                n = max(1, s["contracts"] // 2) if careful else s["contracts"]
                 if account == "live":
                     n = min(n, (await self.live_broker.config())["max_contracts"])
                 body = {
@@ -689,10 +732,9 @@ class Scanner:
                     continue
                 problems = list(pv["errors"]) + list(pv.get("live_blocks") or [])
                 bp = pv.get("bp_effect")
-                if bp is not None and net_liq and bp > s["max_bp_share"] * net_liq:
-                    problems.append(
-                        f"buying power {bp:,.0f} is over {s['max_bp_share']:.0%} of net liq"
-                    )
+                bp_cap = s["max_bp_share"] * (0.5 if careful else 1.0)
+                if bp is not None and net_liq and bp > bp_cap * net_liq:
+                    problems.append(f"buying power {bp:,.0f} is over {bp_cap:.1%} of net liq")
                 after = pv.get("bp_used_after")
                 if after is not None and ceiling is not None and after > ceiling:
                     problems.append(
@@ -727,7 +769,13 @@ class Scanner:
                         "expiration": exp["date"],
                         "dte": exp["dte"],
                         "label": label,
-                        "strategy": "Strangle" if strangle else "Iron condor",
+                        "strategy": label.split(" ")[0] + " " + label.split(" ")[1]
+                        if label.startswith(
+                            ("Short put", "Short call", "Put spread", "Call spread")
+                        )
+                        else "Strangle"
+                        if strangle
+                        else "Iron condor",
                         "mid": pv["prices"]["mid"],
                         "bp": bp,
                         "pop": (pv.get("entry") or {}).get("pop"),
@@ -735,6 +783,9 @@ class Scanner:
                         "extreme": ext,
                         "tilt": tilt,
                         "lean_source": source,
+                        "drop_signal": drop,
+                        "caution": vol["caution"],
+                        "skew": vol["skew"],
                         # The view the trade is managed with once open (its rolls lean this way).
                         "view": targets.TILT_VIEW[tilt],
                         "band_lean": leaned,
@@ -789,6 +840,17 @@ class Scanner:
                         f". Ex-dividend {'about ' if div['estimated'] else ''}{div['ex_date']} "
                         f"({div['amount']:.2f}) falls inside the trade"
                     )
+                if drop:
+                    candidates[-1]["label"] = (
+                        f"Drop signal (IV rank {ivr:.0f}, put skew {vol['skew']:.1f} pts): "
+                        + candidates[-1]["label"]
+                    )
+                if careful:
+                    candidates[-1]["label"] += ". Defined risk, half size: " + "; ".join(
+                        vol["caution"]
+                    )
+                if vol["skew"] is not None:
+                    candidates[-1]["volatility"] += f" · skew {vol['skew']:.1f}"
                 candidates[-1]["label"] += f" ({candidates[-1]['volatility']})"
             acted = []
             if act and level != "off":
@@ -796,7 +858,12 @@ class Scanner:
                 # band or against a price extreme), then by IV rank.
                 order = sorted(
                     candidates,
-                    key=lambda c: (bool(c.get("delta_push")), not c.get("tilt"), -c["score"]),
+                    key=lambda c: (
+                        bool(c.get("delta_push")),
+                        not c.get("drop_signal"),
+                        not c.get("tilt"),
+                        -c["score"],
+                    ),
                 )
                 run_sector = dict(by_sector)
                 for c in order:
@@ -873,10 +940,11 @@ class Scanner:
         if ivr is None:
             return "no IV rank yet (it needs IV history)"
         iv30 = await self._iv30(sym)
-        hv = None
+        hv, closes = None, []
         if self.history is not None:
             try:
-                hv = realized_vol(await self.history.ensure(sym) or [])
+                closes = await self.history.ensure(sym) or []
+                hv = realized_vol(closes)
             except Exception as e:  # history is a refinement, never a block
                 log.warning("Scanner history for %s failed: %s", sym, e)
         why, rich_only = vol_check(ivr, iv30, hv, s)
@@ -912,13 +980,17 @@ class Scanner:
                 f"no {'monthly ' if s['monthly_only'] else ''}expiration in "
                 f"{s['min_dte']}-{s['max_dte']} DTE"
             )
+        caution = []
         if report and s.get("avoid_through_earnings", True) and report <= exp["date"]:
             # A report inside the trade also lifts IV rank: the event, not volatility that is
             # expensive in the usual sense.
-            return (
+            why_e = (
                 f"earnings {report} fall before the {exp['date']} expiration (and the report "
                 "inflates IV rank)"
             )
+            if s.get("earnings_inside", "skip") == "skip":
+                return why_e
+            caution.append(why_e)
         d = date.fromisoformat(exp["date"])
         chain = chain_mod.chain_rows(
             await self.source.option_chain(sym, d, d, strike_count=None) or {}
@@ -936,7 +1008,42 @@ class Scanner:
             return f"at-the-money spread {sum(spreads) / len(spreads):.1%} is too wide"
         if oi < s["min_oi"]:
             return f"at-the-money open interest {oi:,.0f}, under {s['min_oi']:,}"
-        return ivr, exp, rows, {"iv30": iv30, "hv": hv, "rich_only": rich_only}
+        today_ = self.clock().astimezone(ET).date()
+        iv_hist = []
+        try:
+            iv_hist = await self.store.iv_history(sym, date.fromordinal(today_.toordinal() - 40))
+        except Exception as e:  # a refinement, never a block
+            log.warning("Scanner IV history for %s failed: %s", sym, e)
+        last = (
+            self.earnings.last_report(sym)
+            if self.earnings is not None and hasattr(self.earnings, "last_report")
+            else None
+        )
+        change = (q.get("quote") or {}).get("netPercentChange")
+        shocked = shock(
+            closes,
+            iv_hist,
+            last,
+            s,
+            None if change is None else float(change),
+            today_,
+        )
+        if shocked:
+            caution.append(shocked)
+        return (
+            ivr,
+            exp,
+            rows,
+            {
+                "iv30": iv30,
+                "hv": hv,
+                "rich_only": rich_only,
+                "spot": spot,
+                "em": chain.get("expected_move"),
+                "skew": skew(rows),
+                "caution": caution,
+            },
+        )
 
     async def _act(self, account, level, c, s, today) -> str | None:
         auto = self.automations[account]
