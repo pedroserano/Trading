@@ -49,7 +49,7 @@ from .automation import (
 from .automation import (
     DEFAULT_SETTINGS as AUTO_DEFAULTS,
 )
-from .chain_service import SHEET_ACCOUNT, ChainService
+from .chain_service import ChainService
 from .config import Settings, get_settings
 from .datasource import DemoDataSource, SchwabDataSource
 from .earnings import EarningsService
@@ -127,7 +127,7 @@ class OrderLegIn(BaseModel):
 
 
 class OrderIn(BaseModel):
-    account: Literal["sim", "live"] = "sim"
+    account: str = "sim"  # "sim" or a Schwab account key ("live", "live-5678")
     intent: Literal["open", "close", "roll", "adjust"] = "open"
     trade_id: int | str | None = None
     # Schwab's four-leg limit is checked with a clear message in validate_shape.
@@ -220,6 +220,8 @@ class AnalyzeIn(BaseModel):
     legs: list[LegIn] = Field(min_length=1, max_length=8)
     # Shares already held that short calls are written against (a covered call).
     held_shares: int = Field(0, ge=0, le=1_000_000)
+    # The account whose "portfolio after" figures to show ("sim" or a Schwab account key).
+    account: str = "live"
 
 
 def _check_symbol(symbol: str) -> str:
@@ -890,8 +892,14 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(e)) from e
 
     @app.get("/api/snapshot", dependencies=[Depends(require_login)])
-    async def api_snapshot(account: Literal["live", "sim"] = "live"):
+    async def api_snapshot(account: str = "live"):
+        known(account)
         return JSONResponse(portfolios[account].snapshot or {"pending": True})
+
+    def known(account: str) -> None:
+        """A route's account: "sim" or a Schwab account key the app runs."""
+        if account not in portfolios:
+            raise HTTPException(status_code=404, detail=f"No account {account!r}")
 
     def _schwab_errors(e: Exception) -> HTTPException:
         if isinstance(e, SchwabNotConnected):
@@ -941,7 +949,8 @@ def create_app(
     candle_cache: dict[tuple[str, date], list[dict]] = {}
 
     @app.get("/api/portfolio", dependencies=[Depends(require_login)])
-    async def api_portfolio(account: Literal["live", "sim"] = "live"):
+    async def api_portfolio(account: str = "live"):
+        known(account)
         snap = portfolios[account].snapshot or {}
         rules = await preferences.rules()
         return portfolio_view.build(
@@ -949,9 +958,10 @@ def create_app(
         )
 
     @app.get("/api/trade/{symbol:path}/chart", dependencies=[Depends(require_login)])
-    async def api_chart(symbol: str, account: Literal["live", "sim"] = "live"):
+    async def api_chart(symbol: str, account: str = "live"):
         """A year of daily candles, with what the chart draws over them: the account's
         option strikes in this underlying, the next earnings report, the 52-week range."""
+        known(account)
         symbol = _check_symbol(symbol)
         today = portfolio.clock().date()
         key = (symbol, today)
@@ -1020,7 +1030,7 @@ def create_app(
             result = analyze(legs, body.spot, today, body.vol, held_shares=body.held_shares)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        snap = portfolio.snapshot or {}
+        snap = (portfolios.get(body.account) or portfolio).snapshot or {}
         totals = snap.get("totals") or {}
         acct = snap.get("account") or {}
         beta = 1.0 if symbol == BENCH else None
@@ -1088,6 +1098,7 @@ def create_app(
         return t, p, quotes
 
     async def assess(body: OrderIn, t: Ticket, p: dict, quotes: dict) -> dict:
+        known(body.account)
         today = portfolio.clock().date()
         pf = portfolios[body.account]
         acct = (pf.snapshot or {}).get("account") or {}
@@ -1095,7 +1106,7 @@ def create_app(
             held = await broker.held(body.trade_id)
         else:
             held = {}
-            for leg in portfolio.legs:
+            for leg in pf.legs:
                 held[leg.symbol] = held.get(leg.symbol, 0) + int(leg.quantity)
         spot = None
         uq = (quotes.get(t.underlying) or {}).get("quote", {})
@@ -1288,7 +1299,7 @@ def create_app(
             errors.append(str(e))
         preview = None
         # Schwab can only preview against the real account: opening orders, or live closes.
-        if body_json and (t.intent == "open" or body.account == "live"):
+        if body_json and (t.intent == "open" or body.account != "sim"):
             if demo:
                 preview = {"ok": True, "simulated": True, "fields": {}, "messages": [], "raw": None}
             else:
@@ -1302,8 +1313,8 @@ def create_app(
                     preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
         contracts = sum(abs(x.quantity) for x in t.legs if not x.equity)
         live_blocks = []
-        if body.account == "live":
-            live_blocks = await live_broker.gate(t, bp, nl)
+        if body.account != "sim":
+            live_blocks = await brokers[body.account].gate(t, bp, nl)
             if preview is not None and not preview.get("ok"):
                 live_blocks.append(
                     "Schwab's preview did not accept the order: "
@@ -1365,11 +1376,11 @@ def create_app(
         result = await assess(body, t, p, quotes)
         if result["errors"]:
             raise HTTPException(status_code=400, detail="; ".join(result["errors"]))
-        if body.account == "live":
+        if body.account != "sim":
             if result["live_blocks"]:
                 raise HTTPException(status_code=403, detail="; ".join(result["live_blocks"]))
             try:
-                order = await live_broker.place(
+                order = await brokers[body.account].place(
                     t,
                     trade_id=body.trade_id,
                     profit_target=t.profit_target,
@@ -1377,8 +1388,8 @@ def create_app(
                 )
             except SchwabError as e:
                 raise _schwab_errors(e) from e
-            portfolio.refresh_soon()
-            chain_service.refresh_soon()
+            portfolios[body.account].refresh_soon()
+            chains[body.account].refresh_soon()
             return order
         try:
             order = await broker.place(t, quotes, entry=result["entry"])
@@ -1435,6 +1446,7 @@ def create_app(
             clock=lambda: portfolio.clock(),
             account="live",
             max_level="propose",
+            name=lambda: registry.name("live"),
         ),
     }
     app.state.automation = automations["sim"]
@@ -1545,10 +1557,11 @@ def create_app(
         for key, b in brokers.items():
             automations[key].max_level = b.auto_cap()
 
-    Acct = Literal["sim", "live"]
+    Acct = str
 
     @app.get("/api/automation", dependencies=[Depends(require_login)])
     async def api_automation(account: Acct = "sim"):
+        known(account)
         return await automations[account].view()
 
     async def scanner_map() -> dict:
@@ -1641,6 +1654,7 @@ def create_app(
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
     async def api_automation_trade(body: AutoTradeIn, account: Acct = "sim"):
+        known(account)
         kwargs = {}
         if body.view is not None:
             kwargs["view"] = None if body.view == "portfolio" else body.view
@@ -1652,16 +1666,19 @@ def create_app(
 
     @app.post("/api/automation/pause", dependencies=[Depends(require_login)])
     async def api_automation_pause(body: PauseIn, account: Acct = "sim"):
+        known(account)
         await automations[account].set_paused(body.paused)
         return await automations[account].view()
 
     @app.post("/api/automation/proposal/{pid}/dismiss", dependencies=[Depends(require_login)])
     async def api_automation_dismiss(pid: str, account: Acct = "sim"):
+        known(account)
         await automations[account].dismiss(pid)
         return await automations[account].view()
 
     @app.post("/api/automation/proposal/{pid}/accept", dependencies=[Depends(require_login)])
     async def api_automation_accept(pid: str, account: Acct = "sim"):
+        known(account)
         try:
             await automations[account].accept(pid)
         except ValueError as e:
@@ -1676,16 +1693,18 @@ def create_app(
         automations,
         watchlist,
         preferences,
-        live_broker,
+        brokers,
         clock=lambda: portfolio.clock(),
     )
 
     @app.get("/api/scanner", dependencies=[Depends(require_login)])
     async def api_scanner(account: Acct = "sim"):
+        known(account)
         return await scanner.view(account)
 
     @app.post("/api/scanner/run", dependencies=[Depends(require_login)])
     async def api_scanner_run(account: Acct = "sim", act: bool = True):
+        known(account)
         try:
             await scanner.scan(account, act=act)
         except SchwabError as e:
@@ -1693,17 +1712,27 @@ def create_app(
         return await scanner.view(account)
 
     @app.get("/api/live", dependencies=[Depends(require_login)])
-    async def api_live():
-        return {**await live_broker.status(), "audit": await live_broker.audit()}
+    async def api_live(account: str = "live"):
+        known(account)
+        if account == "sim":
+            raise HTTPException(status_code=404, detail="Live orders are for Schwab accounts")
+        b = brokers[account]
+        return {**await b.status(), "audit": await b.audit()}
+
+    @app.get("/api/accounts/in-use", dependencies=[Depends(require_login)])
+    async def api_accounts_in_use():
+        """The Schwab accounts the app runs, by their Schwab name, for the header picker."""
+        return {"accounts": [a for a in registry.in_use() if a["key"] in portfolios]}
 
     @app.post("/api/orders/{order_id}/cancel", dependencies=[Depends(require_login)])
     async def api_order_cancel(order_id: str, account: Acct = "sim"):
-        if account == "live":
+        known(account)
+        if account != "sim":
             try:
-                order = await live_broker.cancel(order_id)
+                order = await brokers[account].cancel(order_id)
             except SchwabError as e:
                 raise _schwab_errors(e) from e
-            portfolio.refresh_soon()
+            portfolios[account].refresh_soon()
             return order
         try:
             order = await broker.cancel(int(order_id))
@@ -1739,7 +1768,8 @@ def create_app(
         return out
 
     @app.get("/api/chains", dependencies=[Depends(require_login)])
-    async def api_chains(account: Literal["live", "sim"] = "live"):
+    async def api_chains(account: str = "live"):
+        known(account)
         if account == "sim":
             return {
                 "chains": sim_chains(await broker.snapshot()),
@@ -1749,18 +1779,16 @@ def create_app(
                 "synced_at": None,
                 "error": None,
             }
-        return {
-            **chain_service.result,
-            "synced_at": chain_service.synced_at,
-            "error": chain_service.error,
-        }
+        cs = chains[account]
+        return {**cs.result, "synced_at": cs.synced_at, "error": cs.error}
 
     @app.get("/api/chains/{chain_id}", dependencies=[Depends(require_login)])
-    async def api_trade_chain(chain_id: str, account: Literal["live", "sim"] = "live"):
+    async def api_trade_chain(chain_id: str, account: str = "live"):
+        known(account)
         pool = (
             sim_chains(await broker.snapshot())
             if account == "sim"
-            else chain_service.result["chains"]
+            else chains[account].result["chains"]
         )
         found = next((c for c in pool if str(c["id"]) == chain_id), None)
         if found is None:
@@ -1768,54 +1796,67 @@ def create_app(
         return found
 
     @app.get("/api/order-check", dependencies=[Depends(require_login)])
-    async def api_order_check():
-        return await order_check.view()
+    async def api_order_check(account: str = "live"):
+        known(account)
+        if account == "sim":
+            raise HTTPException(status_code=404, detail="Order check is for Schwab accounts")
+        return await checks[account].view()
 
     @app.post("/api/order-check/refresh", dependencies=[Depends(require_login)])
-    async def api_order_check_refresh():
+    async def api_order_check_refresh(account: str = "live"):
+        known(account)
+        if account == "sim":
+            raise HTTPException(status_code=404, detail="Order check is for Schwab accounts")
         try:
-            await order_check.sync()
+            await checks[account].sync()
         except SchwabError as e:
             raise _schwab_errors(e) from e
-        return await order_check.view()
+        return await checks[account].view()
 
     @app.post("/api/chains/link", dependencies=[Depends(require_login)])
-    async def api_chain_link(body: LinkIn):
+    async def api_chain_link(body: LinkIn, account: str = "live"):
+        known(account)
         try:
-            await chain_service.link(body.group, body.chain)
-        except ValueError as e:
+            await chains[account].link(body.group, body.chain)
+        except (KeyError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        portfolio.refresh_soon()
+        portfolios[account].refresh_soon()
         return {"ok": True}
 
     @app.post("/api/chains/split", dependencies=[Depends(require_login)])
-    async def api_chain_split(body: SplitIn):
-        await chain_service.split(body.group)
-        portfolio.refresh_soon()
+    async def api_chain_split(body: SplitIn, account: str = "live"):
+        known(account)
+        if account == "sim":
+            raise HTTPException(status_code=400, detail="Only Schwab trade histories split")
+        await chains[account].split(body.group)
+        portfolios[account].refresh_soon()
         return {"ok": True}
 
     @app.get("/api/activity", dependencies=[Depends(require_login)])
     async def api_activity(
-        account: Literal["live", "sim"] = "live",
+        account: str = "live",
         source: Literal["all", "sheet", "schwab"] = "all",
         limit: int = 300,
     ):
+        known(account)
         limit = max(1, min(limit, 20000))
-        if account == "live":
-            chs = chain_service.result["chains"]
+        if account != "sim":
+            cs, lb = chains[account], brokers[account]
+            chs = cs.result["chains"]
             counts = {"all": len(chs)}
             for c in chs:
                 counts[c.get("source") or "schwab"] = counts.get(c.get("source") or "schwab", 0) + 1
             shown = [c for c in chs if source == "all" or (c.get("source") or "schwab") == source]
             return {
-                "account": "live",
+                "account": account,
+                "name": registry.name(account),
                 # Orders at Schwab from the last week, working first, as the live broker
                 # last read them (every 10 seconds while one of the app's orders works).
                 "orders": sorted(
-                    live_broker.state["orders"],
+                    lb.state["orders"],
                     key=lambda o: (o["status"] != "WORKING", -(o["created_at"] or 0)),
                 )[:200],
-                "live": await live_broker.status(),
+                "live": await lb.status(),
                 "trades": sorted(
                     shown,
                     # Open chains first, then the most recently closed.
@@ -1824,14 +1865,14 @@ def create_app(
                 "trade_counts": counts,
                 "trades_shown_of": len(shown),
                 "sheet": {
-                    "rows": chain_service.history.get("rows", 0),
-                    "error": chain_service.history.get("error"),
+                    "rows": cs.history.get("rows", 0),
+                    "error": cs.history.get("error"),
                 },
                 "stats": stats(chs),
-                "proposals": chain_service.result["proposals"],
-                "mismatches": chain_service.result["mismatches"],
-                "synced_at": chain_service.synced_at,
-                "error": chain_service.error,
+                "proposals": cs.result["proposals"],
+                "mismatches": cs.result["mismatches"],
+                "synced_at": cs.synced_at,
+                "error": cs.error,
             }
         st = await broker.snapshot()
         acct = (sim_portfolio.snapshot or {}).get("account") or {}
@@ -1850,22 +1891,23 @@ def create_app(
     prices_service = PriceHistoryService(
         source,
         store,
-        chain_service,
+        chains,
         sim_trades=lambda: sim_chains(broker.state) if broker.state else [],
     )
 
     @app.get("/api/dashboard", dependencies=[Depends(require_login)])
     async def api_dashboard(
-        account: Literal["live", "sim"] = "live",
+        account: str = "live",
         source: Literal["all", "sheet", "schwab"] = "all",
         futures: bool = False,
     ):
+        known(account)
         if account == "sim":
             chs = sim_chains(await broker.snapshot())
             realized, fut, window = [], [], None
         else:
-            h = chain_service.history
-            chs = chain_service.result["chains"]
+            h = chains[account].history
+            chs = chains[account].result["chains"]
             realized, fut, window = h["realized"], h["futures"], h["window_start"]
         symbols = {dash.price_symbol(c["underlying"]) for c in chs} | {"$VIX"}
         prices = await store.prices(symbols)
@@ -1875,7 +1917,7 @@ def create_app(
             window,
             fut,
             prices,
-            source=source if account == "live" else "all",
+            source=source if account != "sim" else "all",
             include_futures=futures,
         )
         out["prices_pending"] = prices_service.status.get("pending")
@@ -1883,8 +1925,12 @@ def create_app(
         return out
 
     @app.get("/api/export/sheet", dependencies=[Depends(require_login)])
-    async def api_export_sheet(start: date, end: date):
-        rows = export_rows(chain_service.result["chains"], start, end, SHEET_ACCOUNT)
+    async def api_export_sheet(start: date, end: date, account: str = "live"):
+        known(account)
+        if account == "sim":
+            raise HTTPException(status_code=400, detail="Export is for Schwab accounts")
+        label = chains[account].sheet_label() or registry.name(account)
+        rows = export_rows(chains[account].result["chains"], start, end, label)
         content = export_xlsx(rows)
         name = f"trades-{start.isoformat()}-to-{end.isoformat()}.xlsx"
         return StreamingResponse(
@@ -1902,7 +1948,8 @@ def create_app(
         return {"ok": True}
 
     @app.get("/api/events", dependencies=[Depends(require_login)])
-    async def api_events(request: Request, account: Literal["live", "sim"] = "live"):
+    async def api_events(request: Request, account: str = "live"):
+        known(account)
         pf = portfolios[account]
         queue = pf.subscribe()
 

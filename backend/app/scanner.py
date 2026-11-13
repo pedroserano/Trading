@@ -34,6 +34,7 @@ STATE_KEY = "scanner"
 DEFAULTS = {
     "level_sim": "propose",
     "level_live": "off",
+    "level_by_account": {},  # every other Schwab account's level, by account key
     "min_ivr": 30,
     "undefined_ivr": 50,
     "target_dte": 45,
@@ -135,6 +136,14 @@ FIELDS = [
     ("tilt_delta", "At an extreme, the favoured side's short strike at", 0.1, 0.5, "delta", "Δ"),
 ]
 FUNDS = {"ETF", "ETN", "COLLECTIVE_INVESTMENT", "INDEX", "MUTUAL_FUND"}
+
+
+def account_level(s: dict, account: str) -> str:
+    """The scanner's level for an account: the simulated account's, the first Schwab
+    account's (level_live), or another Schwab account's (level_by_account, Off unset)."""
+    if account in ("sim", "live"):
+        return s[f"level_{account}"]
+    return s.get("level_by_account", {}).get(account, "off")
 
 
 def merged(saved: dict | None) -> dict:
@@ -530,7 +539,7 @@ class Scanner:
         automations,
         watchlist,
         preferences,
-        live_broker,
+        brokers,
         clock=lambda: datetime.now(ET),
         earnings=None,
         history=None,
@@ -541,7 +550,8 @@ class Scanner:
         self.automations = automations
         self.watchlist = watchlist
         self.preferences = preferences
-        self.live_broker = live_broker
+        # Each Schwab account's orders and limits, by key (a single broker: the first account).
+        self.brokers = brokers if isinstance(brokers, dict) else {"live": brokers}
         self.clock = clock
         self.earnings = earnings
         self.history = history
@@ -554,7 +564,7 @@ class Scanner:
         return await self.store.get_setting(STATE_KEY) or {}
 
     def level(self, s: dict, account: str) -> str:
-        lv = s[f"level_{account}"]
+        lv = account_level(s, account)
         cap = self.automations[account].max_level
         return LEVELS[min(LEVELS.index(lv), LEVELS.index(cap))]
 
@@ -564,8 +574,8 @@ class Scanner:
         return {"settings": s, "level": self.level(s, account), "last": st.get(account)}
 
     async def symbols(self, account: str) -> list[str]:
-        if account == "live":
-            c = await self.live_broker.config()
+        if account in self.brokers:
+            c = await self.brokers[account].config()
             if not c.get("all_symbols"):
                 return list(c["symbols"])
         out = ["SPY"] + [s for s in await self.preferences.watchlist() if s != "SPY"]
@@ -597,7 +607,7 @@ class Scanner:
         if now.weekday() >= 5 or (now.hour, now.minute) < _hm(s["scan_time"]):
             return done
         st = await self._state()
-        for account in ("sim", "live"):
+        for account in list(self.automations):
             if self.level(s, account) == "off":
                 continue
             last = st.get(account) or {}
@@ -739,8 +749,8 @@ class Scanner:
                 # Would own: a cash-secured short put, the premium-collecting way to buy.
                 own = source == "view" and view == "would_own"
                 n = max(1, s["contracts"] // 2) if careful else s["contracts"]
-                if account == "live":
-                    n = min(n, (await self.live_broker.config())["max_contracts"])
+                if account in self.brokers:
+                    n = min(n, (await self.brokers[account].config())["max_contracts"])
                 # Undefined risk first when allowed; over the notional limit, the same idea as
                 # a defined-risk spread instead.
                 attempts = [True] if own else [True, False] if strangle else [False]

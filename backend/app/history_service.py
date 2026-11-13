@@ -21,15 +21,18 @@ PAUSE_S = 1.5  # between symbols, to stay well inside Schwab's limits
 class PriceHistoryService:
     """Keeps daily closes for VIX and every underlying traded, back to the first trade."""
 
-    def __init__(self, source, store, chain_service, sim_trades=None):
+    def __init__(self, source, store, chain_services, sim_trades=None):
+        """chain_services: every Schwab account's ChainService (one, or a dict of them)."""
         self.source = source
         self.store = store
-        self.chain_service = chain_service
+        self.chain_services = chain_services
         self.sim_trades = sim_trades
         self.status: dict = {"pending": None, "error": None}
 
     def symbols(self) -> tuple[set[str], float | None]:
-        chains = list(self.chain_service.result["chains"])
+        services = self.chain_services
+        services = services.values() if isinstance(services, dict) else [services]
+        chains = [c for cs in list(services) for c in cs.result["chains"]]
         if self.sim_trades:
             chains += self.sim_trades()
         unders = {c["underlying"] for c in chains if not str(c["underlying"]).startswith("/")}

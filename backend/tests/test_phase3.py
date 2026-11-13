@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime
 
 import pytest
@@ -811,3 +812,23 @@ def test_views_per_underlying_and_per_trade_through_the_api(client):
     assert v.json()["trades"]["5"] == {"enabled": False}
     bad = client.post("/api/automation/trade?account=sim", json={"trade_id": 5, "view": "x"})
     assert bad.status_code == 400
+
+
+def test_each_schwab_account_has_its_own_routes_limits_and_orders(client):
+    accts = client.get("/api/accounts/in-use").json()["accounts"]
+    assert [(a["key"], a["name"]) for a in accts] == [
+        ("live", "Joint"),
+        ("live-5678", "Individual"),
+    ]
+    assert client.get("/api/snapshot?account=nope").status_code == 404
+    assert client.get("/api/automation?account=live-5678").json()["account"] == "live-5678"
+    act = client.get("/api/activity?account=live-5678").json()
+    assert act["account"] == "live-5678" and act["name"] == "Individual"
+    # Each account's own Schwab limits: Individual allows only QQQ.
+    asyncio.run(client.app.state.accounts["brokers"]["live-5678"].set_config({"symbols": "QQQ"}))
+    put = first_put(client)
+    body = {"intent": "open", "legs": [{"symbol": put, "quantity": -1, "effect": "open"}]}
+    one = client.post("/api/orders/preview", json={**body, "account": "live-5678"}).json()
+    other = client.post("/api/orders/preview", json={**body, "account": "live"}).json()
+    assert any("not on the live list (QQQ)" in b for b in one["live_blocks"])
+    assert not any("not on the live list" in b for b in other["live_blocks"])
