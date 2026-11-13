@@ -55,7 +55,10 @@ DEFAULT_SETTINGS = {
     "untested_target": "match",  # "match": the tested side's delta; "fixed": the tested delta
     "roll_ic_untested": True,  # iron condors roll their untested vertical, same width
     "max_untested_rolls": 2,  # per expiration; then the DTE rule takes over
-    "roll_single_itm": False,  # a lone short put or call in the money rolls out for a credit
+    "roll_single_itm": False,
+    # A single short option in the money rolls to: "same" strike, or "further" out of the
+    # money, as far as the least roll credit allows (a put down and out, a call up and out).
+    "single_roll_strike": "same",  # a lone short put or call in the money rolls out for a credit
     # An inverted strangle (the guts): buy the guts, sell the wings, in the same expiration.
     "guts_to_wings": True,
     "wings_delta": 0.16,
@@ -195,6 +198,10 @@ def parse_settings(form: dict, current: dict) -> dict:
         out["guts_to_wings"] = form.get("guts_to_wings") in ("on", "true", "1")
         out["guts_near"] = form.get("guts_near") in ("on", "true", "1")
         out["ticket_automanage"] = form.get("ticket_automanage") in ("on", "true", "1")
+    if form.get("single_roll_strike") in ("same", "further"):
+        out["single_roll_strike"] = form["single_roll_strike"]
+    elif "single_roll_strike" in form:
+        raise ValueError("Single short option roll: unknown choice")
     if form.get("untested_target") in ("match", "fixed"):
         out["untested_target"] = form["untested_target"]
     for key, label, lo, hi, kind, _unit in SETTING_FIELDS:
@@ -273,8 +280,14 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             "rolls its untested vertical; an inverted strangle, or a deeply tested straddle "
             'or narrow strangle, buys the guts and sells the wings. With "Short option in the '
             'money: roll out for a credit" ticked, these also roll out in time for a credit '
-            "once in the money: a single short option and a front ratio (the whole ratio) at "
-            "the same strikes; a covered call's call up and out, and a jade lizard's put down "
+            "once in the money: a front ratio (the whole ratio) at the same strikes; a single "
+            "short option "
+            + (
+                "down or up and out, to the furthest strike that still pays a credit; "
+                if settings.get("single_roll_strike") == "further"
+                else "at the same strike; "
+            )
+            + "a covered call's call up and out, and a jade lizard's put down "
             "and out, to the furthest strike that still pays a credit (the shares, and the "
             "lizard's call spread, stay: it holds no upside risk while the credit covers its "
             "width). Anything else is a notification. Details under Tested side and Guts to wings."
@@ -1381,7 +1394,12 @@ class AutomationService:
                     if not rows:
                         return []
                     row = min(rows, key=lambda r: abs(r["strike"] - x["strike"]))
-                    if only and x["quantity"] < 0:
+                    further = (
+                        action.rule == "tested"
+                        and s["name"] in ("Short put", "Short call")
+                        and settings.get("single_roll_strike") == "further"
+                    )
+                    if (only or further) and x["quantity"] < 0:
                         row = roll_strike(rows, side, x, settings) or row
                     body_legs.append(
                         {"symbol": x["symbol"], "quantity": -int(x["quantity"]), "effect": "close"}

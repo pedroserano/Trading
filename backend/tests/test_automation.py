@@ -710,3 +710,47 @@ def test_roll_strike_goes_as_far_out_as_a_credit_allows():
     # A covered call goes up: the old call worth 4.00 rolls to the highest strike paying.
     calls = [row(600, 7.0), row(605, 5.0), row(610, 4.2), row(615, 3.0)]
     assert auto.roll_strike(calls, "call", {"strike": 600, "mark": 4.0}, s)["strike"] == 610
+
+
+class PricedSource(Source):
+    """Puts priced by strike: 555 at 6.00, 550 at 5.10, 545 at 4.30, 540 at 3.90."""
+
+    async def option_chain(self, symbol, start, end, strike_count=None):
+        exp = start
+        key = f"{exp.isoformat()}:{(exp - NOW.date()).days}"
+        marks = {540: 3.9, 545: 4.3, 550: 5.1, 555: 6.0}
+
+        def c(k, m):
+            return [{"symbol": sym("P", k, exp), "bid": m - 0.05, "ask": m + 0.05, "delta": -0.3}]
+
+        return {
+            "underlyingPrice": 550,
+            "putExpDateMap": {key: {f"{k:.1f}": c(k, m) for k, m in marks.items()}},
+            "callExpDateMap": {},
+        }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("choice", "rule", "strike"),
+    [("further", "tested", 545), ("same", "tested", 555), ("further", "dte", 555)],
+)
+async def test_single_short_roll_strike_is_a_setting(choice, rule, strike):
+    h = Harness([], QUOTES)
+    h.svc.source = PricedSource()
+    put = {**leg("P", 555, -1, -0.6), "mark": 4.0}
+    st = strat(name="Short put", legs=[put])
+    s = {**merged_settings(None), "single_roll_strike": choice}
+    (body,) = await h.svc._bodies(
+        st, {"symbol": "SPY", "price": 550.0}, Action(rule, "roll", "x"), s
+    )
+    opened = [x["symbol"] for x in body["legs"] if x["effect"] == "open"]
+    assert opened == [sym("P", strike, NEXT)]
+
+
+def test_single_roll_strike_setting_is_validated():
+    assert (
+        parse_settings({"single_roll_strike": "further"}, None)["single_roll_strike"] == "further"
+    )
+    with pytest.raises(ValueError, match="unknown choice"):
+        parse_settings({"single_roll_strike": "sideways"}, None)
