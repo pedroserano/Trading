@@ -28,7 +28,9 @@ function isDefault(el: HTMLInputElement | HTMLSelectElement): boolean {
 /** Shows the ● on each row whose value differs from its default. */
 function markChanged(root: ParentNode) {
   for (const el of inputs(root)) {
-    el.closest(".rule")?.classList.toggle("is-changed", !isDefault(el));
+    // A setting written into the explanation marks itself; a row marks its ● instead.
+    if (el.classList.contains("inl")) el.classList.toggle("is-changed", !isDefault(el));
+    else el.closest(".rule")?.classList.toggle("is-changed", !isDefault(el));
   }
 }
 

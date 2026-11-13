@@ -918,12 +918,12 @@ def test_the_plain_summary_follows_the_settings():
     s = merged_settings(None)
     steps = dict(auto.plain_summary(Rules(), s))
     assert len(steps) == 6
-    assert "at 50% of what it can make" in steps["1. Take profits early"][0]
-    assert "(at Auto: the order is placed)" in steps["1. Take profits early"][0]
-    assert "only sends a message" in steps["3. Defend a tested side, calmly"][1]
+    first = steps["1. Take profits early"][0]
+    assert "at 50% of what it can make" in first and "Level: Auto" in first
+    assert "to the same strike" in steps["3. Defend a tested side, calmly"][5]
     assert "Never margin" in steps["4. Expiration day"][1]
-    on = {**s, "roll_single_itm": True, "single_roll_strike": "further"}
+    on = {**s, "single_roll_strike": "further"}
     assert (
-        "as far out of the money as still pays"
-        in dict(auto.plain_summary(Rules(), on))["3. Defend a tested side, calmly"][1]
+        "the furthest strike that still pays"
+        in dict(auto.plain_summary(Rules(), on))["3. Defend a tested side, calmly"][5]
     )

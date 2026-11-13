@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from . import cash as cash_mod
 from . import chain as chain_mod
-from . import dividends, portfolio_view, targets
+from . import dividends, plain, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
 from .extremes import compute as compute_extreme
 from .options import parse_option_symbol
@@ -184,39 +184,65 @@ def parse_form(form: dict, current: dict | None) -> dict:
     return out
 
 
-def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral", rules=None) -> dict:
-    """How the scanner picks trades, in plain words and in order, from the current settings:
-    for the top of the Scanner tab on Settings. live_symbols: the Schwab account's allowlist,
-    or None for any underlying."""
+LEVEL_LABELS = {"off": "Off", "notify": "Notify", "propose": "Propose", "auto": "Auto"}
+EARNINGS_INSIDE = [("skip", "skip the stock"), ("defined", "allow only a defined-risk spread")]
 
-    def pct(v: float) -> str:
-        return f"{round(v * 100, 1):g}%"
 
-    when = f"Once a day at {s['scan_time']} ET" + (
-        f", then every {s['scan_every']} minutes until the close" if s["scan_every"] else ""
+def scan_fields(s: dict, live_auto: bool = True, defaults: dict | None = None) -> dict:
+    """The scanner's settings as plain.Field, for the step list (values and defaults; some
+    defaults follow the margin type, so the page passes its own)."""
+    d = {**DEFAULTS, **(defaults or {})}
+    out = {
+        key: plain.Field(kind, s[key], d[key], lo, hi)
+        for key, _label, lo, hi, kind, _unit in FIELDS
+    }
+    out["scan_time"] = plain.Field("time", s["scan_time"], d["scan_time"])
+    levels = list(LEVEL_LABELS.items())
+    out["level_sim"] = plain.Field("select", s["level_sim"], d["level_sim"], options=levels)
+    out["level_live"] = plain.Field(
+        "select",
+        s["level_live"],
+        d["level_live"],
+        options=[x for x in levels if live_auto or x[0] != "auto"],
     )
+    out["earnings_inside"] = plain.Field(
+        "select", s.get("earnings_inside", "skip"), d["earnings_inside"], options=EARNINGS_INSIDE
+    )
+    for key in (
+        "monthly_only",
+        "automanage_new",
+        "extreme_tilt",
+        "band_lean",
+        "avoid_through_earnings",
+    ):
+        out[key] = plain.Field("check", s[key], d[key])
+    return out
+
+
+BIAS_LINES = {
+    "bullish": "Then your portfolio bias, bullish (⟦link:change it|r-bias⟧): until portfolio "
+    "delta reaches the middle of its band, the put side is sold a little closer.",
+    "bearish": "Then your portfolio bias, bearish (⟦link:change it|r-bias⟧): until portfolio "
+    "delta reaches the middle of its band, the call side is sold a little closer.",
+    "contrarian": "Then your portfolio bias, contrarian (⟦link:change it|r-bias⟧): no lean of "
+    "its own; sharp moves decide, against the move.",
+    "neutral": "Then your portfolio bias, neutral, tastylive's default "
+    "(⟦link:change it|r-bias⟧): no lean of its own.",
+}
+
+
+def scan_steps(bias: str, live_symbols: list[str] | None) -> list[tuple[str, list[str]]]:
+    """How the scanner picks trades, in plain words and in order, with tokens where each
+    setting goes (see plain.py)."""
     live = "SPY and your watchlist" if live_symbols is None else ", ".join(live_symbols)
-    earn = (
-        "skips the stock"
-        if s.get("earnings_inside", "skip") == "skip"
-        else "allows only a defined-risk spread, at half size"
-    )
-    bias_line = {
-        "bullish": "Your bullish bias: until portfolio delta reaches the middle of its band, the "
-        "put side is sold a little closer.",
-        "bearish": "Your bearish bias: until portfolio delta reaches the middle of its band, the "
-        "call side is sold a little closer.",
-        "contrarian": "Your contrarian bias: no lean of its own; sharp moves decide, against "
-        "the move.",
-    }.get(bias, "Your neutral bias (tastylive's default): no lean of its own.")
-    under = f"{pct(rules.max_underlying_bp)} of net liq" if rules else "the Rules-tab limit"
-    notional = f"{pct(rules.max_notional)} of net liq" if rules and rules.max_notional else None
-    steps = [
+    return [
         (
             "1. Which stocks it looks at",
             [
-                f"{when}, and whenever you tap Scan now.",
-                f"Simulated account: SPY and your watchlist. Schwab account: {live}.",
+                "Once a day at ⟦scan_time⟧ ET, then again every ⟦scan_every⟧ minutes until "
+                "the close (0: once a day), and whenever you tap Scan now.",
+                "Simulated account: SPY and your ⟦link:watchlist|watchlist⟧. Schwab account: "
+                f"{live} (⟦link:live trading|live⟧).",
                 "It opens strangles, iron condors, and one-sided puts or calls (or their "
                 "spreads). Ratios, jade lizards and the rest are yours to open by hand.",
             ],
@@ -224,126 +250,125 @@ def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral", rul
         (
             "2. Is the premium worth selling?",
             [
-                f"Options must be expensive for that stock: IV rank of {s['min_ivr']} or more, "
+                "Options must be expensive for that stock: IV rank of ⟦min_ivr⟧ or more, "
                 "against its own past year. Stocks are never compared by raw IV30, because "
                 "some are always jumpier than others.",
-                (
-                    f"Or IV30 of {s['rich_iv30']:g}% or more at any IV rank: premium rich "
-                    "enough to sell anyway, but only as a defined-risk iron condor."
-                    if s.get("rich_iv30")
-                    else "No exception for very rich premium."
-                ),
-                (
-                    f"IV30 must be at least {s['min_iv30']:g}%: in a calm market even a high "
-                    "IV rank can pay too little."
-                    if s.get("min_iv30")
-                    else "No IV30 floor."
-                ),
-                (
-                    f"IV30 must be at least {s['min_iv_hv']:g}× how much the stock has really "
-                    "moved over 30 sessions: the options must price in more movement than the "
-                    "stock is making."
-                    if s.get("min_iv_hv")
-                    else "No implied-versus-realized check."
-                ),
-                f"Easy to trade: an at-the-money bid/ask spread of {pct(s['max_spread'])} or "
-                f"less, and open interest of {s['min_oi']:,} or more.",
+                "Or IV30 of ⟦rich_iv30⟧% or more at any IV rank (0: off): premium rich enough "
+                "to sell anyway, but only as a defined-risk iron condor.",
+                "IV30 must be at least ⟦min_iv30⟧% (0: off): in a calm market even a high IV "
+                "rank can pay too little.",
+                "IV30 must be at least ⟦min_iv_hv⟧× how much the stock has really moved over "
+                "30 sessions (0: off): the options must price in more movement than the stock "
+                "is making.",
+                "Easy to trade: an at-the-money bid/ask spread of ⟦max_spread⟧% or less, and "
+                "open interest of ⟦min_oi⟧ or more.",
             ],
         ),
         (
             "3. Is now a bad time?",
             [
-                f"Single stocks need a known earnings date more than {s['earnings_days']} "
-                f"sessions away. A report inside the trade {earn}. ETFs have no earnings.",
-                f"A possible shock (a day's move {s['shock_day_ratio']:g}× the usual, or "
-                f"implied volatility up {pct(s['shock_iv_jump'])} in 5 sessions, with no "
-                "earnings report behind it, such as a CEO leaving) means only defined-risk "
-                f"spreads at half size, for {s['shock_sessions']} sessions.",
-                "Nothing opens while the portfolio's daily theta is already at its maximum.",
+                "Single stocks need a known earnings date more than ⟦earnings_days⟧ sessions "
+                "away (⟦link:earnings dates|earnings⟧). ETFs have no earnings.",
+                "⟦?avoid_through_earnings⟧ Check for a report inside the trade; if there is "
+                "one, ⟦earnings_inside⟧ at half size.",
+                "A possible shock, such as a CEO leaving or an investigation: a day's move "
+                "⟦shock_day_ratio⟧× the usual, or implied volatility up ⟦shock_iv_jump⟧% in 5 "
+                "sessions, with no earnings report behind it. Then only defined-risk spreads "
+                "at half size, for ⟦shock_sessions⟧ sessions.",
+                "Nothing opens while the portfolio's daily theta is already at its maximum "
+                "(⟦link:theta band|portfolio⟧).",
             ],
         ),
         (
             "4. Which way it leans (the first that applies)",
             [
-                "If the whole portfolio is outside its delta band, back toward the band.",
-                "Your view on the stock, from the Watchlist (bullish, bearish, neutral, "
-                "would own).",
-                f"A sharp drop with IV rank {s['drop_ivr']} or more and put skew of "
-                f"{s['steep_skew']:g} points or more is the drop signal: puts are dearest, so it "
-                "sells puts, and these trades go first."
-                + (
-                    " Other price extremes (near a 52-week high or low, an outsized move) "
-                    "lean against the move too."
-                    if s["extreme_tilt"] or bias == "contrarian"
-                    else ""
-                ),
-                bias_line,
+                "⟦?band_lean⟧ If the whole portfolio is outside its ⟦link:delta band|portfolio⟧, "
+                "lean back toward it (and lean with your bias, below).",
+                "Your view on the stock, from the ⟦link:Watchlist|watchlist⟧ page (bullish, "
+                "bearish, neutral, would own).",
+                "A sharp drop with IV rank ⟦drop_ivr⟧ or more and put skew of ⟦steep_skew⟧ "
+                "points or more is the drop signal: puts are dearest, so it sells puts, and "
+                "these trades go first.",
+                "⟦?extreme_tilt⟧ Lean against other price extremes too: within ⟦range_band⟧% "
+                "of a 52-week high or low, a ⟦move_days⟧-session move of ⟦move_sigma⟧σ or "
+                "more, or a day's move ⟦day_ratio⟧× the average.",
+                BIAS_LINES.get(bias, BIAS_LINES["neutral"]),
             ],
         ),
         (
             "5. What it sells",
             [
-                "With no lean: a strangle at "
-                f"{s['short_delta']:.2f} delta when IV rank is {s['undefined_ivr']} or more, "
-                f"otherwise an iron condor at {s['ic_short_delta']:.2f} delta collecting at "
-                f"least {pct(s['min_ic_credit'])} of its width"
-                + (
-                    f"; iron condors only while VIX is {s['defined_vix']:g} or more."
-                    if s.get("defined_vix")
-                    else "."
-                ),
+                "In the expiration nearest ⟦target_dte⟧ days, between ⟦min_dte⟧ and "
+                "⟦max_dte⟧ days; ⟦?monthly_only⟧ monthly expirations only.",
+                "With no lean: a strangle at ⟦short_delta⟧ delta when IV rank is "
+                "⟦undefined_ivr⟧ or more, otherwise an iron condor at ⟦ic_short_delta⟧ delta "
+                "collecting at least ⟦min_ic_credit⟧% of its width. Iron condors only while "
+                "VIX is ⟦defined_vix⟧ or more (0: off).",
                 "Leaning on your view or a sharp move: one side only, at a strike outside the "
                 "expected move, so it works whether the stock rebounds, stalls or falls a bit "
                 "further. A short put (or call), or a spread when defined risk is required.",
                 "Would own: a cash-secured short put only, and only when your cash and sweep "
                 "cover it after your other Would own puts. Never margin.",
                 "Leaning for the portfolio or your bias: the favoured side sold closer, at "
-                f"{s['tilt_delta']:.2f} delta.",
+                "⟦tilt_delta⟧ delta.",
+                "Probability of profit at least ⟦min_pop⟧%.",
             ],
         ),
         (
             "6. How big",
             [
-                f"{s['contracts']} contract{'s' if s['contracts'] > 1 else ''} a trade, at most "
-                f"{pct(s['max_bp_share'])} of net liq in buying power each.",
-                f"One stock at most {under} in buying power, counting its share of your SPY "
-                "and QQQ positions (look-through)."
-                + (
-                    f" Uncovered short options on one stock at most {notional} in what you "
-                    "could be made to buy; over that, it opens a spread instead."
-                    if notional
-                    else ""
-                ),
-                (
-                    f"At most {s['max_per_sector']} open trades per sector, so one wrong read "
-                    "cannot sink the account."
-                    if s.get("max_per_sector")
-                    else "No limit per sector."
-                ),
-                f"At most {s['max_new_per_day']} new trades a day, adding at most "
-                f"{pct(s['max_bp_day'])} of net liq in buying power, and never past the "
-                "buying-power ceiling for today's VIX.",
+                "⟦contracts⟧ contracts a trade, at most ⟦max_bp_share⟧% of net liq in buying "
+                "power each, and at most ⟦max_per_underlying⟧ open trades in one stock.",
+                "One stock at most ⟦rules:max_underlying_bp⟧ of net liq in buying power, and "
+                "its uncovered short options at most ⟦rules:max_notional⟧ in what you could be "
+                "made to buy, counting its share of your SPY and QQQ (look-through); over that, "
+                "a spread instead.",
+                "At most ⟦max_per_sector⟧ open trades per sector (0: no limit), so one wrong "
+                "read cannot sink the account.",
+                "At most ⟦max_new_per_day⟧ new trades a day, adding at most ⟦max_bp_day⟧% of "
+                "net liq in buying power, and never past the buying-power ceiling for today's "
+                "VIX (⟦link:the ceiling|rules⟧).",
             ],
         ),
         (
             "7. What happens next",
             [
-                f"Simulated account: {s['level_sim'].capitalize()}. Schwab account: "
-                f"{s['level_live'].capitalize()}. Notify sends a message, Propose waits for "
-                "your tap, Auto places the order (the Schwab account only with automatic orders "
-                "allowed).",
-                (
-                    "Automanage switches on for each new trade once it fills, managed with the "
-                    "view the trade was opened with."
-                    if s["automanage_new"]
-                    else "Automanage is not switched on for new trades."
-                ),
+                "Simulated account: ⟦level_sim⟧. Schwab account: ⟦level_live⟧. Notify sends a "
+                "message, Propose waits for your tap, Auto places the order (the Schwab account "
+                "only with automatic orders allowed in ⟦link:live trading|live⟧).",
+                "⟦?automanage_new⟧ Switch automanage on for each new trade once it fills, "
+                "managed with the view it was opened with.",
                 "Each run's trades, and what was skipped and why, show on the Watchlist page "
                 "under Scanner.",
             ],
         ),
     ]
-    return {"steps": steps}
+
+
+def rules_values(rules) -> dict[str, tuple[str, str]]:
+    """Rules-tab values the step list shows: key -> (shown value, where to change it)."""
+    if rules is None:
+        return {}
+    return {
+        "max_underlying_bp": (
+            f"{round(rules.max_underlying_bp * 100, 2):g}%",
+            "r-max_underlying_bp",
+        ),
+        "max_notional": (f"{round(rules.max_notional * 100, 2):g}%", "r-max_notional"),
+    }
+
+
+def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral", rules=None) -> dict:
+    """How the scanner picks trades, in plain words, from the current settings (for the API;
+    the Settings page shows the same steps with the values editable in place)."""
+    fields = scan_fields(s)
+    rv = {k: v for k, (v, _) in rules_values(rules).items()}
+    return {
+        "steps": [
+            (title, [plain.as_text(line, fields, rv) for line in lines])
+            for title, lines in scan_steps(bias, live_symbols)
+        ]
+    }
 
 
 def pick_expiration(exps: list[dict], s: dict) -> dict | None:

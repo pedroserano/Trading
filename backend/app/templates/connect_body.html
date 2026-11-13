@@ -135,17 +135,20 @@
 <div class="tab-panel" data-tab="automation" data-label="Automation">
 <section id="automation">
   <h2>Automation</h2>
-  <details class="group advanced rules-map" open>
-    <summary>How automanage looks after a trade</summary>
-    <div class="rmap-body">
-      <p class="dim small">In plain words, from your saved settings, for every trade with
-        Automanage ticked on Positions. The grid below has the detail per kind of trade.</p>
-      {% for title, lines in auto_plain %}
-      <p class="small"><b>{{ title }}</b></p>
-      <ul class="small rmap-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+  <form method="post" action="/automation/settings" class="plain-form">
+    <input type="hidden" name="_form" value="automation">
+    {% call group("How automanage looks after a trade") %}
+      <p class="dim small">For every trade with Automanage ticked on Positions. Change any
+        number, choice or box right in the text; underlined values are set on another tab and
+        open it. Levels: Off does nothing, Notify sends a message, Propose waits for your tap,
+        Auto places the order.</p>
+      {% for title, lines in auto_steps_html %}
+      <p class="small step-title"><b>{{ title }}</b></p>
+      <ul class="small rmap-list plain-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
       {% endfor %}
-    </div>
-  </details>
+    {% endcall %}
+    <p class="save"><button class="primary" type="submit">Save automation</button></p>
+  </form>
   <details class="group advanced rules-map">
     <summary>Rules map: every rule, every trade</summary>
     <div class="rmap-body">
@@ -186,68 +189,7 @@
       </ul>
     </div>
   </details>
-  <form method="post" action="/automation/settings">
-    <input type="hidden" name="_form" value="automation">
-    {% call group("Levels", "For every trade with Automanage ticked on Positions. Off: nothing. Notify: a message. Propose: an order waits for your tap. Auto: placed at mid and stepped toward natural. The Schwab account stops at Propose unless Live trading is set to Manual and automatic (and LIVE_AUTO=true).") %}
-      {% for rule, text in auto_rules.items() %}
-        {{ select("a-" ~ rule, "level_" ~ rule, text, levels, auto.levels[rule], auto_defaults.levels[rule], auto_rule_hints[rule]) }}
-      {% endfor %}
-      {{ select("a-dda", "dte_defined_action", "Defined-risk trades at the DTE mark", [("close", "Close"), ("roll", "Roll")], auto.dte_defined_action, auto_defaults.dte_defined_action, "tastytrade closes defined-risk trades at 21 DTE rather than rolling them.") }}
-      {{ check("ticket_automanage", "Order ticket: Automanage on fill starts ticked", auto.ticket_automanage, auto_defaults.ticket_automanage, "When a new trade fills, automanage switches on for it, and the Profit target rule above closes it at its target: 50% of max profit, 25% for straddles. The box can still be changed on each ticket.") }}
-    {% endcall %}
-    {% call group("Rolling", "How the 21 DTE rule rolls an undefined-risk trade: out to the monthly nearest the target, at the same strikes, for a credit.") %}
-      {{ num("a", auto_map.roll_target_dte, auto.roll_target_dte, auto_defaults.roll_target_dte, auto_map.roll_target_dte[5]) }}
-      {{ num("a", auto_map.min_roll_ivr, auto.min_roll_ivr, auto_defaults.min_roll_ivr, auto_map.min_roll_ivr[5], "Below this IV rank premium is not worth selling again, so the trade is closed instead.") }}
-      {{ num("a", auto_map.max_rolls, auto.max_rolls, auto_defaults.max_rolls, auto_map.max_rolls[5]) }}
-      {{ num("a", auto_map.min_roll_credit, auto.min_roll_credit, auto_defaults.min_roll_credit, auto_map.min_roll_credit[5], "A roll that would collect less than this is replaced by a close.") }}
-    {% endcall %}
-    {% call group("Tested side", "Rolling the untested side closer collects more credit and brings the trade back toward neutral; matching the tested side's delta re-centres it.") %}
-      {{ select("a-ut", "untested_target", "Roll the untested side to", [("match", "Tested side's delta"), ("fixed", "Fixed delta (" ~ rules.tested_delta ~ ")")], auto.untested_target, auto_defaults.untested_target) }}
-      {{ num("a", auto_map.max_untested_rolls, auto.max_untested_rolls, auto_defaults.max_untested_rolls, auto_map.max_untested_rolls[5], "After this many, the DTE rule takes over.") }}
-      {{ check("roll_ic_untested", "Iron condors: roll the untested vertical, same width", auto.roll_ic_untested, auto_defaults.roll_ic_untested) }}
-      {{ check("roll_single_itm", "Short option in the money: roll out for a credit", auto.roll_single_itm, auto_defaults.roll_single_itm, "Covers a single short put or call (at the strike chosen below) and a front ratio (the whole ratio, at the same strikes), rolled out in time; a covered call's call, rolled up and out (the shares stay); and a jade lizard's put, rolled down and out (the call spread stays). Up or down goes to the furthest strike that still pays at least the least credit set below; if none does, the trade is closed instead.") }}
-      {{ select("a-srs", "single_roll_strike", "Single short option in the money rolls to", [("same", "Same strike"), ("further", "Furthest strike that still pays")], auto.single_roll_strike, auto_defaults.single_roll_strike, "With the box above ticked. Same strike keeps the most credit and is tastylive's usual defence. Furthest strike moves a put down and out, or a call up and out, as far as still pays at least the least roll credit (Rolling), lowering the risk for less credit. Ratios keep their strikes, and the 21 DTE roll always keeps the strike.") }}
-      {{ check("allow_inverted", "Let a strangle go inverted", auto.allow_inverted, auto_defaults.allow_inverted, "Rolling the untested side past the tested strike.") }}
-    {% endcall %}
-    {% call group("Guts to wings", "Close the guts and sell a new strangle at the wings delta in the same expiration, as one order. The guts can never be worth less than their in-the-money value (an inverted strangle, at least its inversion width), so the repair pays up to that plus the allowance and locks in no new loss beyond it.") %}
-      {{ check("guts_to_wings", "Inverted strangles", auto.guts_to_wings, auto_defaults.guts_to_wings) }}
-      {{ check("guts_near", "Straddles and narrow strangles", auto.guts_near, auto_defaults.guts_near, "A straddle has no untested side to roll closer; until a short is this deep it is left to the profit target (25% for straddles) and 21 DTE.") }}
-      {{ num("a", auto_map.guts_near_gap, auto.guts_near_gap, auto_defaults.guts_near_gap, auto_map.guts_near_gap[5]) }}
-      {{ num("a", auto_map.guts_near_delta, auto.guts_near_delta, auto_defaults.guts_near_delta, auto_map.guts_near_delta[5], "tastytrade sets no fixed delta for this; 0.70 is this app's default, a strike about half a standard deviation in the money.") }}
-      {{ num("a", auto_map.wings_delta, auto.wings_delta, auto_defaults.wings_delta, auto_map.wings_delta[5]) }}
-      {{ num("a", auto_map.guts_extra_debit, auto.guts_extra_debit, auto_defaults.guts_extra_debit, auto_map.guts_extra_debit[5]) }}
-    {% endcall %}
-    {% call group("Earnings") %}
-      {{ num("a", auto_map.earnings_close_sessions, auto.earnings_close_sessions, auto_defaults.earnings_close_sessions, auto_map.earnings_close_sessions[5], "Before the open (bmo): the session before the report is the last; after the close (amc): the report day itself.") }}
-    {% endcall %}
-    {% call group("When and how much", "Automation also pauses itself on stale prices, at the daily cap or loss limit, and while the Schwab sign-in has less than a day left.") %}
-      <div class="rule">
-        {{ label("a-ws", "Act only between (ET)", "On early-close days it stops at 12:30.") }}
-        <span class="rule-input">
-          <input id="a-ws" type="time" name="window_start" value="{{ auto.window_start }}" data-default="{{ auto_defaults.window_start }}" required>
-          <span class="dim unit">and</span>
-          <input type="time" name="window_end" value="{{ auto.window_end }}" data-default="{{ auto_defaults.window_end }}" required aria-label="Window end">
-        </span>
-      </div>
-      <div class="rule">
-        {{ label("a-eca", "Expiration day: close shorts still in the money at (ET)", "Not the moment a strike is touched: a 0 DTE trade is on its expiration day from the open, and what matters is where it finishes. Anything in the money by a cent at 4:00 is exercised, so these are closed first. Runs past the window above, until the close. On early-close days it is 12:45 at the latest.") }}
-        <span class="rule-input">
-          <input id="a-eca" type="time" name="expiry_close_at" value="{{ auto.expiry_close_at }}" data-default="{{ auto_defaults.expiry_close_at }}" min="15:00" max="15:59" required>
-        </span>
-      </div>
-      {{ num("a", auto_map.expiry_pin_margin, auto.expiry_pin_margin, auto_defaults.expiry_pin_margin, auto_map.expiry_pin_margin[5], "Also close shorts just out of the money, which could still finish in it: 0.1% is about 76 cents on SPY. 0: in-the-money shorts only.") }}
-      {{ num("a", auto_map.grace_minutes, auto.grace_minutes, auto_defaults.grace_minutes, auto_map.grace_minutes[5], "At Auto, the order waits this long as a proposal you can dismiss.") }}
-      {{ num("a", auto_map.daily_cap, auto.daily_cap, auto_defaults.daily_cap, auto_map.daily_cap[5]) }}
-      {{ num("a", auto_map.daily_loss_limit, auto.daily_loss_limit, auto_defaults.daily_loss_limit, auto_map.daily_loss_limit[5], "Once net liq is down this much since the day began, automation stops until tomorrow.") }}
-    {% endcall %}
-    {% call advanced("Advanced: order pricing") %}
-      {{ num("a", auto_map.step_cents, auto.step_cents, auto_defaults.step_cents, auto_map.step_cents[5], "Orders start at mid and move this much toward natural each step.") }}
-      {{ num("a", auto_map.step_minutes, auto.step_minutes, auto_defaults.step_minutes, auto_map.step_minutes[5]) }}
-      {{ num("a", auto_map.max_concession, auto.max_concession, auto_defaults.max_concession, auto_map.max_concession[5], "Then the order is cancelled and you are notified.") }}
-      {{ num("a", auto_map.max_order_spread, auto.max_order_spread, auto_defaults.max_order_spread, auto_map.max_order_spread[5], "A wider order (and more than 10 cents) waits and is tried again later.") }}
-    {% endcall %}
-    <p class="save"><button class="primary" type="submit">Save automation</button></p>
-  </form>
+
 </section>
 </div>
 
@@ -255,104 +197,15 @@
 <div class="tab-panel" data-tab="scanner" data-label="Scanner">
 <section id="scanner">
   <h2>Scanner</h2>
-  <details class="group advanced rules-map" open>
-    <summary>How the scanner picks trades</summary>
-    <div class="rmap-body">
-      <p class="dim small">In plain words, from your saved settings. The settings below
-        change each step.</p>
-      {% for title, lines in smap.steps %}
-      <p class="small"><b>{{ title }}</b></p>
-      <ul class="small rmap-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
-      {% endfor %}
-    </div>
-  </details>
-  <form method="post" action="/scanner/settings">
+  <form method="post" action="/scanner/settings" class="plain-form">
     <input type="hidden" name="_form" value="scanner">
-    {% call group("Levels", "The scanner looks for premium worth selling: a strangle when IV rank is high, an iron condor otherwise. Notify, Propose (waits for your tap) or Auto; the Schwab account stops at Propose unless Live trading is set to Manual and automatic.") %}
-      {% for acct, text in (("sim", "Simulated account"), ("live", "Schwab account")) %}
-        {% set opts = [] %}{% for lv in auto_levels %}{% if acct == "sim" or lv != "auto" or live.auto_cap == "auto" %}{% set _ = opts.append((lv, lv|capitalize)) %}{% endif %}{% endfor %}
-        {{ select("s-" ~ acct, "level_" ~ acct, text, opts, scan["level_" ~ acct], scan_defaults["level_" ~ acct]) }}
+    {% call group("How the scanner picks trades") %}
+      <p class="dim small">In order, as it runs. Change any number, choice or box right in the
+        text; underlined values are set on another tab and open it.</p>
+      {% for title, lines in scan_steps_html %}
+      <p class="small step-title"><b>{{ title }}</b></p>
+      <ul class="small rmap-list plain-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
       {% endfor %}
-      <div class="rule">
-        {{ label("s-time", "Scan at (ET)", "") }}
-        <span class="rule-input"><input id="s-time" type="time" name="scan_time" value="{{ scan.scan_time }}" data-default="{{ scan_defaults.scan_time }}" required></span>
-      </div>
-      {{ check("automanage_new", "Switch automanage on for new trades", scan.automanage_new, scan_defaults.automanage_new) }}
-    {% endcall %}
-    {% call group("Volatility: is the premium worth selling?", "IV rank picks the trades; IV30 and realized volatility only check them.") %}
-      <p class="dim small">Every stock has its own normal level of volatility: an IV30 of 35% is
-        high for SPY but low for TSLA. So the scanner never compares stocks by raw IV30, which
-        would always favour the naturally jumpy ones. It asks whether each stock's options are
-        expensive <em>for that stock</em>, using IV rank, because high volatility tends to fall
-        back to its own normal. Then three checks on the actual level of volatility: is there
-        enough premium to bother (a high IV rank in a quiet market can still pay very little),
-        is the premium rich enough to sell even at an ordinary IV rank, and are the options
-        pricing in more movement than the stock has really been making.</p>
-      <p class="dim small">Why sell when the news is loudest: fear makes options expensive,
-        they usually overstate the move that follows, and the fear tends to fade, so short
-        options lose value even if the stock barely moves. The catch is surviving the noise,
-        which is why the scanner trades small and often, switches to defined risk when VIX
-        is extreme, spreads trades across sectors, and exits mechanically (profit target,
-        21 DTE) rather than in a panic.</p>
-      {{ num("s", scan_map.min_ivr, scan.min_ivr, scan_defaults.min_ivr, scan_map.min_ivr[5], "IV rank: where today's implied volatility sits in its own one-year range, 0 at the low, 100 at the high. tastytrade sells premium from 30.") }}
-      {{ num("s", scan_map.undefined_ivr, scan.undefined_ivr, scan_defaults.undefined_ivr, scan_map.undefined_ivr[5], "At this IV rank or more, a strangle (undefined risk); below it, an iron condor (defined risk).") }}
-      {{ num("s", scan_map.min_iv30, scan.min_iv30, scan_defaults.min_iv30, scan_map.min_iv30[5], "When the whole market is calm, a high IV rank can rest on a tiny range: an IV rank of 60 on implied volatility that moved from 11% to 14% offers little premium for the risk. Below this IV30, nothing opens, whatever the IV rank.") }}
-      {{ num("s", scan_map.rich_iv30, scan.rich_iv30, scan_defaults.rich_iv30, scan_map.rich_iv30[5], "Premium size: a stock whose IV30 is this high pays plenty even when its IV rank is unremarkable, so it can still be sold under the IV rank minimum, as an iron condor only (defined risk).") }}
-      {{ num("s", scan_map.min_iv_hv, scan.min_iv_hv, scan_defaults.min_iv_hv, scan_map.min_iv_hv[5], "Implied versus realized: IV30 divided by how much the stock has actually moved over the last 30 sessions. Below 1, the options price less movement than the stock is making, so selling them has no edge. Trades with more edge also rank a little higher.") }}
-    {% endcall %}
-    {% call group("Selling into a drop", "When fear is loudest puts are dearest: the scanner looks for that, and sells without trying to call the bottom.") %}
-      <p class="dim small">A sharp drop with a high IV rank and steep put skew (puts priced well
-        above calls) is when selling puts pays best, so the scanner looks at those first. It
-        does not try to call the bottom: it sells the put side only, at a strike outside the
-        expected move, so the trade still works if the stock bounces, stalls, or falls a bit
-        further. If the move looks like news rather than an earnings report (an unusually big
-        day, or IV jumping), it treats it as a possible shock: part of that IV is real risk of
-        another gap, so it only opens defined-risk spreads, at half size, for a while.</p>
-      {{ num("s", scan_map.drop_ivr, scan.drop_ivr, scan_defaults.drop_ivr, scan_map.drop_ivr[5], "With a sharp drop (a price extreme pointing down), IV rank this high or more is part of the drop signal.") }}
-      {{ num("s", scan_map.steep_skew, scan.steep_skew, scan_defaults.steep_skew, scan_map.steep_skew[5], "Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. Steep skew means puts are especially expensive after a drop.") }}
-      {{ num("s", scan_map.shock_day_ratio, scan.shock_day_ratio, scan_defaults.shock_day_ratio, scan_map.shock_day_ratio[5], "A day's move this many times bigger than the stock's usual daily move, with no earnings report behind it, counts as a possible shock (a CEO leaving, an investigation).") }}
-      {{ num("s", scan_map.shock_iv_jump, scan.shock_iv_jump, scan_defaults.shock_iv_jump, scan_map.shock_iv_jump[5], "Or implied volatility jumping this much in 5 sessions with no earnings report: the options market pricing news.") }}
-      {{ num("s", scan_map.shock_sessions, scan.shock_sessions, scan_defaults.shock_sessions, scan_map.shock_sessions[5], "How far back a shock counts, and so how long the scanner stays careful after one: defined-risk spreads only, at half size.") }}
-    {% endcall %}
-    {% call group("What it opens") %}
-      {{ num("s", scan_map.short_delta, scan.short_delta, scan_defaults.short_delta, scan_map.short_delta[5]) }}
-      {{ num("s", scan_map.ic_short_delta, scan.ic_short_delta, scan_defaults.ic_short_delta, scan_map.ic_short_delta[5]) }}
-      {{ num("s", scan_map.min_ic_credit, scan.min_ic_credit, scan_defaults.min_ic_credit, scan_map.min_ic_credit[5], "tastytrade collects about a third of the width.") }}
-      {{ num("s", scan_map.min_pop, scan.min_pop, scan_defaults.min_pop, scan_map.min_pop[5]) }}
-    {% endcall %}
-    {% call group("Expiration") %}
-      {{ num("s", scan_map.target_dte, scan.target_dte, scan_defaults.target_dte, scan_map.target_dte[5], "tastytrade opens around 45 DTE.") }}
-      {{ num("s", scan_map.min_dte, scan.min_dte, scan_defaults.min_dte, scan_map.min_dte[5]) }}
-      {{ num("s", scan_map.max_dte, scan.max_dte, scan_defaults.max_dte, scan_map.max_dte[5]) }}
-      {{ check("monthly_only", "Monthly expirations only", scan.monthly_only, scan_defaults.monthly_only) }}
-    {% endcall %}
-    {% call group("Size and limits") %}
-      {{ num("s", scan_map.contracts, scan.contracts, scan_defaults.contracts, scan_map.contracts[5]) }}
-      {{ num("s", scan_map.max_bp_share, scan.max_bp_share, scan_defaults.max_bp_share, scan_map.max_bp_share[5], "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
-      {{ num("s", scan_map.max_per_underlying, scan.max_per_underlying, scan_defaults.max_per_underlying, scan_map.max_per_underlying[5], "Never two trades in the same underlying and expiration.") }}
-      {{ num("s", scan_map.max_new_per_day, scan.max_new_per_day, scan_defaults.max_new_per_day, scan_map.max_new_per_day[5]) }}
-      {{ num("s", scan_map.max_bp_day, scan.max_bp_day, scan_defaults.max_bp_day, scan_map.max_bp_day[5]) }}
-      {{ num("s", scan_map.max_per_sector, scan.max_per_sector, scan_defaults.max_per_sector, scan_map.max_per_sector[5], "Spreads trades out, so one wrong read on a sector (a headline that turns out to be real change) cannot sink the account. Counts trades already open and those from the same scan. Broad index funds (SPY, QQQ, IWM) are one sector; a stock whose sector is unknown counts on its own.") }}
-      {{ num("s", scan_map.defined_vix, scan.defined_vix, scan_defaults.defined_vix, scan_map.defined_vix[5], "When the whole market is in a panic, margin requirements balloon and volatility can keep rising before it falls (2008, 2020, 2022). From this VIX, the scanner opens iron condors instead of strangles, so every new trade has a known worst case.") }}
-    {% endcall %}
-    {% call group("Earnings", "ETFs and indexes have no earnings. A single stock opens only when its next report is known and further away than this. A coming report also inflates IV rank and IV30: that reflects the event, not options that are expensive in the usual sense, which is another reason not to hold through it.") %}
-      {{ num("s", scan_map.earnings_days, scan.earnings_days, scan_defaults.earnings_days, scan_map.earnings_days[5]) }}
-      {{ check("avoid_through_earnings", "Check for a report inside the trade", scan.avoid_through_earnings, scan_defaults.avoid_through_earnings, "Unticked, a report inside the trade is ignored.") }}
-      {{ select("s-ei", "earnings_inside", "A report inside the trade", [("skip", "Skip the stock"), ("defined", "Defined risk, half size")], scan.earnings_inside, scan_defaults.earnings_inside, "A known event can move a stock more than its options expect. Skip it (the default), or allow only a defined-risk spread at half size.") }}
-    {% endcall %}
-    {% call group("Leaning") %}
-      {{ check("band_lean", "Lean toward the portfolio delta band and bias", scan.band_lean, scan_defaults.band_lean, "Outside the band, sell the put closer when too short, the call closer when too long. With a bullish or bearish bias (Portfolio tab), also inside the band: lean that way until delta reaches the middle of the band. Neutral, tastylive's default, does not lean inside the band. Comes before the price-extreme lean.") }}
-      {{ check("extreme_tilt", "Lean at price extremes", scan.extreme_tilt, scan_defaults.extreme_tilt, "After a drop sell the put side closer (bullish), after a rise the call side (bearish).") }}
-      {{ num("s", scan_map.tilt_delta, scan.tilt_delta, scan_defaults.tilt_delta, scan_map.tilt_delta[5]) }}
-    {% endcall %}
-    {% call advanced("Advanced: liquidity, price extremes, rescans") %}
-      {{ num("s", scan_map.max_spread, scan.max_spread, scan_defaults.max_spread, scan_map.max_spread[5]) }}
-      {{ num("s", scan_map.min_oi, scan.min_oi, scan_defaults.min_oi, scan_map.min_oi[5]) }}
-      {{ num("s", scan_map.range_band, scan.range_band, scan_defaults.range_band, scan_map.range_band[5]) }}
-      {{ num("s", scan_map.move_days, scan.move_days, scan_defaults.move_days, scan_map.move_days[5]) }}
-      {{ num("s", scan_map.move_sigma, scan.move_sigma, scan_defaults.move_sigma, scan_map.move_sigma[5]) }}
-      {{ num("s", scan_map.day_ratio, scan.day_ratio, scan_defaults.day_ratio, scan_map.day_ratio[5]) }}
-      {{ num("s", scan_map.scan_every, scan.scan_every, scan_defaults.scan_every, scan_map.scan_every[5], "After the scan time, until automation's window ends.") }}
     {% endcall %}
     <p class="save"><button class="primary" type="submit">Save scanner</button></p>
   </form>

@@ -26,24 +26,26 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, indexweights, portfolio_view, signals, targets
+from . import guards, indexweights, plain, portfolio_view, signals, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
 from .automation import (
-    DEFAULT_SETTINGS as AUTO_DEFAULTS,
-)
-from .automation import (
+    AUTO_STEPS,
     LEVELS,
     RULES,
     SETTING_FIELDS,
     SETTINGS_KEY,
     AutomationService,
+    auto_fields,
+    auto_rules_values,
     merged_settings,
     parse_settings,
-    plain_summary,
     rule_hints,
     rules_map,
+)
+from .automation import (
+    DEFAULT_SETTINGS as AUTO_DEFAULTS,
 )
 from .chain_service import SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
@@ -620,7 +622,7 @@ def create_app(
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
-                "smap": await scanner_map(),
+                "scan_steps_html": await scan_steps_html(rules_now),
                 "scan_fields": scan_mod.FIELDS,
                 "earnings": earnings.status(),
                 "earnings_manual": await earnings.manual_text(),
@@ -628,7 +630,7 @@ def create_app(
                 "auto_rule_hints": rule_hints(
                     rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
                 ),
-                "auto_plain": plain_summary(
+                "auto_steps_html": auto_steps_html(
                     rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
                 ),
                 "rmap": rules_map(
@@ -1450,6 +1452,28 @@ def create_app(
             (await preferences.rules()).delta_bias,
             await preferences.rules(),
         )
+
+    async def scan_steps_html(rules_now) -> list:
+        """The scanner's step list for Settings, with each setting editable in place."""
+        c = await live_broker.config()
+        live_syms = None if c.get("all_symbols") else list(c["symbols"])
+        s = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
+        st = await live_broker.status()
+        fields = scan_mod.scan_fields(s, st.get("auto_cap") == "auto", scan_defaults(rules_now))
+        rv = scan_mod.rules_values(rules_now)
+        return [
+            (title, [plain.as_html(line, fields, rv, "s") for line in lines])
+            for title, lines in scan_mod.scan_steps(rules_now.delta_bias, live_syms)
+        ]
+
+    def auto_steps_html(rules_now, settings_now) -> list:
+        """Automanage's step list for Settings, with each setting editable in place."""
+        fields = auto_fields(settings_now)
+        rv = auto_rules_values(rules_now)
+        return [
+            (title, [plain.as_html(x, fields, rv, "a") for x in lines])
+            for title, lines in AUTO_STEPS
+        ]
 
     @app.get("/api/scanner/map", dependencies=[Depends(require_login)])
     async def api_scanner_map():

@@ -387,7 +387,7 @@ def test_settings_page_shows_portfolio_margin_values_everywhere(settings):
         page = c.get("/connect").text
         assert 'id="r-max_underlying_bp"' in page and 'value="7.5"' in page
         assert 'id="s-max_bp_share"' in page and 'value="2.5"' in page
-        assert "portfolio margin: 2.5%" in page and "saves at once" in page
+        assert "saves at once" in page
 
 
 def test_delta_bias_from_the_full_settings_form(settings):
@@ -460,7 +460,7 @@ def test_settings_tabs_show_every_setting_with_its_default(settings):
             + [("s", f[0]) for f in scan_mod.FIELDS]
         )
         for prefix, key in keys:
-            tag = re.search(rf'<input id="{prefix}-{key}"[^>]*>', page)
+            tag = re.search(rf'<(?:input|select) id="{prefix}-{key}"[^>]*>', page)
             assert tag and "data-default=" in tag.group(0), key
         for rule in RULES:
             assert f'id="a-{rule}"' in page
@@ -485,3 +485,44 @@ def test_home_screen_icon_at_the_standard_addresses_without_sign_in(settings, tm
         assert c.get("/assets/icons/apple-touch-icon.png").status_code == 200
         login = c.get("/login").text
         assert "viewport-fit=cover" in login and 'apple-touch-icon" href=' in login
+
+
+def test_settings_written_into_the_explanations_save_as_they_are(settings):
+    """The scanner's and automanage's step lists are their forms: posting them unchanged
+    keeps every setting, and a value changed in the text is saved."""
+    import re
+
+    from app import scanner as scan_mod
+    from app.automation import DEFAULT_SETTINGS, SETTINGS_KEY
+
+    store = MemoryStore()
+    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
+        login(c)
+        page = c.get("/connect").text
+
+        def form_data(action):
+            body = page[page.index(f'action="{action}"') :]
+            body = body[: body.index("</form>")]
+            data = {}
+            for tag in re.findall(r"<input[^>]*>|<select[^>]*>.*?</select>", body, re.S):
+                name = re.search(r'name="([^"]+)"', tag).group(1)
+                if tag.startswith("<select"):
+                    data[name] = re.search(r'<option value="([^"]*)" selected', tag).group(1)
+                elif 'type="checkbox"' in tag:
+                    if " checked" in tag:
+                        data[name] = "on"
+                else:
+                    data[name] = re.search(r'value="([^"]*)"', tag).group(1)
+            return data
+
+        scan = form_data("/scanner/settings")
+        assert scan["_form"] == "scanner" and scan["min_ivr"] == "30"
+        c.post("/scanner/settings", data={**scan, "min_ivr": "35"})
+        saved = scan_mod.merged(store.settings.get(scan_mod.SETTINGS_KEY))
+        assert saved["min_ivr"] == 35
+        for k, v in scan_mod.DEFAULTS.items():
+            if k != "min_ivr":
+                assert saved[k] == (pytest.approx(v, abs=1e-4) if isinstance(v, float) else v), k
+        auto = form_data("/automation/settings")
+        c.post("/automation/settings", data=auto)
+        assert store.settings[SETTINGS_KEY] == DEFAULT_SETTINGS

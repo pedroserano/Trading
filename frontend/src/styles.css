@@ -608,3 +608,26 @@ td > .view-select { margin-left: 0; }
 .shock { margin-left: 4px; color: var(--warn); cursor: help; }
 .shift-to { font-weight: 600; margin-right: 2px; }
 .shift-to.down, .shift-to.up { color: var(--accent); }
+
+/* Settings written into their explanation: the numbers, choices and boxes sit in the text. */
+.settings-page .plain-list { padding-left: 18px; }
+.settings-page .plain-list li { margin: 6px 0; line-height: 1.9; }
+.settings-page .step-title { margin: 14px 0 2px; }
+.settings-page .inl { font: inherit; font-size: 13px; color: var(--text); background: var(--row);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px; margin: 0 2px;
+  vertical-align: baseline; text-align: right; }
+.settings-page select.inl { text-align: left; padding-right: 2px; }
+.settings-page .inl-time { width: auto; text-align: left; }
+.settings-page .inl.is-changed { border-color: var(--accent); }
+.settings-page .inl-check { width: 15px; height: 15px; margin: 0 6px 0 0; vertical-align: -2px;
+  accent-color: var(--accent); }
+.settings-page .inl-check.is-changed { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* A sentence whose box is unticked is switched off: shown, but greyed. */
+.settings-page .plain-list li:has(> .inl-check:not(:checked)) { color: var(--dim); }
+.settings-page .plain-list li:has(> .inl-check:not(:checked)) > :not(.inl-check) { opacity: 0.55; }
+.settings-page .inl-rule { color: var(--text); border-bottom: 1px dashed var(--accent); }
+.settings-page .inl-rule:hover { color: var(--accent); }
+.settings-page input.inl[type="number"] { -moz-appearance: textfield; appearance: textfield;
+  box-sizing: content-box; padding: 1px 5px; }
+.settings-page input.inl[type="number"]::-webkit-inner-spin-button,
+.settings-page input.inl[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
