@@ -334,7 +334,7 @@ def test_scanner_map_follows_the_settings():
     assert any("IV rank of 30 or more" in x for x in worth)
     assert any("strangle at 0.16 delta" in x for x in steps["5. What it sells"])
     assert any(
-        "Schwab account: SPY (live trading)." in x for x in steps["1. Which stocks it looks at"]
+        "Schwab account: SPY (Schwab limits)." in x for x in steps["1. Which stocks it looks at"]
     )
     assert any("at most 20% in what you could be made to buy" in x for x in steps["6. How big"])
     changed = dict(

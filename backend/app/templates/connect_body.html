@@ -99,6 +99,31 @@
     <p class="save"><button class="primary" type="submit">Save rules</button></p>
   </form>
 </section>
+<section id="live">
+  <h2>Schwab account limits</h2>
+  <p class="dim small">Every Schwab order, yours or automatic, stays within these. Whether orders
+     reach Schwab at all is set only in <code>.env</code> (<code>LIVE_TRADING</code>, and
+     <code>LIVE_AUTO</code> for automatic ones); the Automation and Scanner tabs show which are on.</p>
+  <form method="post" action="/live/settings">
+    {{ check("all_symbols", "Any underlying", live.all_symbols, false, "The list below is then not used, and the live scanner works from your watchlist.") }}
+    <div class="rule">
+      {{ label("l-symbols", "Underlyings allowed live", "") }}
+      <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
+        value="{{ live.symbols|join(' ') }}" style="width:160px"></span>
+    </div>
+    <div class="rule">
+      {{ label("l-max", "Contracts per leg, at most", "") }}
+      <span class="rule-input"><input id="l-max" type="number" name="max_contracts" min="1" max="50"
+        step="1" value="{{ live.max_contracts }}" data-default="1"><span class="dim unit">contracts</span></span>
+    </div>
+    <div class="rule">
+      {{ label("l-bp", "Buying power for one trade, at most", "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
+      <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
+        step="any" value="{{ '%g'|format(live.max_bp_share * 100) }}" data-default="{{ '%g'|format(scan_defaults.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
+    </div>
+    <p class="save"><button class="primary" type="submit">Save Schwab limits</button></p>
+  </form>
+</section>
 </div>
 
 {# ------------------------------------------------------------------------------------ #}
@@ -364,41 +389,6 @@
 </section>
 {% endif %}
 
-<section id="live">
-  <h2>Live trading</h2>
-  {% if live.demo %}
-  <p class="dim small">Demo mode: there is no real Schwab account, so live orders stay off.</p>
-  {% else %}
-  <p class="small">{% if live.server_allowed %}<span class="dot ok"></span>Orders to Schwab: <b>allowed</b>
-     (<code>LIVE_TRADING=true</code> in <code>.env</code>). Yours go out after the checks, Schwab's preview and a second confirm.
-     {% else %}<span class="dot warn"></span>Orders to Schwab: <b>not allowed</b>: add <code>LIVE_TRADING=true</code>
-     to <code>.env</code> and restart the app.{% endif %}</p>
-  <p class="small">{% if live.server_auto %}<span class="dot ok"></span>Automatic orders: <b>allowed</b>
-     (<code>LIVE_AUTO=true</code>): automanage rules and the scanner set to Auto for the Schwab account place orders by themselves.
-     {% else %}<span class="dot warn"></span>Automatic orders: <b>not allowed</b>: Auto is not offered for the
-     Schwab account. Add <code>LIVE_AUTO=true</code> (with <code>LIVE_TRADING=true</code>) to <code>.env</code> and restart to allow it.{% endif %}</p>
-  {% endif %}
-  <p class="dim small">These two are set only in <code>.env</code>. The limits below apply to every Schwab order.</p>
-  <form method="post" action="/live/settings">
-    {{ check("all_symbols", "Any underlying", live.all_symbols, false, "The list below is then not used, and the live scanner works from your watchlist.") }}
-    <div class="rule">
-      {{ label("l-symbols", "Underlyings allowed live", "") }}
-      <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
-        value="{{ live.symbols|join(' ') }}" style="width:160px"></span>
-    </div>
-    <div class="rule">
-      {{ label("l-max", "Contracts per leg, at most", "") }}
-      <span class="rule-input"><input id="l-max" type="number" name="max_contracts" min="1" max="50"
-        step="1" value="{{ live.max_contracts }}" data-default="1"><span class="dim unit">contracts</span></span>
-    </div>
-    <div class="rule">
-      {{ label("l-bp", "Buying power for one trade, at most", "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
-      <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
-        step="any" value="{{ '%g'|format(live.max_bp_share * 100) }}" data-default="{{ '%g'|format(scan_defaults.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
-    </div>
-    <p class="save"><button class="primary" type="submit">Save live trading</button></p>
-  </form>
-</section>
 
 <section id="session">
   <h2>Session</h2>

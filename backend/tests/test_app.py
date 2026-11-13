@@ -427,7 +427,7 @@ def test_the_env_alone_decides_schwab_orders_and_each_account_has_its_own_levels
         # LIVE_TRADING and LIVE_AUTO in .env: nothing else to switch on.
         assert c.get("/api/automation?account=live").json()["max_level"] == "auto"
         page = c.get("/connect").text
-        assert 'id="l-mode"' not in page and "Automatic orders: <b>allowed</b>" in page
+        assert 'id="l-mode"' not in page and "automatic ones too (LIVE_AUTO=true)" in page
         assert 'id="a-live-profit"' in page and "What runs by itself now" in page
         live_select = re.search(r'<select id="a-live-profit".*?</select>', page, re.S).group(0)
         assert 'value="auto"' in live_select
@@ -448,7 +448,7 @@ def test_the_env_alone_decides_schwab_orders_and_each_account_has_its_own_levels
         login(c)
         assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
         page = c.get("/connect").text
-        assert "Automatic orders: <b>not allowed</b>" in page and "LIVE_AUTO=true" in page
+        assert "automatic ones not: add LIVE_AUTO=true" in page
         live_select = re.search(r'<select id="a-live-profit".*?</select>', page, re.S).group(0)
         assert 'value="auto"' not in live_select  # not offered, so never lowered quietly
         c.post("/automation/settings", data={"_form": "automation", "live_level_dte": "auto"})

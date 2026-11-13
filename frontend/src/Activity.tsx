@@ -110,7 +110,7 @@ export default function Activity() {
             : data.live.demo
               ? " (demo mode)."
               : ": LIVE_TRADING=true is not set in the server's .env file."}{" "}
-          <a href="#/settings/live">Live trading settings</a>
+          <a href="#/settings/live">Schwab limits</a>
           {data.live.error ? <span className="sub"> Reading orders from Schwab: {data.live.error}</span> : null}
         </div>
       ) : null}

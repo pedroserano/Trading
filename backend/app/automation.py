@@ -808,7 +808,7 @@ AUTO_STEPS = [
             "is wider than ⟦max_order_spread⟧% of mid.",
             "Pauses itself on stale prices, once net liq is down ⟦daily_loss_limit⟧% in a day "
             "(0: off), and while the Schwab sign-in has under a day left. Schwab orders go out "
-            "by themselves only with LIVE_AUTO=true in .env (⟦link:live trading|live⟧); "
+            "by themselves only with LIVE_AUTO=true in .env; "
             "without it, Auto is not offered for the Schwab account.",
         ],
     ),

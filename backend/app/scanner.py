@@ -242,7 +242,7 @@ def scan_steps(bias: str, live_symbols: list[str] | None) -> list[tuple[str, lis
                 "Once a day at ⟦scan_time⟧ ET, then again every ⟦scan_every⟧ minutes until "
                 "the close (0: once a day), and whenever you tap Scan now.",
                 "Simulated account: SPY and your ⟦link:watchlist|watchlist⟧. Schwab account: "
-                f"{live} (⟦link:live trading|live⟧).",
+                f"{live} (⟦link:Schwab limits|live⟧).",
                 "It opens strangles, iron condors, and one-sided puts or calls (or their "
                 "spreads). Ratios, jade lizards and the rest are yours to open by hand.",
             ],
@@ -335,7 +335,7 @@ def scan_steps(bias: str, live_symbols: list[str] | None) -> list[tuple[str, lis
             [
                 "Simulated account: ⟦level_sim⟧. Schwab account: ⟦level_live⟧. Notify sends a "
                 "message, Propose waits for your tap, Auto places the order (the Schwab account "
-                "only with automatic orders allowed in ⟦link:live trading|live⟧).",
+                "only with LIVE_AUTO=true in .env).",
                 "⟦?automanage_new⟧ Switch automanage on for each new trade once it fills, "
                 "managed with the view it was opened with.",
                 "Each run's trades, and what was skipped and why, show on the Watchlist page "

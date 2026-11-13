@@ -790,7 +790,7 @@ def create_app(
         form = dict(await request.form())
         try:
             await live_broker.set_config(form)
-            notice = "Live trading limits saved."
+            notice = "Schwab limits saved."
             request.session["notice"] = notice
         except ValueError as e:
             request.session["flash"] = str(e)
@@ -1479,12 +1479,19 @@ def create_app(
             else:
                 parts.append("Auto on (header)")
             if acct == "live":
-                if not live["on"]:
-                    parts.append("Schwab orders not allowed (LIVE_TRADING off)")
+                if live.get("demo"):
+                    parts.append("demo mode: no Schwab orders")
+                elif not live["on"]:
+                    parts.append(
+                        "Schwab orders not allowed: add LIVE_TRADING=true to .env and restart"
+                    )
                 elif live["auto_cap"] == "auto":
-                    parts.append("automatic Schwab orders allowed (LIVE_AUTO)")
+                    parts.append("Schwab orders allowed, automatic ones too (LIVE_AUTO=true)")
                 else:
-                    parts.append("automatic Schwab orders not allowed (LIVE_AUTO off)")
+                    parts.append(
+                        "Schwab orders allowed (LIVE_TRADING=true), automatic ones not: add "
+                        "LIVE_AUTO=true to .env and restart; until then Auto is not offered"
+                    )
             n = sum(1 for t in v["trades"].values() if t.get("enabled"))
             at = {}
             for rule, lv in v["settings"]["levels"].items():
