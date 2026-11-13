@@ -40,6 +40,7 @@ from .automation import (
     AutomationService,
     merged_settings,
     parse_settings,
+    rule_hints,
 )
 from .chain_service import SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
@@ -599,6 +600,9 @@ def create_app(
                 "earnings": earnings.status(),
                 "earnings_manual": await earnings.manual_text(),
                 "auto_rules": RULES,
+                "auto_rule_hints": rule_hints(
+                    rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
+                ),
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
                 "auto_map": {f[0]: f for f in SETTING_FIELDS},

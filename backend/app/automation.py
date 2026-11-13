@@ -224,6 +224,77 @@ def parse_settings(form: dict, current: dict) -> dict:
     return out
 
 
+def rule_hints(rules, settings: dict) -> dict[str, str]:
+    """What sets off each automanage rule and what it does then, with the current values,
+    for the (i) beside its level on Settings."""
+
+    def pct(v: float) -> str:
+        return f"{v * 100:g}%"
+
+    defined = (
+        "closed" if settings["dte_defined_action"] == "close" else "rolled out like any other trade"
+    )
+    closes = [f"IV rank is under {settings['min_roll_ivr']}"]
+    if settings["max_rolls"]:
+        closes.append(f"it has been rolled {settings['max_rolls']} times")
+    if settings["min_roll_credit"]:
+        closes.append(f"the roll pays less than {settings['min_roll_credit']:g} a unit")
+    margin = settings.get("expiry_pin_margin") or 0
+    sessions = settings.get("earnings_close_sessions", 1)
+    return {
+        "profit": (
+            f"When: profit reaches {pct(rules.profit_target)} of the most the trade can make "
+            f"({pct(rules.profit_target_straddle)} for straddles and iron flies; set on the "
+            "Rules tab). Does: closes the whole trade. At Auto a GTC closing order rests at "
+            "that price from the start; at Propose or Notify you hear once it is reached."
+        ),
+        "dte": (
+            f"When: {rules.manage_dte} DTE or less (Rules tab). Does: a defined-risk trade is "
+            f"{defined}; an undefined-risk trade rolls out to about "
+            f"{settings['roll_target_dte']} DTE at the same strikes for a credit, or closes "
+            f"instead when {' or '.join(closes)}. Details under Rolling."
+        ),
+        "tested": (
+            f"When: a short strike reaches {rules.tested_delta:.2f} delta or goes in the money "
+            "(Rules tab). Does: a strangle rolls its untested side closer for a credit, at "
+            f"most {settings['max_untested_rolls']} times per expiration; an iron condor "
+            "rolls its untested vertical; an inverted strangle, or a deeply tested straddle "
+            "or narrow strangle, buys the guts and sells the wings. Details under Tested side "
+            "and Guts to wings."
+        ),
+        "loss": (
+            f"When: an undefined-risk trade is down {rules.loss_multiple:g}x the credit it "
+            "took in (Rules tab). Does: closes the whole trade. Defined-risk trades are not "
+            "checked: their loss is already capped."
+        ),
+        "expiry": (
+            f"When: from {settings.get('expiry_close_at', '15:45')} ET on expiration day, a "
+            "short still in the money"
+            + (f" or within {pct(margin)} of its strike" if margin else "")
+            + ". Not the moment a strike is touched: a 0 DTE trade is managed on where it "
+            "finishes. Does: closes the trade, so nothing is assigned at 4:00. Runs past the "
+            "trading window until the close."
+        ),
+        "earnings": (
+            "When: a single-stock trade that expires after the next earnings report, "
+            + (
+                "on the last session before it"
+                if not sessions
+                else f"{sessions} session{'s' if sessions != 1 else ''} before the last "
+                "session ahead of it"
+            )
+            + ". Does: closes the trade. Dates come from Finnhub or the dates entered under "
+            "Earnings; ETFs and indexes have none."
+        ),
+        "dividend": (
+            "When: a short call in the money, expiring after the ex-dividend date, with less "
+            "time value left than the dividend: it is likely to be assigned the day before. "
+            "Flagged up to 10 days ahead. Does: closes the trade by the last session before "
+            "the ex-date."
+        ),
+    }
+
+
 def _hm(text: str) -> tuple[int, int]:
     h, m = str(text).split(":")
     return int(h), int(m)

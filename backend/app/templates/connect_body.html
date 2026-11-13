@@ -136,7 +136,7 @@
     <input type="hidden" name="_form" value="automation">
     {% call group("Levels", "For every trade with Automanage ticked on Positions. Off: nothing. Notify: a message. Propose: an order waits for your tap. Auto: placed at mid and stepped toward natural. The Schwab account stops at Propose unless Live trading is set to Manual and automatic (and LIVE_AUTO=true).") %}
       {% for rule, text in auto_rules.items() %}
-        {{ select("a-" ~ rule, "level_" ~ rule, text, levels, auto.levels[rule], auto_defaults.levels[rule]) }}
+        {{ select("a-" ~ rule, "level_" ~ rule, text, levels, auto.levels[rule], auto_defaults.levels[rule], auto_rule_hints[rule]) }}
       {% endfor %}
       {{ select("a-dda", "dte_defined_action", "Defined-risk trades at the DTE mark", [("close", "Close"), ("roll", "Roll")], auto.dte_defined_action, auto_defaults.dte_defined_action, "tastytrade closes defined-risk trades at 21 DTE rather than rolling them.") }}
       {{ check("ticket_automanage", "Order ticket: Automanage on fill starts ticked", auto.ticket_automanage, auto_defaults.ticket_automanage, "When a new trade fills, automanage switches on for it, and the Profit target rule above closes it at its target: 50% of max profit, 25% for straddles. The box can still be changed on each ticket.") }}

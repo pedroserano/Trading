@@ -618,3 +618,11 @@ async def test_after_the_window_only_the_expiry_close_acts():
     assert await h.svc.tick() == ["propose expiry"]
     h.svc.clock = lambda: datetime(2026, 11, 11, 16, 0, tzinfo=ET)
     assert await h.svc.tick() == []
+
+
+def test_every_level_has_a_hint_with_the_current_values():
+    s = {**merged_settings(None), "expiry_close_at": "15:50", "expiry_pin_margin": 0.001}
+    hints = auto.rule_hints(Rules(loss_multiple=3), s)
+    assert set(hints) == set(auto.RULES)
+    assert "15:50" in hints["expiry"] and "0.1%" in hints["expiry"]
+    assert "3x" in hints["loss"] and "50%" in hints["profit"] and "21 DTE" in hints["dte"]
