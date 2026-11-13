@@ -528,3 +528,21 @@ async def test_over_the_notional_limit_the_scanner_opens_a_spread_instead():
     auto.submit = submit
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["strategy"] == "Iron condor"
+
+
+@pytest.mark.anyio
+async def test_would_own_sells_only_cash_secured_puts():
+    scanner, _, _ = harness({"shock_day_ratio": 1000})
+
+    async def views():
+        return {"SPY": "would_own"}
+
+    scanner.preferences.symbol_views = views
+    snap = scanner.portfolios["sim"].snapshot
+    snap["account"] = {**snap["account"], "cash": 20_000.0, "sweep": 0.0}
+    r = await scanner.scan("sim", act=False)
+    reasons = {x["symbol"]: x["reason"] for x in r["skipped"]}
+    assert "not cash-secured" in reasons["SPY"] and "never margin" in reasons["SPY"]
+    snap["account"]["sweep"] = 60_000.0
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["strategy"] == "Short put" and c["view"] == "would_own"

@@ -12,8 +12,9 @@ BIASES = {
     "contrarian": "Contrarian",
 }
 # A position's or an underlying's own view; None follows the portfolio.
-VIEWS = ("neutral", "bullish", "bearish")
-VIEW_TILT = {"bullish": "down", "bearish": "up", "neutral": None}
+# would_own: bullish, and glad to be assigned the shares at the put's strike (cash only).
+VIEWS = ("neutral", "bullish", "bearish", "would_own")
+VIEW_TILT = {"bullish": "down", "bearish": "up", "neutral": None, "would_own": "down"}
 TILT_VIEW = {"down": "bullish", "up": "bearish", None: "neutral"}
 # Our own defaults, not published tastytrade numbers: a neutral book within 5% of net liq
 # either side, a leaning book up to 15% toward its side and never the other way.

@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import analytics, dividends, targets
+from . import cash as cash_mod
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
@@ -67,6 +68,7 @@ class PortfolioService:
         self.resolve_account = account_resolver
         self.mode = mode
         self.rules = rules or Rules()
+        self._balances_logged = False
         self.clock = clock
         self.earnings = None  # symbol -> next earnings report, set by the app
         self.preferences = preferences
@@ -463,6 +465,10 @@ class PortfolioService:
                 "type": acct.get("type"),
                 "net_liq": nl,
                 "cash": _num(bal.get("cashBalance")),
+                # The sweep vehicle (a money fund or bank sweep), and any margin loan: with the
+                # cash, all that counts when paying for shares (never buying power).
+                "sweep": _num(bal.get("moneyMarketFund")),
+                "margin_balance": _num(bal.get("marginBalance")),
                 "buying_power": _num(bal.get("buyingPower")),
                 "maintenance": maint,
                 "bp_used_pct": (maint / nl) if (maint is not None and nl) else None,
@@ -471,6 +477,11 @@ class PortfolioService:
                 ),
                 "margin_type": self.rules.margin_type,
             }
+            snap["account"]["free_cash"] = cash_mod.free_cash(snap["account"])
+            if not self._balances_logged:
+                # Once, in full: to confirm which field carries this account's sweep.
+                self._balances_logged = True
+                log.info("Account balances (first read): %s", bal)
         else:
             snap["account"] = None
 

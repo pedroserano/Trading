@@ -19,10 +19,12 @@ import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dividends, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
 from .extremes import compute as compute_extreme
+from .options import parse_option_symbol
 from .signals import drop_signal, one_side, shock, skew
 
 log = logging.getLogger(__name__)
@@ -632,6 +634,15 @@ class Scanner:
             # bias leans until the middle of the band.
             band_out = targets.lean({**bands, "bias": "neutral"}) if bands else None
             bias_in = None if band_out else targets.lean(bands)
+            # Cash already promised to open Would own puts.
+            own_reserved = sum(
+                cash_mod.put_cost(x)
+                for u in snap.get("underlyings", [])
+                for x in u["strategies"]
+                if x.get("trade_id") is not None
+                and (auto.state or {}).get("trades", {}).get(str(x["trade_id"]), {}).get("view")
+                == "would_own"
+            )
             views_of = getattr(self.preferences, "symbol_views", None)
             symbol_views = await views_of() if views_of else {}
             candidates, skipped = [], []
@@ -698,12 +709,14 @@ class Scanner:
                 else:
                     tilt, source = None, None
                 leaned = source in ("band", "bias")
+                # Would own: a cash-secured short put, the premium-collecting way to buy.
+                own = source == "view" and view == "would_own"
                 n = max(1, s["contracts"] // 2) if careful else s["contracts"]
                 if account == "live":
                     n = min(n, (await self.live_broker.config())["max_contracts"])
                 # Undefined risk first when allowed; over the notional limit, the same idea as
                 # a defined-risk spread instead.
-                attempts = [True, False] if strangle else [False]
+                attempts = [True] if own else [True, False] if strangle else [False]
                 legs = pv = None
                 for undefined in attempts:
                     if tilt and source in ("view", "extreme"):
@@ -742,6 +755,25 @@ class Scanner:
                 if legs is None or pv is None:
                     skipped.append({"symbol": sym, "reason": label})
                     continue
+                if own:
+                    # Cash-secured only: cash and sweep, after the other Would own puts.
+                    need = sum(
+                        float(parse_option_symbol(x["symbol"]).strike) * 100 * -x["quantity"]
+                        for x in body["legs"]
+                        if x["quantity"] < 0
+                    )
+                    left = cash_mod.free_cash(acct) - own_reserved - cash_mod.FEE_BUFFER
+                    if need > left + 1e-9:
+                        skipped.append(
+                            {
+                                "symbol": sym,
+                                "reason": f"Would own: not cash-secured: the put needs "
+                                f"{need:,.0f} and {max(left, 0):,.0f} of cash and sweep is "
+                                "free after your other Would own puts (never margin)",
+                            }
+                        )
+                        continue
+                    own_reserved += need
                 problems = list(pv["errors"]) + list(pv.get("live_blocks") or [])
                 bp = pv.get("bp_effect")
                 bp_cap = s["max_bp_share"] * (0.5 if careful else 1.0)
@@ -799,7 +831,7 @@ class Scanner:
                         "caution": vol["caution"],
                         "skew": vol["skew"],
                         # The view the trade is managed with once open (its rolls lean this way).
-                        "view": targets.TILT_VIEW[tilt],
+                        "view": "would_own" if own else targets.TILT_VIEW[tilt],
                         "band_lean": leaned,
                         "delta_push": push,
                         "iv30": vol["iv30"],

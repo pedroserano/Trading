@@ -389,7 +389,7 @@ export interface AutomationView {
   paused: boolean;
   settings: { levels: Record<string, AutoLevel>; window_start: string; window_end: string; daily_cap: number };
   /** view: the trade's own direction for automanage's rolls; absent follows the portfolio bias. */
-  trades: Record<string, { enabled: boolean; view?: "neutral" | "bullish" | "bearish" }>;
+  trades: Record<string, { enabled: boolean; view?: "neutral" | "bullish" | "bearish" | "would_own" }>;
   proposals: AutoProposal[];
   log: AutoLogEntry[];
   orders_today: number;

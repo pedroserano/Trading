@@ -111,7 +111,7 @@ export default function Watchlist() {
               {th("symbol", "Symbol")}
               <th
                 className="l"
-                title="Your view for the scanner: its new trades here lean this way (puts closer when bullish, calls when bearish), and keep leaning that way through their rolls. Auto follows the portfolio bias and price extremes."
+                title="Your view for the scanner: its new trades here lean this way, selling one side outside the expected move (puts when bullish, calls when bearish), and keep leaning that way through their rolls. Would own: you would be glad to buy the shares, so it sells cash-secured puts and, on expiration day, lets an in-the-money put be assigned if your cash and sweep cover it (never margin). Auto follows the portfolio bias and price extremes."
               >
                 View
               </th>
@@ -180,6 +180,7 @@ export default function Watchlist() {
                     <option value="neutral">Neutral</option>
                     <option value="bullish">Bullish</option>
                     <option value="bearish">Bearish</option>
+                    <option value="would_own">Would own</option>
                   </select>
                 </td>
                 <td>{num(r.price, 2)}</td>

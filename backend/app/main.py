@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dashboard as dash
 from . import guards, indexweights, portfolio_view, targets
@@ -1206,6 +1207,27 @@ def create_app(
                     f"{'s' if short_calls > 1 else ''} without enough shares to cover; "
                     "close or roll the calls first"
                 )
+        if t.intent == "open" and body.view == "would_own":
+            need = sum(
+                x.strike * 100 * -x.quantity for x in t.legs if x.put_call == "P" and x.quantity < 0
+            )
+            snap_ = pf.snapshot or {}
+            auto_state = automations[body.account].state or {}
+            reserved = sum(
+                cash_mod.put_cost(x)
+                for u in snap_.get("underlyings", [])
+                for x in u["strategies"]
+                if x.get("trade_id") is not None
+                and auto_state.get("trades", {}).get(str(x["trade_id"]), {}).get("view")
+                == "would_own"
+            )
+            free = cash_mod.free_cash(snap_.get("account")) - reserved
+            if need and need > free:
+                warnings.append(
+                    f"Would own: not cash-secured. Assignment would need {need:,.0f}; "
+                    f"{max(free, 0):,.0f} of cash and sweep is free after your other Would own "
+                    "puts. Automanage will close it on expiration day rather than use margin."
+                )
         if t.intent == "open" and not t.stock:
             kind = ticket_strategy(t)
             if not_tasty(kind, 1.0) or (
@@ -1333,7 +1355,7 @@ def create_app(
     async def api_order_place(body: OrderIn):
         order = await place_order(body)
         if body.automanage and body.intent == "open":
-            view = body.view if body.view in ("neutral", "bullish", "bearish") else None
+            view = body.view if body.view in targets.VIEWS else None
             await automations[body.account].watch_entry(order, view)
         return order
 

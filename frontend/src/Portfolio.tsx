@@ -52,6 +52,10 @@ interface Week {
 interface PortfolioData {
   net_liq: number | null;
   bp_used_pct: number | null;
+  cash?: number | null;
+  sweep?: number | null;
+  margin_balance?: number | null;
+  free_cash?: number | null;
   bp_ceiling_pct: number | null;
   bands: Bands | null;
   manage_dte: number;
@@ -131,6 +135,20 @@ export default function Portfolio() {
               {pct(data.bp_used_pct)}
             </span>
             <span className="sub"> ceiling {pct(data.bp_ceiling_pct)}</span>
+          </div>
+        </div>
+        <div
+          className="stat"
+          title="What could pay for shares if a Would own put is assigned: cash plus the sweep vehicle, never margin. A negative cash balance or a margin loan means nothing is free."
+        >
+          <div className="stat-label">Cash for assignment</div>
+          <div className="stat-value">
+            {money(data.free_cash ?? 0)}
+            <span className="sub">
+              {" "}
+              cash {money(data.cash ?? 0)} + sweep {money(data.sweep ?? 0)}
+              {data.margin_balance ? ` · margin loan ${money(data.margin_balance)}` : ""}
+            </span>
           </div>
         </div>
         <BandLine label="β-Δ of net liq" b={data.bands?.delta} digits={1} />

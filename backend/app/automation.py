@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from functools import reduce
 from zoneinfo import ZoneInfo
 
+from . import cash as cash_mod
 from . import chain as chain_mod
 from .strategies import CALENDARS, RATIOS, not_tasty, target_for
 from .targets import VIEWS
@@ -399,8 +400,11 @@ def decide(
     ivr: float | None = None,
     earnings: dict | None = None,
     now: datetime | None = None,
+    assign_ok: bool = False,
 ) -> list[Action]:
     """What the rules call for on one strategy (the Positions snapshot's JSON), by priority.
+    assign_ok: a Would own trade whose short puts the account's cash covers; the expiration-
+    day rule then leaves them to be assigned (short calls are still closed).
 
     Pure: no orders, no state. Levels decide later whether an action is only a
     notification, a proposal or an order. With now, the expiration-day rule waits for its
@@ -420,20 +424,27 @@ def decide(
         for x in shorts
     )
     margin = settings.get("expiry_pin_margin", 0.0) or 0.0
+    at_risk = [x for x in shorts if not (assign_ok and x["put_call"] == "P")]
+    exp_itm = any(
+        spot is not None
+        and x["strike"] is not None
+        and (spot < x["strike"] if x["put_call"] == "P" else spot > x["strike"])
+        for x in at_risk
+    )
     near = (
-        not itm
+        not exp_itm
         and margin > 0
         and any(
             spot is not None
             and x["strike"] is not None
             and abs(spot - x["strike"]) <= spot * margin
-            for x in shorts
+            for x in at_risk
         )
     )
     if (
         levels.get("expiry", "off") != "off"
         and dte == 0
-        and (itm or near)
+        and (exp_itm or near)
         and (now is None or in_expiry_span(now, settings))
     ):
         out.append(
@@ -441,7 +452,7 @@ def decide(
                 "expiry",
                 "close",
                 "Expiration day with a short strike in the money"
-                if itm
+                if exp_itm
                 else "Expiration day with a short strike near the money: close before "
                 "it can be assigned",
             )
@@ -816,9 +827,9 @@ def untested_target(tested_delta: float, untested_pc: str, bias: str) -> float:
     neutral), shifted a little toward a bullish or bearish bias so the roll leaves the trade
     leaning that way. A short put adds long delta, a short call short delta."""
     target = min(tested_delta, 0.5)
-    if bias not in ("bullish", "bearish"):
+    if bias not in ("bullish", "bearish", "would_own"):
         return target
-    toward = (untested_pc == "P") == (bias == "bullish")
+    toward = (untested_pc == "P") == (bias in ("bullish", "would_own"))
     shifted = target + BIAS_SHIFT if toward else target - BIAS_SHIFT
     return round(min(max(shifted, 0.10), 0.5), 4)
 
@@ -987,7 +998,7 @@ class AutomationService:
         """Switches automanage on or off for one trade, and/or sets its view (bullish,
         bearish, neutral; None follows the portfolio bias). The rules come from Settings."""
         if view is not UNSET and view is not None and view not in VIEWS:
-            raise ValueError("View: neutral, bullish or bearish")
+            raise ValueError("View: neutral, bullish, bearish or would_own")
         async with self.lock:
             st = await self.load()
             t = st["trades"].setdefault(str(trade_id), {"enabled": False})
@@ -1123,6 +1134,7 @@ class AutomationService:
                 return [f"held: {hold}"]
             rules = await self.preferences.rules()
             await self._step_orders(settings, done, only=("expiry",) if expiry_only else None)
+            covered, avail, needs = await self._own_cash(snap)
             open_ids = set()
             for u in snap.get("underlyings", []):
                 for s in u["strategies"]:
@@ -1134,9 +1146,32 @@ class AutomationService:
                         continue
                     levels = self.levels(settings)
                     ivr = (u.get("ivr") or {}).get("rank")
+                    own_today = str(tid) in needs and s["numbers"].get("dte") == 0
                     acts = decide(
-                        s, u["price"], rules, settings, levels, ivr, u.get("earnings"), now
+                        s,
+                        u["price"],
+                        rules,
+                        settings,
+                        levels,
+                        ivr,
+                        u.get("earnings"),
+                        now,
+                        assign_ok=own_today and str(tid) in covered,
                     )
+                    if own_today and str(tid) not in covered:
+                        # Would own, but the cash is not there: closed as usual, and said why.
+                        acts = [
+                            Action(
+                                a.rule,
+                                a.kind,
+                                f"Would own {u['symbol']}, but {needs[str(tid)]:,.0f} is needed "
+                                f"and only {avail.get(str(tid), 0):,.0f} of cash and sweep is "
+                                "free: closed instead, no margin used",
+                            )
+                            if a.rule == "expiry"
+                            else a
+                            for a in acts
+                        ]
                     if expiry_only:
                         acts = [a for a in acts if a.rule == "expiry"]
                     for action in acts:
@@ -1517,6 +1552,44 @@ class AutomationService:
                 order_id=order["id"],
             )
             done.append("target")
+
+    async def _own_cash(self, snap: dict) -> tuple[set, dict, dict]:
+        """Would own trades with a short put in the money: what assignment would cost, which
+        of them the account's cash and sweep cover (shared out, never counting the same
+        dollars twice, never margin), and a notification the first time one is not covered,
+        so there is time to add cash."""
+        needs: dict[str, float] = {}
+        names: dict[str, str] = {}
+        for u in snap.get("underlyings", []):
+            for x in u["strategies"]:
+                tid = x.get("trade_id")
+                t = self.state["trades"].get(str(tid), {}) if tid is not None else {}
+                if not t.get("enabled") or t.get("view") != "would_own":
+                    continue
+                price = u.get("price")
+                itm = price is not None and any(
+                    leg["kind"] == "OPTION"
+                    and leg["put_call"] == "P"
+                    and leg["quantity"] < 0
+                    and leg["strike"] is not None
+                    and price < leg["strike"]
+                    for leg in x["legs"]
+                )
+                if itm:
+                    needs[str(tid)] = cash_mod.put_cost(x)
+                    names[str(tid)] = u["symbol"]
+        free = cash_mod.free_cash(snap.get("account"))
+        covered, avail = cash_mod.allot(free, list(needs.items()))
+        for tid, need in needs.items():
+            if tid not in covered:
+                await self._notify(
+                    f"own-cash:{tid}",
+                    f"{names[tid]}: not enough cash to be assigned",
+                    f"Your Would own put is in the money. Assignment needs {need:,.0f}; "
+                    f"{avail.get(tid, 0):,.0f} of cash and sweep is free. Without more cash it "
+                    "will be closed on expiration day rather than bought on margin.",
+                )
+        return covered, avail, needs
 
     def _record_fills(self) -> bool:
         """Forgets automatic orders that are no longer working, logging fills; a filled order

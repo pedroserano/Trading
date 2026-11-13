@@ -208,6 +208,11 @@ def build(
         "spy": spy,
         "bp_used_pct": acct.get("bp_used_pct"),
         "bp_ceiling_pct": acct.get("bp_ceiling_pct"),
+        # Cash for assignment: cash and the sweep only, never margin.
+        "cash": acct.get("cash"),
+        "sweep": acct.get("sweep"),
+        "margin_balance": acct.get("margin_balance"),
+        "free_cash": acct.get("free_cash"),
         "bands": snap.get("bands"),
         "totals": snap.get("totals"),
         "manage_dte": manage_dte,

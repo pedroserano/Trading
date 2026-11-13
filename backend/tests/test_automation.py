@@ -861,3 +861,54 @@ async def test_a_trade_view_survives_toggling_and_steers_its_rolls():
     assert svc.trade_view(7, Rules(delta_bias="contrarian")) == "neutral"
     with pytest.raises(ValueError):
         await svc.set_trade(7, view="sideways")
+
+
+# Would own: assignment only with cash and sweep, never margin ---------------------------
+
+
+def test_free_cash_is_cash_and_sweep_only():
+    from app import cash
+
+    assert cash.free_cash({"cash": 9_000.0, "sweep": 6_000.0, "buying_power": 90_000}) == 15_000
+    assert cash.free_cash({"cash": -500.0, "sweep": 6_000.0}) == 0  # already borrowing
+    assert cash.free_cash({"cash": 9_000.0, "margin_balance": 1_000.0}) == 0
+    assert cash.free_cash(None) == 0
+    covered, avail = cash.allot(20_000, [("a", 15_000), ("b", 8_000)])
+    assert covered == {"a"} and avail["b"] == pytest.approx(20_000 - 25 - 15_000)
+
+
+def test_a_would_own_put_is_left_to_assignment_only_when_covered():
+    r, s = Rules(), merged_settings(None)
+    put_only = strat(name="Short put", dte=0, legs=[leg("P", 555, -1)])
+    assert ("expiry", "close") in kinds(decide(put_only, 550, r, s, ALL))
+    assert not any(a.rule == "expiry" for a in decide(put_only, 550, r, s, ALL, assign_ok=True))
+    # A short call in the money is still closed, even when the put may be assigned.
+    both = strat(dte=0, legs=[leg("P", 555, -1), leg("C", 560, -1)])
+    assert ("expiry", "close") in kinds(decide(both, 565, r, s, ALL, assign_ok=True))
+
+
+@pytest.mark.anyio
+async def test_would_own_at_expiration_uses_cash_never_margin():
+    h = Harness([], QUOTES, settings={"levels": {"expiry": "propose", "profit": "off"}})
+    tid = await h.open_strangle()
+    put = strat(name="Short put", dte=0, tid=tid, legs=[leg("P", 555, -1)])
+    h.portfolio.snapshot["underlyings"][0]["price"] = 550.0
+    h.portfolio.snapshot["underlyings"][0]["strategies"] = [put]
+    await h.svc.set_trade(tid, True, view="would_own")
+    h.svc.clock = lambda: datetime(2026, 11, 11, 15, 50, tzinfo=ET)
+    # Plenty of buying power, but only 9,800 of cash: closed, with the reason.
+    h.portfolio.snapshot["account"] = {"cash": 9_800.0, "sweep": 0.0, "buying_power": 200_000}
+    assert await h.svc.tick() == ["propose expiry"]
+    (p,) = (await h.svc.view())["proposals"]
+    assert "55,500 is needed" in p["reason"] and "no margin used" in p["reason"]
+    assert any("not enough cash" in t for t, _ in h.notifier.sent)
+    # With cash and sweep covering it: left to be assigned.
+    h2 = Harness([], QUOTES, settings={"levels": {"expiry": "propose", "profit": "off"}})
+    tid2 = await h2.open_strangle()
+    put2 = strat(name="Short put", dte=0, tid=tid2, legs=[leg("P", 555, -1)])
+    h2.portfolio.snapshot["underlyings"][0]["price"] = 550.0
+    h2.portfolio.snapshot["underlyings"][0]["strategies"] = [put2]
+    await h2.svc.set_trade(tid2, True, view="would_own")
+    h2.svc.clock = lambda: datetime(2026, 11, 11, 15, 50, tzinfo=ET)
+    h2.portfolio.snapshot["account"] = {"cash": 30_000.0, "sweep": 30_000.0}
+    assert await h2.svc.tick() == []

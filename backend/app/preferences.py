@@ -156,7 +156,7 @@ class Preferences:
         from .targets import VIEWS
 
         if view is not None and view not in VIEWS:
-            raise ValueError("View: neutral, bullish or bearish")
+            raise ValueError("View: neutral, bullish, bearish or would_own")
         views = await self.symbol_views()
         if view is None:
             views.pop(symbol, None)

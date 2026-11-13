@@ -184,6 +184,7 @@ export function AutoPanel({ st }: { st: StrategyView }) {
           <option value="neutral">View: neutral</option>
           <option value="bullish">View: bullish</option>
           <option value="bearish">View: bearish</option>
+          <option value="would_own">View: would own (cash-secured)</option>
         </select>
       ) : null}
       {enabled ? (
