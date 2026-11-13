@@ -30,7 +30,7 @@ button { font: inherit; color: inherit; }
 
 /* Header */
 header.top {
-  position: sticky; top: 0; z-index: 2;
+  position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap;
   padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
   /* As a home-screen app the page runs under the status bar (and beside a notch in
@@ -486,7 +486,8 @@ td .earn { margin-left: 0; }
 .range.near .range-pct { color: var(--warn); }
 
 /* Price chart on the Trade screen */
-.price-chart { margin: 8px 0 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--panel); }
+.price-chart { margin: 8px 0 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: var(--panel);
+  isolation: isolate; } /* the chart library's layers stay inside, under the sticky header */
 .chart-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
 .chart-legend { font-size: 11px; }
 .chart-legend .key-short { color: var(--warn); }
