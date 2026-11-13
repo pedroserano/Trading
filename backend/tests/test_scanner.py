@@ -329,19 +329,22 @@ def test_scanner_map_follows_the_settings():
     from app import scanner as scan_mod
 
     s = scan_mod.merged(None)
-    steps = dict(scan_mod.scan_map(s, ["SPY"])["steps"])
-    assert any("IV rank at least 30" in x for x in steps["2. Each underlying must pass"])
-    assert any("strangle at 0.16Δ" in x for x in steps["4. The trade"])
-    assert any("Schwab account: SPY." == x for x in steps["1. When and what"])
+    steps = dict(scan_mod.scan_map(s, ["SPY"], "neutral", Rules())["steps"])
+    worth = steps["2. Is the premium worth selling?"]
+    assert any("IV rank of 30 or more" in x for x in worth)
+    assert any("strangle at 0.16 delta" in x for x in steps["5. What it sells"])
+    assert any("Schwab account: SPY." in x for x in steps["1. Which stocks it looks at"])
+    assert any("20% of net liq in what you" in x for x in steps["6. How big"])
     changed = dict(
-        scan_mod.scan_map({**s, "min_ivr": 40, "extreme_tilt": False, "scan_every": 30}, None)[
-            "steps"
-        ]
+        scan_mod.scan_map({**s, "min_ivr": 40, "scan_every": 30}, None, "contrarian")["steps"]
     )
-    assert any("IV rank at least 40" in x for x in changed["2. Each underlying must pass"])
-    assert "Price-extreme lean: off." in changed["4. The trade"]
-    assert any("every 30 min" in x for x in changed["1. When and what"])
-    assert any("SPY and your watchlist" in x for x in changed["1. When and what"][2:3])
+    assert any("IV rank of 40 or more" in x for x in changed["2. Is the premium worth selling?"])
+    assert any("contrarian" in x for x in changed["4. Which way it leans (the first that applies)"])
+    assert any("every 30 minutes" in x for x in changed["1. Which stocks it looks at"])
+    assert any(
+        "Schwab account: SPY and your watchlist" in x
+        for x in changed["1. Which stocks it looks at"]
+    )
 
 
 def test_realized_vol_and_the_volatility_checks():

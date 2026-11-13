@@ -634,6 +634,110 @@ def profit_target(st: dict, rules) -> float:
     return target_for(st["name"], rules)
 
 
+def plain_summary(rules, settings: dict) -> list[tuple[str, list[str]]]:
+    """How automanage looks after a trade, in plain words and in order, from the current
+    settings: for the top of the Automation tab on Settings."""
+    lv = settings["levels"]
+
+    def pct(v: float) -> str:
+        return f"{round(v * 100, 1):g}%"
+
+    def at(rule: str) -> str:
+        level = lv.get(rule, "off")
+        return {
+            "off": " (this rule is off)",
+            "notify": " (at Notify: you get a message)",
+            "propose": " (at Propose: the order waits for your tap)",
+            "auto": " (at Auto: the order is placed)",
+        }[level]
+
+    itm = settings.get("roll_single_itm", False)
+    further = settings.get("single_roll_strike") == "further"
+    return [
+        (
+            "1. Take profits early",
+            [
+                f"Close a credit trade at {pct(rules.profit_target)} of what it can make; "
+                f"straddles and iron flies at {pct(rules.profit_target_straddle)}; front ratios "
+                f"at {pct(rules.profit_target_ratio)} of the width plus the credit; calendars at "
+                f"{pct(rules.profit_target_calendar)} of the debit; a covered call at "
+                f"{pct(rules.profit_target)} of the call's credit, keeping the shares"
+                + at("profit")
+                + ".",
+                "Debit spreads and long options are not tastylive trades and are left alone.",
+            ],
+        ),
+        (
+            "2. Manage time",
+            [
+                f"At {rules.manage_dte} days to expiration: roll an undefined-risk trade out to "
+                f"about {settings['roll_target_dte']} days for a credit, at the same strikes; "
+                f"close it instead when IV rank is under {settings['min_roll_ivr']} or the roll "
+                "pays too little. Defined-risk trades and calendars are closed" + at("dte") + ".",
+            ],
+        ),
+        (
+            "3. Defend a tested side, calmly",
+            [
+                f"When a short strike reaches {rules.tested_delta:.2f} delta: roll the safe side "
+                "closer for a credit (a strangle's other short, an iron condor's other spread), "
+                f"at most {settings['max_untested_rolls']} times per expiration, leaving the "
+                "trade leaning with its view (bullish, bearish, would own) or your bias"
+                + at("tested")
+                + ".",
+                (
+                    "When a short goes in the money, roll it out in time for a credit: a single "
+                    "option "
+                    + ("as far out of the money as still pays" if further else "at the same strike")
+                    + ", a ratio whole, a covered call up and out, a jade lizard's put down "
+                    "and out."
+                    if itm
+                    else "In-the-money rolls are off: a short in the money only sends a message."
+                ),
+                f"No panic exits: a loss of {rules.loss_multiple:g}× the credit" + at("loss") + ".",
+            ],
+        ),
+        (
+            "4. Expiration day",
+            [
+                f"From {settings.get('expiry_close_at', '15:45')} ET, close any short still in "
+                "the money, so nothing is assigned by surprise" + at("expiry") + ".",
+                "Except a Would own put you can pay for: it is left to be assigned, so you buy "
+                "the shares at your price, only when your cash and sweep cover it after your "
+                "other Would own puts. Never margin: without the cash it is closed, and you are "
+                "told why (and warned earlier, the first time it goes in the money).",
+            ],
+        ),
+        (
+            "5. Earnings and dividends",
+            [
+                "Close a single-stock trade before an earnings report inside it"
+                + at("earnings")
+                + ".",
+                "Close a short call likely to be assigned before an ex-dividend date"
+                + at("dividend")
+                + ".",
+            ],
+        ),
+        (
+            "6. Limits and pauses",
+            [
+                f"Acts {settings['window_start']} to {settings['window_end']} ET, at most "
+                f"{settings['daily_cap']} automatic orders a day, each starting at mid and "
+                "stepping toward natural.",
+                "Pauses itself on stale prices"
+                + (
+                    f", after a {pct(settings['daily_loss_limit'])} loss in a day"
+                    if settings["daily_loss_limit"]
+                    else ""
+                )
+                + ", and while the Schwab sign-in has under a day left. The Schwab account "
+                "stops at Propose unless automatic orders are allowed.",
+            ],
+        ),
+    ]
+
+
 def rules_map(rules, settings: dict) -> dict:
     """Every automanage rule on one page, from the current values: the levels, a grid of
     what each rule does for each kind of trade, the rules every trade shares, and the limits

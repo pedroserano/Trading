@@ -132,6 +132,10 @@ export interface Bands {
 }
 
 export interface WatchRow {
+  /** Put skew in vol points: the 25-delta put's IV less the 25-delta call's. */
+  skew?: number | null;
+  /** Why the stock may have had an unscheduled shock lately (the scanner then uses defined risk, half size). */
+  shock?: string | null;
   symbol: string;
   price: number | null;
   change_pct: number | null;

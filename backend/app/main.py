@@ -26,7 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, indexweights, portfolio_view, targets
+from . import guards, indexweights, portfolio_view, signals, targets
 from . import scanner as scan_mod
 from .accounts import AccountSelector
 from .analysis import TradeLeg, analyze
@@ -41,6 +41,7 @@ from .automation import (
     AutomationService,
     merged_settings,
     parse_settings,
+    plain_summary,
     rule_hints,
     rules_map,
 )
@@ -425,6 +426,18 @@ def create_app(
         return compute_extreme(closes, price, change, iv30, s)
 
     watchlist.extremes = watch_extreme
+
+    async def watch_shock(sym, change):
+        """The scanner's possible-shock check, for the Watchlist's badge."""
+        closes = history.get(sym)
+        if closes is None:
+            return None
+        s = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
+        today = portfolio.clock().date()
+        iv_hist = await store.iv_history(sym, today - timedelta(days=40))
+        return signals.shock(closes, iv_hist, earnings.last_report(sym), s, change, today)
+
+    watchlist.shock = watch_shock
     health: dict[str, str | None] = {}
     jobs = DailyJobs(source, store, portfolio, settings)
     reminders = ReminderService(notifier, store, connection_status, settings, demo)
@@ -613,6 +626,9 @@ def create_app(
                 "earnings_manual": await earnings.manual_text(),
                 "auto_rules": RULES,
                 "auto_rule_hints": rule_hints(
+                    rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
+                ),
+                "auto_plain": plain_summary(
                     rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
                 ),
                 "rmap": rules_map(
@@ -1432,6 +1448,7 @@ def create_app(
             scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
             live_syms,
             (await preferences.rules()).delta_bias,
+            await preferences.rules(),
         )
 
     @app.get("/api/scanner/map", dependencies=[Depends(require_login)])

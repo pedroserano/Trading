@@ -135,6 +135,17 @@
 <div class="tab-panel" data-tab="automation" data-label="Automation">
 <section id="automation">
   <h2>Automation</h2>
+  <details class="group advanced rules-map" open>
+    <summary>How automanage looks after a trade</summary>
+    <div class="rmap-body">
+      <p class="dim small">In plain words, from your saved settings, for every trade with
+        Automanage ticked on Positions. The grid below has the detail per kind of trade.</p>
+      {% for title, lines in auto_plain %}
+      <p class="small"><b>{{ title }}</b></p>
+      <ul class="small rmap-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% endfor %}
+    </div>
+  </details>
   <details class="group advanced rules-map">
     <summary>Rules map: every rule, every trade</summary>
     <div class="rmap-body">
@@ -244,10 +255,11 @@
 <div class="tab-panel" data-tab="scanner" data-label="Scanner">
 <section id="scanner">
   <h2>Scanner</h2>
-  <details class="group advanced rules-map">
-    <summary>Scanner map: what it looks for, step by step</summary>
+  <details class="group advanced rules-map" open>
+    <summary>How the scanner picks trades</summary>
     <div class="rmap-body">
-      <p class="dim small">From your saved settings.</p>
+      <p class="dim small">In plain words, from your saved settings. The settings below
+        change each step.</p>
       {% for title, lines in smap.steps %}
       <p class="small"><b>{{ title }}</b></p>
       <ul class="small rmap-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>

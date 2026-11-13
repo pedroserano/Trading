@@ -14,6 +14,7 @@ from . import analytics
 from .chain import chain_rows, default_expiration, expirations
 from .portfolio import BENCH, MIN_IVR_DAYS
 from .schwab_service import SchwabError, SchwabNotConnected
+from .signals import skew
 
 log = logging.getLogger(__name__)
 CHAIN_REFRESH_S = 15 * 60
@@ -28,6 +29,7 @@ class WatchlistService:
         self.cache: dict[str, dict] = {}
         self.earnings = None  # symbol -> next earnings report, set by the app
         self.extremes = None  # async (symbol, price, change %, iv30) -> price extremes
+        self.shock = None  # async (symbol, change %) -> why it may have had a shock, or None
 
     async def run(self) -> None:
         while True:
@@ -74,6 +76,7 @@ class WatchlistService:
             rows = chain_rows(sub)
             stats["dte"] = rows["dte"]
             stats["expected_move"] = rows["expected_move"]
+            stats["skew"] = skew(rows["rows"])
             spot = rows["underlying_price"]
             if spot and rows["rows"]:
                 atm = min(rows["rows"], key=lambda r: abs(r["strike"] - spot))
@@ -127,6 +130,8 @@ class WatchlistService:
                     "atm_oi": c.get("atm_oi"),
                     "earnings": self.earnings(sym) if self.earnings else None,
                     "extreme": ext,
+                    "skew": c.get("skew"),
+                    "shock": await self.shock(sym, change) if self.shock else None,
                     "error": c.get("error"),
                     "held": u is not None,
                     "position_delta": None if u is None else u["delta"],

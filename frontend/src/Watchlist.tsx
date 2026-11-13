@@ -122,6 +122,9 @@ export default function Watchlist() {
               {th("iv30", "IV30", "30-day at-the-money implied volatility")}
               {th("ivr", "IVR", "IV rank over up to a year of recorded history")}
               <th title="IV percentile">IVP</th>
+              <th title="Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. High after a drop means puts are especially expensive, part of the scanner's drop signal.">
+                Skew
+              </th>
               {th("em", "Exp. move", "One standard deviation move to the expiration shown")}
               <th>Exp</th>
               <th title="At-the-money bid-ask spread as a share of the mark">Spread</th>
@@ -151,6 +154,14 @@ export default function Watchlist() {
                       title={`Price extreme: ${r.extreme.reasons.join("; ")}`}
                     >
                       {r.extreme.direction === "down" ? "▼" : "▲"}
+                    </span>
+                  ) : null}
+                  {r.shock ? (
+                    <span
+                      className="shock"
+                      title={`${r.shock}. The scanner opens only defined-risk spreads here, at half size, for now: part of the implied volatility is pricing real risk of another gap.`}
+                    >
+                      ⚡
                     </span>
                   ) : null}
                   {r.error ? (
@@ -216,6 +227,7 @@ export default function Watchlist() {
                   ) : null}
                 </td>
                 <td>{r.ivr?.percentile !== null && r.ivr?.percentile !== undefined ? Math.round(r.ivr.percentile) : "–"}</td>
+                <td>{r.skew === null || r.skew === undefined ? "–" : num(r.skew, 1)}</td>
                 <td>
                   {r.expected_move === null ? "–" : `±${num(r.expected_move, 2)}`}
                   {r.expected_move && r.price ? (

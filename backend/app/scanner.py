@@ -184,160 +184,162 @@ def parse_form(form: dict, current: dict | None) -> dict:
     return out
 
 
-def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral") -> dict:
-    """What the scanner does, step by step, from the current settings: for the Scanner map on
-    Settings. live_symbols: the Schwab account's allowlist, or None for any underlying."""
+def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral", rules=None) -> dict:
+    """How the scanner picks trades, in plain words and in order, from the current settings:
+    for the top of the Scanner tab on Settings. live_symbols: the Schwab account's allowlist,
+    or None for any underlying."""
 
     def pct(v: float) -> str:
         return f"{round(v * 100, 1):g}%"
 
     when = f"Once a day at {s['scan_time']} ET" + (
-        f", then every {s['scan_every']} min until the close" if s["scan_every"] else ""
+        f", then every {s['scan_every']} minutes until the close" if s["scan_every"] else ""
     )
     live = "SPY and your watchlist" if live_symbols is None else ", ".join(live_symbols)
-    ic_dir = f"iron condor at {s['ic_short_delta']:.2f}Δ, wings as narrow as still collect "
+    earn = (
+        "skips the stock"
+        if s.get("earnings_inside", "skip") == "skip"
+        else "allows only a defined-risk spread, at half size"
+    )
+    bias_line = {
+        "bullish": "Your bullish bias: until portfolio delta reaches the middle of its band, the "
+        "put side is sold a little closer.",
+        "bearish": "Your bearish bias: until portfolio delta reaches the middle of its band, the "
+        "call side is sold a little closer.",
+        "contrarian": "Your contrarian bias: no lean of its own; sharp moves decide, against "
+        "the move.",
+    }.get(bias, "Your neutral bias (tastylive's default): no lean of its own.")
+    under = f"{pct(rules.max_underlying_bp)} of net liq" if rules else "the Rules-tab limit"
+    notional = f"{pct(rules.max_notional)} of net liq" if rules and rules.max_notional else None
     steps = [
         (
-            "1. When and what",
+            "1. Which stocks it looks at",
             [
-                when + ", and on Scan now.",
-                "Simulated account: SPY and your watchlist.",
-                f"Schwab account: {live}.",
-                "Opens two kinds of trade only: strangles and iron condors. Ratios, jade "
-                "lizards, straddles and the rest are yours to open by hand.",
+                f"{when}, and whenever you tap Scan now.",
+                f"Simulated account: SPY and your watchlist. Schwab account: {live}.",
+                "It opens strangles, iron condors, and one-sided puts or calls (or their "
+                "spreads). Ratios, jade lizards and the rest are yours to open by hand.",
             ],
         ),
         (
-            "2. Each underlying must pass",
+            "2. Is the premium worth selling?",
             [
-                f"IV rank at least {s['min_ivr']}: options expensive for that stock, against its "
-                "own year (none yet: skipped). Raw IV30 never ranks stocks, since some are "
-                "always jumpier than others."
-                + (
-                    f" Or, at any IV rank, IV30 of {s['rich_iv30']:g}% or more: premium rich "
-                    "enough to sell anyway, as an iron condor only."
+                f"Options must be expensive for that stock: IV rank of {s['min_ivr']} or more, "
+                "against its own past year. Stocks are never compared by raw IV30, because "
+                "some are always jumpier than others.",
+                (
+                    f"Or IV30 of {s['rich_iv30']:g}% or more at any IV rank: premium rich "
+                    "enough to sell anyway, but only as a defined-risk iron condor."
                     if s.get("rich_iv30")
-                    else ""
+                    else "No exception for very rich premium."
                 ),
                 (
-                    f"IV30 at least {s['min_iv30']:g}%: in a calm market a high IV rank can "
-                    "still pay too little."
+                    f"IV30 must be at least {s['min_iv30']:g}%: in a calm market even a high "
+                    "IV rank can pay too little."
                     if s.get("min_iv30")
                     else "No IV30 floor."
                 ),
                 (
-                    f"IV30 at least {s['min_iv_hv']:g}× the stock's realized volatility over "
-                    "30 sessions: the options must price more movement than the stock makes."
+                    f"IV30 must be at least {s['min_iv_hv']:g}× how much the stock has really "
+                    "moved over 30 sessions: the options must price in more movement than the "
+                    "stock is making."
                     if s.get("min_iv_hv")
                     else "No implied-versus-realized check."
                 ),
-                (
-                    "No open trade in it yet."
-                    if s["max_per_underlying"] == 1
-                    else f"Fewer than {s['max_per_underlying']} open trades in it, and none in "
-                    "the same expiration."
-                ),
-                f"At-the-money bid/ask spread at most {pct(s['max_spread'])} of the mark and "
-                f"open interest at least {s['min_oi']:,}.",
-                "Single stocks: the next earnings date must be known and more than "
-                f"{s['earnings_days']} sessions away"
+                f"Easy to trade: an at-the-money bid/ask spread of {pct(s['max_spread'])} or "
+                f"less, and open interest of {s['min_oi']:,} or more.",
+            ],
+        ),
+        (
+            "3. Is now a bad time?",
+            [
+                f"Single stocks need a known earnings date more than {s['earnings_days']} "
+                f"sessions away. A report inside the trade {earn}. ETFs have no earnings.",
+                f"A possible shock (a day's move {s['shock_day_ratio']:g}× the usual, or "
+                f"implied volatility up {pct(s['shock_iv_jump'])} in 5 sessions, with no "
+                "earnings report behind it, such as a CEO leaving) means only defined-risk "
+                f"spreads at half size, for {s['shock_sessions']} sessions.",
+                "Nothing opens while the portfolio's daily theta is already at its maximum.",
+            ],
+        ),
+        (
+            "4. Which way it leans (the first that applies)",
+            [
+                "If the whole portfolio is outside its delta band, back toward the band.",
+                "Your view on the stock, from the Watchlist (bullish, bearish, neutral, "
+                "would own).",
+                f"A sharp drop with IV rank {s['drop_ivr']} or more and put skew of "
+                f"{s['steep_skew']:g} points or more is the drop signal: puts are dearest, so it "
+                "sells puts, and these trades go first."
                 + (
-                    ", and the trade must expire before it"
-                    if s.get("avoid_through_earnings", True)
-                    else ""
-                )
-                + ". ETFs and indexes have no earnings.",
-                "Nothing opens while portfolio theta is at its maximum.",
-            ],
-        ),
-        (
-            "3. Expiration",
-            [
-                f"The {'monthly ' if s['monthly_only'] else ''}expiration nearest "
-                f"{s['target_dte']} DTE, between {s['min_dte']} and {s['max_dte']}.",
-            ],
-        ),
-        (
-            "4. The trade",
-            [
-                f"IV rank {s['undefined_ivr']} or more: strangle at {s['short_delta']:.2f}Δ "
-                "(undefined risk).",
-                f"IV rank {s['min_ivr']} to {s['undefined_ivr']}: {ic_dir}"
-                f"{pct(s['min_ic_credit'])} of the width.",
-                f"{s['contracts']} contract{'s' if s['contracts'] > 1 else ''} per trade "
-                "(the Schwab account also at most its live contract limit).",
-                (
-                    f"While VIX is {s['defined_vix']:g} or more: iron condors only, since margin "
-                    "balloons and volatility can keep expanding before it contracts."
-                    if s.get("defined_vix")
-                    else "No VIX limit on strangles."
-                ),
-                (
-                    "Outside the portfolio delta band: the side that brings delta back is sold "
-                    f"closer, at {s['tilt_delta']:.2f}Δ."
-                    + " Then your view on the underlying (Watchlist), if you set one."
-                    + (
-                        f" Your bias is {bias}: inside the band, new trades lean "
-                        f"{bias} (the {'put' if bias == 'bullish' else 'call'} sold closer) "
-                        "until portfolio delta reaches the middle of the band, after any price "
-                        "extreme."
-                        if bias in ("bullish", "bearish")
-                        else " Your bias is contrarian: after the band and your views, price "
-                        "extremes decide, against the move."
-                        if bias == "contrarian"
-                        else " Your bias is neutral (tastylive's default): inside the band, "
-                        "trades are symmetric."
-                    )
-                    if s.get("band_lean", True)
-                    else "Delta band lean: off."
-                ),
-                (
-                    f"At a price extreme (within {pct(s['range_band'])} of a 52-week high or "
-                    f"low, a {s['move_days']}-session move of {s['move_sigma']:g}σ or more, or "
-                    f"a day's move of {s['day_ratio']:g}× the average): the side against the "
-                    f"move is sold closer, at {s['tilt_delta']:.2f}Δ."
+                    " Other price extremes (near a 52-week high or low, an outsized move) "
+                    "lean against the move too."
                     if s["extreme_tilt"] or bias == "contrarian"
-                    else "Price-extreme lean: off."
+                    else ""
                 ),
+                bias_line,
             ],
         ),
         (
-            "5. Checks on the order",
+            "5. What it sells",
             [
-                "The same ticket, guards and preview as a manual order.",
-                f"Probability of profit at least {pct(s['min_pop'])}.",
-                f"Buying power at most {pct(s['max_bp_share'])} of net liq for one trade, and "
-                "within the VIX buying-power ceiling and the theta band.",
+                "With no lean: a strangle at "
+                f"{s['short_delta']:.2f} delta when IV rank is {s['undefined_ivr']} or more, "
+                f"otherwise an iron condor at {s['ic_short_delta']:.2f} delta collecting at "
+                f"least {pct(s['min_ic_credit'])} of its width"
+                + (
+                    f"; iron condors only while VIX is {s['defined_vix']:g} or more."
+                    if s.get("defined_vix")
+                    else "."
+                ),
+                "Leaning on your view or a sharp move: one side only, at a strike outside the "
+                "expected move, so it works whether the stock rebounds, stalls or falls a bit "
+                "further. A short put (or call), or a spread when defined risk is required.",
+                "Would own: a cash-secured short put only, and only when your cash and sweep "
+                "cover it after your other Would own puts. Never margin.",
+                "Leaning for the portfolio or your bias: the favoured side sold closer, at "
+                f"{s['tilt_delta']:.2f} delta.",
             ],
         ),
         (
-            "6. Which first, and how many",
+            "6. How big",
             [
-                "Trades that keep delta in its band first, then those leaning, then by score: "
-                "IV rank, credit per dollar of buying power, probability of profit, and a "
-                "little for implied over realized volatility.",
-                f"At most {s['max_new_per_day']} new trades a day, adding at most "
-                f"{pct(s['max_bp_day'])} of net liq in buying power.",
+                f"{s['contracts']} contract{'s' if s['contracts'] > 1 else ''} a trade, at most "
+                f"{pct(s['max_bp_share'])} of net liq in buying power each.",
+                f"One stock at most {under} in buying power, counting its share of your SPY "
+                "and QQQ positions (look-through)."
+                + (
+                    f" Uncovered short options on one stock at most {notional} in what you "
+                    "could be made to buy; over that, it opens a spread instead."
+                    if notional
+                    else ""
+                ),
                 (
-                    f"At most {s['max_per_sector']} open trades per sector, counting this "
-                    "scan's, so one wrong read on a sector cannot sink the account."
+                    f"At most {s['max_per_sector']} open trades per sector, so one wrong read "
+                    "cannot sink the account."
                     if s.get("max_per_sector")
                     else "No limit per sector."
                 ),
+                f"At most {s['max_new_per_day']} new trades a day, adding at most "
+                f"{pct(s['max_bp_day'])} of net liq in buying power, and never past the "
+                "buying-power ceiling for today's VIX.",
             ],
         ),
         (
-            "7. Then",
+            "7. What happens next",
             [
                 f"Simulated account: {s['level_sim'].capitalize()}. Schwab account: "
                 f"{s['level_live'].capitalize()}. Notify sends a message, Propose waits for "
-                "your tap, Auto places the order (the Schwab account only with automatic "
-                "orders allowed).",
-                "Automanage switches on for each new trade once it fills."
-                if s["automanage_new"]
-                else "Automanage is not switched on for new trades.",
-                "Each run's trades, and anything skipped with its reason, show on the "
-                "Watchlist page under Scanner.",
+                "your tap, Auto places the order (the Schwab account only with automatic orders "
+                "allowed).",
+                (
+                    "Automanage switches on for each new trade once it fills, managed with the "
+                    "view the trade was opened with."
+                    if s["automanage_new"]
+                    else "Automanage is not switched on for new trades."
+                ),
+                "Each run's trades, and what was skipped and why, show on the Watchlist page "
+                "under Scanner.",
             ],
         ),
     ]
