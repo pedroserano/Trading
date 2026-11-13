@@ -564,6 +564,8 @@ td .earn { margin-left: 0; }
 .settings-page .rules-map .off { color: var(--dim); opacity: 0.55; }
 .settings-page .rmap-list { margin: 4px 0 10px; padding-left: 18px; }
 .settings-page .rmap-list li { margin: 2px 0; }
+.settings-page .runs-by-itself { margin: 6px 0 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--row); }
+.settings-page .runs-by-itself .rmap-list { margin-bottom: 0; }
 .settings-page .rmap-swipe { display: none; margin: 0 0 4px; }
 @media (max-width: 700px) { .settings-page .rmap-swipe { display: block; } }
 .settings-page .advanced-body > .reset-group { align-self: flex-end; margin: 2px 0 2px; }

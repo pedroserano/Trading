@@ -109,9 +109,7 @@ export default function Activity() {
             ? `: ${data.live.symbols.join(", ")}, up to ${data.live.max_contracts} contract${data.live.max_contracts > 1 ? "s" : ""} per leg.`
             : data.live.demo
               ? " (demo mode)."
-              : !data.live.server_allowed
-                ? ": LIVE_TRADING=true is not set in the server's .env file."
-                : ": switch it on in Settings."}{" "}
+              : ": LIVE_TRADING=true is not set in the server's .env file."}{" "}
           <a href="#/settings/live">Live trading settings</a>
           {data.live.error ? <span className="sub"> Reading orders from Schwab: {data.live.error}</span> : null}
         </div>

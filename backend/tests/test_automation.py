@@ -919,11 +919,36 @@ def test_the_plain_summary_follows_the_settings():
     steps = dict(auto.plain_summary(Rules(), s))
     assert len(steps) == 6
     first = steps["1. Take profits early"][0]
-    assert "at 50% of what it can make" in first and "Level: Auto" in first
+    assert "at 50% of what it can make" in first and "(simulated Auto, Schwab Propose;" in first
     assert "to the same strike" in steps["3. Defend a tested side, calmly"][5]
     assert "Never margin" in steps["4. Expiration day"][1]
     on = {**s, "single_roll_strike": "further"}
     assert (
         "the furthest strike that still pays"
         in dict(auto.plain_summary(Rules(), on))["3. Defend a tested side, calmly"][5]
+    )
+
+
+def test_each_account_runs_its_own_levels_and_old_settings_carry_over():
+    # Saved before the Schwab account had its own levels: it keeps what it did, lowered to
+    # Propose; the simulated account keeps the saved levels.
+    s = auto.merged_settings({"levels": {"profit": "auto", "dte": "notify"}})
+    assert s["levels"]["profit"] == "auto" and s["levels_live"]["profit"] == "propose"
+    assert s["levels_live"]["dte"] == "notify"
+    s["levels_live"]["profit"] = "auto"
+    assert auto.as_run(s, live_auto=False)["levels_live"]["profit"] == "propose"
+    assert auto.as_run(s, live_auto=True)["levels_live"]["profit"] == "auto"
+    h = Harness([], QUOTES)
+    assert h.svc.levels(s)["dte"] == "notify"
+    h.svc.account, h.svc.max_level = "live", "auto"
+    assert h.svc.levels(s)["profit"] == "auto"
+    s["levels"]["profit"] = "off"
+    assert h.svc.levels(s)["profit"] == "auto"  # the simulated level does not touch Schwab
+    with pytest.raises(ValueError, match="LIVE_AUTO"):
+        auto.parse_settings({"live_level_profit": "auto"}, {}, live_auto=False)
+    assert (
+        auto.parse_settings({"live_level_profit": "auto"}, {}, live_auto=True)["levels_live"][
+            "profit"
+        ]
+        == "auto"
     )

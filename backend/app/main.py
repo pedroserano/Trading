@@ -37,6 +37,7 @@ from .automation import (
     SETTING_FIELDS,
     SETTINGS_KEY,
     AutomationService,
+    as_run,
     auto_fields,
     auto_rules_values,
     merged_settings,
@@ -634,8 +635,13 @@ def create_app(
                     rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
                 ),
                 "rmap": rules_map(
-                    rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
+                    rules_now,
+                    as_run(
+                        merged_settings(await store.get_setting(SETTINGS_KEY)),
+                        live_broker.auto_cap() == "auto",
+                    ),
                 ),
+                "runs_by_itself": await runs_by_itself(),
                 "auto_levels": LEVELS,
                 "auto_fields": SETTING_FIELDS,
                 "auto_map": {f[0]: f for f in SETTING_FIELDS},
@@ -783,19 +789,8 @@ def create_app(
     async def live_settings_save(request: Request):
         form = dict(await request.form())
         try:
-            c = await live_broker.set_config(form)
-            await apply_live_cap()
-            if not c["enabled"]:
-                notice = "Schwab orders are off."
-            elif not c["auto"]:
-                notice = "Schwab orders: manual only. Automation proposes."
-            elif live_broker.auto_cap(c) == "auto":
-                notice = "Schwab orders: manual and automatic."
-            else:
-                notice = (
-                    "Schwab orders: manual and automatic, but automatic orders also need "
-                    "LIVE_AUTO=true in .env; until then automation proposes."
-                )
+            await live_broker.set_config(form)
+            notice = "Live trading limits saved."
             request.session["notice"] = notice
         except ValueError as e:
             request.session["flash"] = str(e)
@@ -805,7 +800,11 @@ def create_app(
     async def automation_settings_save(request: Request):
         form = dict(await request.form())
         try:
-            new = parse_settings(form, await store.get_setting(SETTINGS_KEY))
+            new = parse_settings(
+                form,
+                await store.get_setting(SETTINGS_KEY),
+                live_auto=live_broker.auto_cap() == "auto",
+            )
             await store.set_setting(SETTINGS_KEY, new)
             request.session["notice"] = "Automanage settings saved."
         except ValueError as e:
@@ -835,9 +834,7 @@ def create_app(
                 live = await live_broker.config()
                 await live_broker.set_config(
                     {
-                        "enabled": live["enabled"],
                         "all_symbols": live["all_symbols"],
-                        "auto": live["auto"],
                         "symbols": " ".join(live["symbols"]),
                         "max_contracts": live["max_contracts"],
                         "max_bp_share": share * 100,
@@ -1435,7 +1432,7 @@ def create_app(
         return d
 
     async def apply_live_cap() -> None:
-        automations["live"].max_level = live_broker.auto_cap(await live_broker.config())
+        automations["live"].max_level = live_broker.auto_cap()
 
     Acct = Literal["sim", "live"]
 
@@ -1466,9 +1463,44 @@ def create_app(
             for title, lines in scan_mod.scan_steps(rules_now.delta_bias, live_syms)
         ]
 
+    async def runs_by_itself() -> list[tuple[str, list[str]]]:
+        """What happens on each account without a tap, in one line each, for the top of
+        the Automation and Scanner tabs: every gate that is on or off, in one place."""
+        scan_s = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
+        live = await live_broker.status()
+        out = []
+        for acct, name in (("sim", "Simulated"), ("live", "Schwab")):
+            v = await automations[acct].view()
+            parts = []
+            if v["paused"]:
+                parts.append("Auto paused (header): nothing automatic")
+            elif v.get("blocked"):
+                parts.append(f"Auto holding: {v['blocked']}")
+            else:
+                parts.append("Auto on (header)")
+            if acct == "live":
+                if not live["on"]:
+                    parts.append("Schwab orders not allowed (LIVE_TRADING off)")
+                elif live["auto_cap"] == "auto":
+                    parts.append("automatic Schwab orders allowed (LIVE_AUTO)")
+                else:
+                    parts.append("automatic Schwab orders not allowed (LIVE_AUTO off)")
+            n = sum(1 for t in v["trades"].values() if t.get("enabled"))
+            at = {}
+            for rule, lv in v["settings"]["levels"].items():
+                at.setdefault(lv, []).append(rule)
+            auto_rules = ", ".join(RULES[r].lower() for r in at.get("auto", [])) or "none"
+            parts.append(
+                f"automanage on {n} trade{'' if n == 1 else 's'} ticked; rules at Auto: "
+                f"{auto_rules}"
+            )
+            parts.append(f"scanner {scanner.level(scan_s, acct).capitalize()}")
+            out.append((name, parts))
+        return out
+
     def auto_steps_html(rules_now, settings_now) -> list:
         """Automanage's step list for Settings, with each setting editable in place."""
-        fields = auto_fields(settings_now)
+        fields = auto_fields(settings_now, live_broker.auto_cap() == "auto")
         rv = auto_rules_values(rules_now)
         return [
             (title, [plain.as_html(x, fields, rv, "a") for x in lines])
@@ -1481,7 +1513,10 @@ def create_app(
 
     @app.get("/api/automation/map", dependencies=[Depends(require_login)])
     async def api_automation_map():
-        settings_now = merged_settings(await store.get_setting(SETTINGS_KEY))
+        settings_now = as_run(
+            merged_settings(await store.get_setting(SETTINGS_KEY)),
+            live_broker.auto_cap() == "auto",
+        )
         return rules_map(await preferences.rules(), settings_now)
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])

@@ -106,14 +106,12 @@ STRANGLE = [(sym("P", 555), -1, "open"), (sym("C", 610), -1, "open")]
 
 
 @pytest.mark.anyio
-async def test_both_switches_the_allowlist_and_limits_gate_live_orders():
+async def test_the_env_the_allowlist_and_limits_gate_live_orders():
     b, _, _ = broker(allowed=False)
     t = ticket(STRANGLE, limit_net=5.0)
     reasons = await b.gate(t, 2000, 100_000)
     assert any("LIVE_TRADING=true" in r for r in reasons)
-    assert any("switched off" in r for r in reasons)
     b, _, _ = broker()
-    await b.set_config({"enabled": "on"})
     assert await b.gate(t, 2000, 100_000) == []
     assert (await b.status())["on"] is True
     big = ticket([(sym("P", 555), -2, "open")], limit_net=5.0)
@@ -122,16 +120,14 @@ async def test_both_switches_the_allowlist_and_limits_gate_live_orders():
     qqq = ticket([(option_symbol("QQQ", EXP, "P", 480), -1, "open")], limit_net=2.0)
     assert any("not on the live list" in r for r in await b.gate(qqq, 1000, 100_000))
     demo, _, _ = broker(demo=True)
-    await demo.set_config({"enabled": "on"})
     assert any("Demo mode" in r for r in await demo.gate(t, 2000, 100_000))
     with pytest.raises(ValueError, match="between 1 and 50"):
-        await b.set_config({"enabled": "on", "max_contracts": "0"})
+        await b.set_config({"max_contracts": "0"})
 
 
 @pytest.mark.anyio
 async def test_place_fill_then_profit_target_rests_at_schwab():
     b, schwab, _ = broker()
-    await b.set_config({"enabled": "on"})
     t = ticket(STRANGLE, limit_net=5.80, profit_target=0.5)
     order = await b.place(t, profit_target=0.5)
     assert order["status"] == "WORKING" and schwab.calls == [("place", "HASH")]
@@ -157,7 +153,6 @@ async def test_place_fill_then_profit_target_rests_at_schwab():
 @pytest.mark.anyio
 async def test_a_new_close_replaces_the_working_close_on_the_same_contracts():
     b, schwab, _ = broker()
-    await b.set_config({"enabled": "on"})
     close = [(sym("P", 555), 1, "close"), (sym("C", 610), 1, "close")]
     first = await b.place(ticket(close, intent="close", duration="GTC", limit_net=-2.90))
     second = await b.place(ticket(close, intent="close", limit_net=-3.50))
@@ -182,25 +177,16 @@ def test_normalize_reads_prices_both_ways():
 async def test_any_underlying_and_the_auto_switches():
     b, _, _ = broker()
     qqq = ticket([(option_symbol("QQQ", EXP, "P", 480), -1, "open")], limit_net=2.0)
-    await b.set_config({"enabled": "on", "all_symbols": "on"})
+    await b.set_config({"all_symbols": "on"})
     assert await b.gate(qqq, 1000, 100_000) == []
-    # Auto needs LIVE_AUTO on the server, live trading on, and Allow Auto in Settings.
-    c = await b.set_config({"enabled": "on", "auto": "on"})
-    assert b.auto_cap(c) == "propose"  # no LIVE_AUTO
+    # Automatic orders: LIVE_TRADING and LIVE_AUTO in .env, nothing in Settings.
+    assert b.auto_cap() == "propose"  # no LIVE_AUTO
     store, schwab = MemoryStore(), FakeSchwab()
     a = LiveBroker(store, schwab, Source(schwab), account, True, Notifier(), server_auto=True)
-    assert a.auto_cap(await a.set_config({"enabled": "on"})) == "propose"
-    assert a.auto_cap(await a.set_config({"enabled": "on", "auto": "on"})) == "auto"
-    assert a.auto_cap(await a.set_config({"auto": "on"})) == "propose"  # live trading off
+    assert a.auto_cap() == "auto"
     off = LiveBroker(store, schwab, Source(schwab), account, False, Notifier(), server_auto=True)
-    assert off.auto_cap(await off.config()) == "propose"  # LIVE_TRADING off
+    assert off.auto_cap() == "propose"  # LIVE_TRADING off
     assert (await a.status())["server_auto"] is True
-    # The Settings page's one control sets both.
-    c = await a.set_config({"mode": "auto"})
-    assert c["enabled"] and c["auto"] and a.auto_cap(c) == "auto"
-    c = await a.set_config({"mode": "manual"})
-    assert c["enabled"] and not c["auto"]
-    c = await a.set_config({"mode": "off"})
-    assert not c["enabled"] and not c["auto"]
-    with pytest.raises(ValueError, match="Schwab orders"):
-        await a.set_config({"mode": "yolo"})
+    # Old saved switches are ignored: the .env decides.
+    c = await a.set_config({"enabled": "", "auto": "", "mode": "off"})
+    assert "enabled" not in c and "auto" not in c and a.auto_cap() == "auto"

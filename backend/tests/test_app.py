@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -417,27 +419,43 @@ def test_delta_bias_from_the_full_settings_form(settings):
         assert 'id="r-delta_min"' in page and "0.1% to 0.3% of net liq" in page
 
 
-def test_schwab_orders_setting_lifts_live_automation_only_with_live_auto(settings):
+def test_the_env_alone_decides_schwab_orders_and_each_account_has_its_own_levels(settings):
     store = MemoryStore()
     on = settings.model_copy(update={"live_trading": True, "live_auto": True})
     with make_client(on, FakeSchwab(connected=True), store=store) as c:
         login(c)
+        # LIVE_TRADING and LIVE_AUTO in .env: nothing else to switch on.
+        assert c.get("/api/automation?account=live").json()["max_level"] == "auto"
+        page = c.get("/connect").text
+        assert 'id="l-mode"' not in page and "Automatic orders: <b>allowed</b>" in page
+        assert 'id="a-live-profit"' in page and "What runs by itself now" in page
+        live_select = re.search(r'<select id="a-live-profit".*?</select>', page, re.S).group(0)
+        assert 'value="auto"' in live_select
+        # Each account's own levels: Schwab at Auto leaves the simulated level alone.
+        c.post(
+            "/automation/settings",
+            data={"_form": "automation", "level_profit": "notify", "live_level_profit": "auto"},
+        )
+        assert c.get("/api/automation?account=live").json()["settings"]["levels"]["profit"] == (
+            "auto"
+        )
+        assert c.get("/api/automation?account=sim").json()["settings"]["levels"]["profit"] == (
+            "notify"
+        )
+    store = MemoryStore()
+    allowed = settings.model_copy(update={"live_trading": True})
+    with make_client(allowed, FakeSchwab(connected=True), store=store) as c:
+        login(c)
         assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
         page = c.get("/connect").text
-        assert 'id="l-mode"' in page and 'name="enabled"' not in page and 'name="auto"' not in page
-        c.post("/live/settings", data={"mode": "auto", "symbols": "SPY"})
-        assert c.get("/api/automation?account=live").json()["max_level"] == "auto"
-        c.post("/live/settings", data={"mode": "manual", "symbols": "SPY"})
-        assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
-        assert store.settings["live_trading"]["enabled"] is True
-        c.post("/live/settings", data={"mode": "off", "symbols": "SPY"})
-        assert store.settings["live_trading"]["enabled"] is False
-    store = MemoryStore()
-    with make_client(settings, FakeSchwab(connected=True), store=store) as c:
-        login(c)
-        c.post("/live/settings", data={"mode": "auto", "symbols": "SPY"})
-        assert c.get("/api/automation?account=live").json()["max_level"] == "propose"
-        assert "LIVE_AUTO=true" in c.get("/connect").text
+        assert "Automatic orders: <b>not allowed</b>" in page and "LIVE_AUTO=true" in page
+        live_select = re.search(r'<select id="a-live-profit".*?</select>', page, re.S).group(0)
+        assert 'value="auto"' not in live_select  # not offered, so never lowered quietly
+        c.post("/automation/settings", data={"_form": "automation", "live_level_dte": "auto"})
+        assert "LIVE_AUTO" in str(c.get("/connect").text)
+        assert c.get("/api/automation?account=live").json()["settings"]["levels"]["dte"] == (
+            "propose"
+        )
 
 
 def test_settings_tabs_show_every_setting_with_its_default(settings):

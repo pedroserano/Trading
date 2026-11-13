@@ -27,12 +27,10 @@ log = logging.getLogger(__name__)
 CONFIG_KEY = "live_trading"
 STATE_KEY = "live_orders"
 DEFAULT_CONFIG = {
-    "enabled": False,
     "symbols": ["SPY"],
     "max_contracts": 1,
     "max_bp_share": 0.05,
     "all_symbols": False,  # any underlying, not only the list
-    "auto": False,  # automation may place live orders itself (also needs LIVE_AUTO=true)
 }
 WORKING = {
     "WORKING",
@@ -187,15 +185,6 @@ class LiveBroker:
     async def set_config(self, form: dict) -> dict:
         """Saves the Settings form. Raises ValueError with a message for the page."""
         c = await self.config()
-        mode = form.get("mode")
-        if mode is not None:
-            # The Settings page's one control: off, manual only, or manual and automatic.
-            if mode not in ("off", "manual", "auto"):
-                raise ValueError("Schwab orders: off, manual only, or manual and automatic")
-            c["enabled"], c["auto"] = mode != "off", mode == "auto"
-        else:
-            c["enabled"] = form.get("enabled") in ("on", "true", "1", True)
-            c["auto"] = form.get("auto") in ("on", "true", "1", True)
         c["all_symbols"] = form.get("all_symbols") in ("on", "true", "1", True)
         if "symbols" in form:
             symbols = [s.strip().upper() for s in str(form["symbols"]).replace(",", " ").split()]
@@ -229,18 +218,17 @@ class LiveBroker:
             **c,
             "server_allowed": self.server_allowed,
             "demo": self.demo,
-            "on": self.server_allowed and c["enabled"],
+            "on": self.server_allowed,
             "server_auto": self.server_auto,
-            "auto_cap": self.auto_cap(c),
+            "auto_cap": self.auto_cap(),
             "refreshed_at": self.refreshed_at,
             "error": self.error,
         }
 
-    def auto_cap(self, c: dict) -> str:
-        """The highest automation level on this account: Auto only with LIVE_AUTO in .env and
-        Schwab orders set to Manual and automatic; otherwise Propose."""
-        on = self.server_auto and c["enabled"] and c.get("auto")
-        return "auto" if on else "propose"
+    def auto_cap(self) -> str:
+        """The highest automation level on this account: Auto only with LIVE_TRADING and
+        LIVE_AUTO in .env; otherwise Propose."""
+        return "auto" if self.server_auto else "propose"
 
     async def gate(self, t: Ticket, bp_effect: float | None, net_liq: float | None) -> list[str]:
         """Reasons a live order may not go out. Empty when it may."""
@@ -250,8 +238,6 @@ class LiveBroker:
             out.append("Demo mode: there is no real Schwab account to send orders to")
         elif not self.server_allowed:
             out.append("Live trading is not allowed on this server: set LIVE_TRADING=true in .env")
-        if not c["enabled"]:
-            out.append("Live trading is switched off (Settings, Live trading)")
         if not c.get("all_symbols") and t.underlying not in c["symbols"]:
             out.append(
                 f"{t.underlying} is not on the live list ({', '.join(c['symbols'])}); "

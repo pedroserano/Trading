@@ -66,8 +66,8 @@ export function AutoBar() {
           {view.early_close ? " (early close: stops at 12:30)" : ""}
           {live
             ? view.max_level === "auto"
-              ? " · live: Auto allowed, orders at Auto levels go to Schwab by themselves"
-              : " · live: proposes only, every order waits for your tap"
+              ? " · Schwab: automatic orders allowed (LIVE_AUTO)"
+              : " · Schwab: no automatic orders (LIVE_AUTO off), Auto not offered"
             : ""}
         </span>
         <a href="#/settings/automation" className="toolbar-link">

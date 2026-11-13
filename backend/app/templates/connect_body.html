@@ -135,6 +135,10 @@
 <div class="tab-panel" data-tab="automation" data-label="Automation">
 <section id="automation">
   <h2>Automation</h2>
+    <div class="runs-by-itself small">
+      <b>What runs by itself now</b>
+      <ul class="rmap-list">{% for name, parts in runs_by_itself %}<li><b>{{ name }}:</b> {{ parts|join(" · ") }}</li>{% endfor %}</ul>
+    </div>
   <form method="post" action="/automation/settings" class="plain-form">
     <input type="hidden" name="_form" value="automation">
     {% call group("How automanage looks after a trade") %}
@@ -155,9 +159,9 @@
       <p class="dim small">From your saved settings. A greyed cell's rule is Off; Notify only
         sends a message, Propose waits for your tap, Auto places the order.</p>
       <table class="rmap-levels">
-        <tr><th>Rule</th><th>Level</th></tr>
-        {% for key, name, lv in rmap.levels %}
-        <tr class="{{ 'off' if lv == 'off' else '' }}"><td>{{ name }}</td><td>{{ lv|capitalize }}{% if key == 'tested' and rmap.itm_muted %} <span class="warn-note">· in-the-money rolls only notify at this level</span>{% endif %}</td></tr>
+        <tr><th>Rule</th><th>Simulated</th><th>Schwab</th></tr>
+        {% for key, name, lv, live_lv in rmap.levels %}
+        <tr class="{{ 'off' if lv == 'off' and live_lv == 'off' else '' }}"><td>{{ name }}</td><td>{{ lv|capitalize }}{% if key == 'tested' and rmap.itm_muted %} <span class="warn-note">· in-the-money rolls only notify at this level</span>{% endif %}</td><td>{{ live_lv|capitalize }}</td></tr>
         {% endfor %}
       </table>
       <p class="dim small rmap-swipe">Swipe the table sideways for every rule.</p>
@@ -197,6 +201,10 @@
 <div class="tab-panel" data-tab="scanner" data-label="Scanner">
 <section id="scanner">
   <h2>Scanner</h2>
+    <div class="runs-by-itself small">
+      <b>What runs by itself now</b>
+      <ul class="rmap-list">{% for name, parts in runs_by_itself %}<li><b>{{ name }}:</b> {{ parts|join(" · ") }}</li>{% endfor %}</ul>
+    </div>
   <form method="post" action="/scanner/settings" class="plain-form">
     <input type="hidden" name="_form" value="scanner">
     {% call group("How the scanner picks trades") %}
@@ -360,26 +368,18 @@
   <h2>Live trading</h2>
   {% if live.demo %}
   <p class="dim small">Demo mode: there is no real Schwab account, so live orders stay off.</p>
-  {% elif not live.server_allowed %}
-  <p class="warn-note">⚠ The server does not allow live orders yet: add <code>LIVE_TRADING=true</code>
-     to <code>.env</code> and restart the app.</p>
+  {% else %}
+  <p class="small">{% if live.server_allowed %}<span class="dot ok"></span>Orders to Schwab: <b>allowed</b>
+     (<code>LIVE_TRADING=true</code> in <code>.env</code>). Yours go out after the checks, Schwab's preview and a second confirm.
+     {% else %}<span class="dot warn"></span>Orders to Schwab: <b>not allowed</b>: add <code>LIVE_TRADING=true</code>
+     to <code>.env</code> and restart the app.{% endif %}</p>
+  <p class="small">{% if live.server_auto %}<span class="dot ok"></span>Automatic orders: <b>allowed</b>
+     (<code>LIVE_AUTO=true</code>): automanage rules and the scanner set to Auto for the Schwab account place orders by themselves.
+     {% else %}<span class="dot warn"></span>Automatic orders: <b>not allowed</b>: Auto is not offered for the
+     Schwab account. Add <code>LIVE_AUTO=true</code> (with <code>LIVE_TRADING=true</code>) to <code>.env</code> and restart to allow it.{% endif %}</p>
   {% endif %}
+  <p class="dim small">These two are set only in <code>.env</code>. The limits below apply to every Schwab order.</p>
   <form method="post" action="/live/settings">
-    <div class="rule">
-      {{ label("l-mode", "Schwab orders", "Off: the ticket only previews Schwab orders. Manual only: you send orders from the ticket, after the checks, Schwab's preview and a second confirm; automation only proposes. Manual and automatic: automanage and the scanner may also place orders at Auto levels, within these limits, the daily loss limit and the daily order cap.") }}
-      <span class="rule-input">
-        <select id="l-mode" name="mode" data-default="off">
-          <option value="off" {% if not live.enabled %}selected{% endif %}>Off</option>
-          <option value="manual" {% if live.enabled and not live.auto %}selected{% endif %}>Manual only</option>
-          <option value="auto" {% if live.enabled and live.auto %}selected{% endif %}>Manual and automatic</option>
-        </select>
-      </span>
-    </div>
-    {% if live.on %}<p class="small"><span class="dot ok"></span>Orders go to Schwab{% if live.auto_cap == "auto" %}, automatic ones too{% endif %}.</p>{% endif %}
-    {% if live.enabled and live.auto and not live.server_auto %}
-    <p class="warn-note">⚠ Automatic orders also need <code>LIVE_AUTO=true</code> in <code>.env</code>
-       and a restart; until then automation only proposes.</p>
-    {% endif %}
     {{ check("all_symbols", "Any underlying", live.all_symbols, false, "The list below is then not used, and the live scanner works from your watchlist.") }}
     <div class="rule">
       {{ label("l-symbols", "Underlyings allowed live", "") }}

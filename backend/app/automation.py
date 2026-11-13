@@ -50,6 +50,16 @@ DEFAULT_SETTINGS = {
         "earnings": "notify",
         "dividend": "notify",
     },
+    # The Schwab account's own levels: Auto is offered only with LIVE_AUTO=true in .env.
+    "levels_live": {
+        "profit": "propose",
+        "dte": "propose",
+        "tested": "notify",
+        "loss": "notify",
+        "expiry": "propose",
+        "earnings": "notify",
+        "dividend": "notify",
+    },
     "dte_defined_action": "close",  # or "roll"
     "roll_target_dte": 45,
     # tastytrade keeps rolling for a credit while premium is worth selling; IV rank decides.
@@ -177,23 +187,48 @@ STRANGLES = ("Strangle", "Straddle")
 
 def merged_settings(saved: dict | None) -> dict:
     s = copy.deepcopy(DEFAULT_SETTINGS)
-    for k, v in (saved or {}).items():
-        if k == "levels" and isinstance(v, dict):
-            s["levels"].update({r: lv for r, lv in v.items() if r in RULES and lv in LEVELS})
+    saved = saved or {}
+    for k, v in saved.items():
+        if k in ("levels", "levels_live") and isinstance(v, dict):
+            s[k].update({r: lv for r, lv in v.items() if r in RULES and lv in LEVELS})
         elif k in s:
             s[k] = v
+    if "levels_live" not in saved and isinstance(saved.get("levels"), dict):
+        # Saved before each account had its own levels: the Schwab account keeps what it did
+        # then, the shared levels lowered to Propose.
+        cap = LEVELS.index("propose")
+        s["levels_live"] = {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in s["levels"].items()}
     return s
 
 
-def parse_settings(form: dict, current: dict) -> dict:
-    """Validates the Settings form. Raises ValueError with a message for the page."""
+def as_run(settings: dict, live_auto: bool) -> dict:
+    """The settings as they run: without LIVE_AUTO the Schwab account's Auto is Propose."""
+    if live_auto:
+        return settings
+    cap = LEVELS.index("propose")
+    out = dict(settings)
+    out["levels_live"] = {
+        r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in settings["levels_live"].items()
+    }
+    return out
+
+
+def parse_settings(form: dict, current: dict, live_auto: bool = False) -> dict:
+    """Validates the Settings form. Raises ValueError with a message for the page.
+    live_auto: whether the Schwab account may act at Auto (LIVE_AUTO=true)."""
     out = merged_settings(current)
     for rule in RULES:
-        v = form.get(f"level_{rule}")
-        if v is not None:
+        for key, field in (("levels", f"level_{rule}"), ("levels_live", f"live_level_{rule}")):
+            v = form.get(field)
+            if v is None:
+                continue
             if v not in LEVELS:
                 raise ValueError(f"{RULES[rule]}: unknown level")
-            out["levels"][rule] = v
+            if key == "levels_live" and v == "auto" and not live_auto:
+                raise ValueError(
+                    f"{RULES[rule]}: Auto on the Schwab account needs LIVE_AUTO=true in .env"
+                )
+            out[key][rule] = v
     if form.get("dte_defined_action") in ("close", "roll"):
         out["dte_defined_action"] = form["dte_defined_action"]
     if form.get("_form") == "automation":  # checkboxes are only sent when ticked
@@ -635,8 +670,9 @@ def profit_target(st: dict, rules) -> float:
     return target_for(st["name"], rules)
 
 
-def auto_fields(settings: dict) -> dict:
-    """Automanage's settings as plain.Field, for the step list (values and defaults)."""
+def auto_fields(settings: dict, live_auto: bool = False) -> dict:
+    """Automanage's settings as plain.Field, for the step list (values and defaults).
+    live_auto: whether Auto is offered for the Schwab account (LIVE_AUTO=true)."""
     d = DEFAULT_SETTINGS
     out = {
         key: plain.Field(kind, settings[key], d[key], lo, hi)
@@ -646,6 +682,16 @@ def auto_fields(settings: dict) -> dict:
     for rule in RULES:
         out[f"level_{rule}"] = plain.Field(
             "select", settings["levels"][rule], d["levels"][rule], options=levels, id=f"a-{rule}"
+        )
+        live = settings["levels_live"][rule]
+        if live == "auto" and not live_auto:
+            live = "propose"  # what runs: Auto is not allowed on Schwab without LIVE_AUTO
+        out[f"live_level_{rule}"] = plain.Field(
+            "select",
+            live,
+            d["levels_live"][rule],
+            options=[x for x in levels if live_auto or x[0] != "auto"],
+            id=f"a-live-{rule}",
         )
     out["dte_defined_action"] = plain.Field(
         "select",
@@ -687,8 +733,9 @@ AUTO_STEPS = [
             "iron flies at ⟦rules:profit_target_straddle⟧; front ratios at "
             "⟦rules:profit_target_ratio⟧ of the width plus the credit; calendars at "
             "⟦rules:profit_target_calendar⟧ of the debit; a covered call at "
-            "⟦rules:profit_target⟧ of the call's credit, keeping the shares. Level: "
-            "⟦level_profit⟧ (at Auto a closing order rests at the target from the start).",
+            "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
+            "(simulated ⟦level_profit⟧, Schwab ⟦live_level_profit⟧; at Auto a closing order "
+            "rests at the target from the start).",
             "Debit spreads and long options are not tastylive trades and are left alone.",
             "⟦?ticket_automanage⟧ The order ticket starts with Automanage on fill ticked.",
         ],
@@ -696,7 +743,8 @@ AUTO_STEPS = [
     (
         "2. Manage time",
         [
-            "At ⟦rules:manage_dte⟧ days to expiration (⟦level_dte⟧): roll an "
+            "At ⟦rules:manage_dte⟧ days to expiration (simulated ⟦level_dte⟧, Schwab "
+            "⟦live_level_dte⟧): roll an "
             "undefined-risk trade out to about ⟦roll_target_dte⟧ days for a credit, at the "
             "same strikes. Close it instead when IV rank is under ⟦min_roll_ivr⟧, after "
             "⟦max_rolls⟧ rolls (0: no limit), or when the roll pays under ⟦min_roll_credit⟧ a "
@@ -707,7 +755,8 @@ AUTO_STEPS = [
     (
         "3. Defend a tested side, calmly",
         [
-            "When a short strike reaches ⟦rules:tested_delta⟧ delta (⟦level_tested⟧): "
+            "When a short strike reaches ⟦rules:tested_delta⟧ delta (simulated ⟦level_tested⟧, "
+            "Schwab ⟦live_level_tested⟧): "
             "roll the safe side closer for a credit, to ⟦untested_target⟧, at most "
             "⟦max_untested_rolls⟧ times per expiration, leaving the trade leaning with its "
             "view or your bias.",
@@ -721,13 +770,15 @@ AUTO_STEPS = [
             "⟦?roll_single_itm⟧ When a short goes in the money, roll it out in time for a "
             "credit: a single option to ⟦single_roll_strike⟧, a ratio whole, a covered call "
             "up and out, a jade lizard's put down and out.",
-            "No panic exits: a loss of ⟦rules:loss_multiple⟧ the credit (⟦level_loss⟧).",
+            "No panic exits: a loss of ⟦rules:loss_multiple⟧ the credit (simulated ⟦level_loss⟧, "
+            "Schwab ⟦live_level_loss⟧).",
         ],
     ),
     (
         "4. Expiration day",
         [
-            "From ⟦expiry_close_at⟧ ET (⟦level_expiry⟧), close any short still in the "
+            "From ⟦expiry_close_at⟧ ET (simulated ⟦level_expiry⟧, Schwab ⟦live_level_expiry⟧), "
+            "close any short still in the "
             "money, or within ⟦expiry_pin_margin⟧% of its strike (0: in the money only), so "
             "nothing is assigned by surprise.",
             "Except a Would own put you can pay for: it is left to be assigned, so you buy the "
@@ -740,9 +791,10 @@ AUTO_STEPS = [
         "5. Earnings and dividends",
         [
             "Close a single-stock trade ⟦earnings_close_sessions⟧ sessions before the last "
-            "session ahead of an earnings report inside it (⟦level_earnings⟧).",
+            "session ahead of an earnings report inside it (simulated ⟦level_earnings⟧, Schwab "
+            "⟦live_level_earnings⟧).",
             "Close a short call likely to be assigned before an ex-dividend date "
-            "(⟦level_dividend⟧).",
+            "(simulated ⟦level_dividend⟧, Schwab ⟦live_level_dividend⟧).",
         ],
     ),
     (
@@ -755,8 +807,9 @@ AUTO_STEPS = [
             "toward natural, at most ⟦max_concession⟧% of the way, and waits while its bid/ask "
             "is wider than ⟦max_order_spread⟧% of mid.",
             "Pauses itself on stale prices, once net liq is down ⟦daily_loss_limit⟧% in a day "
-            "(0: off), and while the Schwab sign-in has under a day left. The Schwab account "
-            "stops at Propose unless automatic orders are allowed (⟦link:live trading|live⟧).",
+            "(0: off), and while the Schwab sign-in has under a day left. Schwab orders go out "
+            "by themselves only with LIVE_AUTO=true in .env (⟦link:live trading|live⟧); "
+            "without it, Auto is not offered for the Schwab account.",
         ],
     ),
 ]
@@ -779,10 +832,10 @@ def auto_rules_values(rules) -> dict[str, tuple[str, str]]:
     }
 
 
-def plain_summary(rules, settings: dict) -> list[tuple[str, list[str]]]:
+def plain_summary(rules, settings: dict, live_auto: bool = False) -> list[tuple[str, list[str]]]:
     """How automanage looks after a trade, in plain words, from the current settings (the
     Settings page shows the same steps with the values editable in place)."""
-    fields = auto_fields(settings)
+    fields = auto_fields(settings, live_auto)
     rv = {k: v for k, (v, _) in auto_rules_values(rules).items()}
     return [(title, [plain.as_text(x, fields, rv) for x in lines]) for title, lines in AUTO_STEPS]
 
@@ -790,8 +843,10 @@ def plain_summary(rules, settings: dict) -> list[tuple[str, list[str]]]:
 def rules_map(rules, settings: dict) -> dict:
     """Every automanage rule on one page, from the current values: the levels, a grid of
     what each rule does for each kind of trade, the rules every trade shares, and the limits
-    over all of it. For the Rules map on Settings."""
+    over all of it. For the Rules map on Settings. A rule is greyed only when it is Off on
+    both accounts."""
     levels = settings["levels"]
+    live_levels = settings.get("levels_live", levels)
 
     def pct(v: float) -> str:
         return f"{v * 100:g}%"
@@ -915,8 +970,11 @@ def rules_map(rules, settings: dict) -> dict:
     margin = settings.get("expiry_pin_margin") or 0
     sessions = settings.get("earnings_close_sessions", 1)
     return {
-        "levels": [(r, RULES[r], levels.get(r, "off")) for r in RULES],
-        "level_of": {r: levels.get(r, "off") for r in RULES},
+        "levels": [(r, RULES[r], levels.get(r, "off"), live_levels.get(r, "off")) for r in RULES],
+        "level_of": {
+            r: levels.get(r, "off") if levels.get(r, "off") != "off" else live_levels.get(r, "off")
+            for r in RULES
+        },
         "columns": [
             ("profit", "Profit target"),
             ("dte", f"At {rules.manage_dte} DTE"),
@@ -966,8 +1024,8 @@ def rules_map(rules, settings: dict) -> dict:
                 else ""
             )
             + ", and while the Schwab sign-in has under a day left",
-            "The Schwab account stops at Propose unless Live trading allows automatic orders "
-            "(and LIVE_AUTO=true)",
+            "Schwab orders go out by themselves only with LIVE_AUTO=true in .env; without it, "
+            "Auto is not offered for the Schwab account",
         ],
     }
 
@@ -1398,8 +1456,11 @@ class AutomationService:
         return None
 
     def levels(self, settings: dict) -> dict:
+        """This account's levels. The cap is only a safety net: without LIVE_AUTO the
+        Settings page never offers Auto for the Schwab account."""
+        own = settings["levels_live"] if self.account == "live" else settings["levels"]
         cap = LEVELS.index(self.max_level)
-        return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in settings["levels"].items()}
+        return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in own.items()}
 
     def _working(self, trade_id) -> list[dict]:
         return [
