@@ -597,6 +597,7 @@ def create_app(
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
+                "smap": await scanner_map(),
                 "scan_fields": scan_mod.FIELDS,
                 "earnings": earnings.status(),
                 "earnings_manual": await earnings.manual_text(),
@@ -1345,6 +1346,17 @@ def create_app(
     @app.get("/api/automation", dependencies=[Depends(require_login)])
     async def api_automation(account: Acct = "sim"):
         return await automations[account].view()
+
+    async def scanner_map() -> dict:
+        c = await live_broker.config()
+        live_syms = None if c.get("all_symbols") else list(c["symbols"])
+        return scan_mod.scan_map(
+            scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)), live_syms
+        )
+
+    @app.get("/api/scanner/map", dependencies=[Depends(require_login)])
+    async def api_scanner_map():
+        return await scanner_map()
 
     @app.get("/api/automation/map", dependencies=[Depends(require_login)])
     async def api_automation_map():

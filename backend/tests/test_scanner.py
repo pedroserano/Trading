@@ -319,3 +319,22 @@ async def test_a_price_extreme_tilts_the_trade_and_ranks_first():
     scanner.store.settings[sc.SETTINGS_KEY] = {"extreme_tilt": False}
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["tilt"] is None and c["label"] == "Strangle 570/610"
+
+
+def test_scanner_map_follows_the_settings():
+    from app import scanner as scan_mod
+
+    s = scan_mod.merged(None)
+    steps = dict(scan_mod.scan_map(s, ["SPY"])["steps"])
+    assert any("IV rank at least 30" in x for x in steps["2. Each underlying must pass"])
+    assert any("strangle at 0.16Δ" in x for x in steps["4. The trade"])
+    assert any("Schwab account: SPY." == x for x in steps["1. When and what"])
+    changed = dict(
+        scan_mod.scan_map({**s, "min_ivr": 40, "extreme_tilt": False, "scan_every": 30}, None)[
+            "steps"
+        ]
+    )
+    assert any("IV rank at least 40" in x for x in changed["2. Each underlying must pass"])
+    assert "Price-extreme lean: off." in changed["4. The trade"]
+    assert any("every 30 min" in x for x in changed["1. When and what"])
+    assert any("SPY and your watchlist" in x for x in changed["1. When and what"][2:3])

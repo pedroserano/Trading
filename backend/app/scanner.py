@@ -144,6 +144,120 @@ def parse_form(form: dict, current: dict | None) -> dict:
     return out
 
 
+def scan_map(s: dict, live_symbols: list[str] | None) -> dict:
+    """What the scanner does, step by step, from the current settings: for the Scanner map on
+    Settings. live_symbols: the Schwab account's allowlist, or None for any underlying."""
+
+    def pct(v: float) -> str:
+        return f"{round(v * 100, 1):g}%"
+
+    when = f"Once a day at {s['scan_time']} ET" + (
+        f", then every {s['scan_every']} min until the close" if s["scan_every"] else ""
+    )
+    live = "SPY and your watchlist" if live_symbols is None else ", ".join(live_symbols)
+    ic_dir = f"iron condor at {s['ic_short_delta']:.2f}Δ, wings as narrow as still collect "
+    steps = [
+        (
+            "1. When and what",
+            [
+                when + ", and on Scan now.",
+                "Simulated account: SPY and your watchlist.",
+                f"Schwab account: {live}.",
+                "Opens two kinds of trade only: strangles and iron condors. Ratios, jade "
+                "lizards, straddles and the rest are yours to open by hand.",
+            ],
+        ),
+        (
+            "2. Each underlying must pass",
+            [
+                f"IV rank at least {s['min_ivr']} (none yet: skipped).",
+                (
+                    "No open trade in it yet."
+                    if s["max_per_underlying"] == 1
+                    else f"Fewer than {s['max_per_underlying']} open trades in it, and none in "
+                    "the same expiration."
+                ),
+                f"At-the-money bid/ask spread at most {pct(s['max_spread'])} of the mark and "
+                f"open interest at least {s['min_oi']:,}.",
+                "Single stocks: the next earnings date must be known and more than "
+                f"{s['earnings_days']} sessions away"
+                + (
+                    ", and the trade must expire before it"
+                    if s.get("avoid_through_earnings", True)
+                    else ""
+                )
+                + ". ETFs and indexes have no earnings.",
+                "Nothing opens while portfolio theta is at its maximum.",
+            ],
+        ),
+        (
+            "3. Expiration",
+            [
+                f"The {'monthly ' if s['monthly_only'] else ''}expiration nearest "
+                f"{s['target_dte']} DTE, between {s['min_dte']} and {s['max_dte']}.",
+            ],
+        ),
+        (
+            "4. The trade",
+            [
+                f"IV rank {s['undefined_ivr']} or more: strangle at {s['short_delta']:.2f}Δ "
+                "(undefined risk).",
+                f"IV rank {s['min_ivr']} to {s['undefined_ivr']}: {ic_dir}"
+                f"{pct(s['min_ic_credit'])} of the width.",
+                f"{s['contracts']} contract{'s' if s['contracts'] > 1 else ''} per trade "
+                "(the Schwab account also at most its live contract limit).",
+                (
+                    "Outside the portfolio delta band: the side that brings delta back is sold "
+                    f"closer, at {s['tilt_delta']:.2f}Δ."
+                    if s.get("band_lean", True)
+                    else "Delta band lean: off."
+                ),
+                (
+                    f"At a price extreme (within {pct(s['range_band'])} of a 52-week high or "
+                    f"low, a {s['move_days']}-session move of {s['move_sigma']:g}σ or more, or "
+                    f"a day's move of {s['day_ratio']:g}× the average): the side against the "
+                    f"move is sold closer, at {s['tilt_delta']:.2f}Δ."
+                    if s["extreme_tilt"]
+                    else "Price-extreme lean: off."
+                ),
+            ],
+        ),
+        (
+            "5. Checks on the order",
+            [
+                "The same ticket, guards and preview as a manual order.",
+                f"Probability of profit at least {pct(s['min_pop'])}.",
+                f"Buying power at most {pct(s['max_bp_share'])} of net liq for one trade, and "
+                "within the VIX buying-power ceiling and the theta band.",
+            ],
+        ),
+        (
+            "6. Which first, and how many",
+            [
+                "Trades that keep delta in its band first, then those leaning, then by score: "
+                "IV rank, credit per dollar of buying power, and probability of profit.",
+                f"At most {s['max_new_per_day']} new trades a day, adding at most "
+                f"{pct(s['max_bp_day'])} of net liq in buying power.",
+            ],
+        ),
+        (
+            "7. Then",
+            [
+                f"Simulated account: {s['level_sim'].capitalize()}. Schwab account: "
+                f"{s['level_live'].capitalize()}. Notify sends a message, Propose waits for "
+                "your tap, Auto places the order (the Schwab account only with automatic "
+                "orders allowed).",
+                "Automanage switches on for each new trade once it fills."
+                if s["automanage_new"]
+                else "Automanage is not switched on for new trades.",
+                "Each run's trades, and anything skipped with its reason, show on the "
+                "Watchlist page under Scanner.",
+            ],
+        ),
+    ]
+    return {"steps": steps}
+
+
 def pick_expiration(exps: list[dict], s: dict) -> dict | None:
     ok = [e for e in exps if s["min_dte"] <= e["dte"] <= s["max_dte"]]
     if s["monthly_only"]:

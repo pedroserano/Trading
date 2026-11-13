@@ -243,6 +243,16 @@
 <div class="tab-panel" data-tab="scanner" data-label="Scanner">
 <section id="scanner">
   <h2>Scanner</h2>
+  <details class="group advanced rules-map">
+    <summary>Scanner map: what it looks for, step by step</summary>
+    <div class="rmap-body">
+      <p class="dim small">From your saved settings.</p>
+      {% for title, lines in smap.steps %}
+      <p class="small"><b>{{ title }}</b></p>
+      <ul class="small rmap-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% endfor %}
+    </div>
+  </details>
   <form method="post" action="/scanner/settings">
     <input type="hidden" name="_form" value="scanner">
     {% call group("Levels", "The scanner looks for premium worth selling: a strangle when IV rank is high, an iron condor otherwise. Notify, Propose (waits for your tap) or Auto; the Schwab account stops at Propose unless Live trading is set to Manual and automatic.") %}
