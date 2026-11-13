@@ -85,7 +85,7 @@ from .schwab_service import (
 )
 from .sim import SimBroker, SimDataSource, stats
 from .store import PgStore
-from .strategies import Rules
+from .strategies import Rules, not_tasty
 from .streaming import StreamService
 from .token_store import TokenStore
 from .watchlist import WatchlistService
@@ -1146,6 +1146,25 @@ def create_app(
                     f"{'s' if short_calls > 1 else ''} without enough shares to cover; "
                     "close or roll the calls first"
                 )
+        if t.intent == "open" and not t.stock:
+            kind = ticket_strategy(t)
+            if not_tasty(kind, 1.0) or (
+                kind in ("Put vertical", "Call vertical")
+                and (body.limit_net if body.limit_net is not None else p.get("mid") or 0) < 0
+            ):
+                warnings.append(
+                    "Not a tastylive trade: debit verticals and long options are not managed "
+                    "by automanage"
+                )
+            if kind == "Jade lizard":
+                calls = sorted(x.strike for x in t.legs if x.put_call == "C")
+                credit = body.limit_net if body.limit_net is not None else p.get("mid")
+                if credit is not None and credit < calls[-1] - calls[0] - 1e-9:
+                    warnings.append(
+                        f"The {credit:.2f} credit is less than the call spread's "
+                        f"{calls[-1] - calls[0]:g} width, so the upside is not free of risk: "
+                        "a jade lizard wants a credit of at least the width"
+                    )
         body_json = None
         try:
             body_json = schwab_order(t)

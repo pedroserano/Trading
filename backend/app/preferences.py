@@ -16,6 +16,20 @@ _SYMBOL = re.compile(r"^\$?[A-Z][A-Z0-9]{0,5}([./][A-Z])?$")
 RULE_FIELDS = [
     ("profit_target", "Profit target", 0.05, 1.0, "percent"),
     ("profit_target_straddle", "Profit target, straddles and iron flies", 0.05, 1.0, "percent"),
+    (
+        "profit_target_ratio",
+        "Profit target, front ratios (1×2), of max profit",
+        0.05,
+        1.0,
+        "percent",
+    ),
+    (
+        "profit_target_calendar",
+        "Profit target, calendars and diagonals, of the debit",
+        0.02,
+        1.0,
+        "percent",
+    ),
     ("manage_dte", "Manage at DTE", 0, 60, "int"),
     ("tested_delta", "Tested at short delta", 0.05, 0.95, "delta"),
     ("loss_multiple", "Loss flag at multiple of credit", 0.5, 10.0, "multiple"),
@@ -41,6 +55,11 @@ MARGIN_DEFAULTS = {
 
 # Shown by the fields that refuse orders, so their effect is plain.
 RULE_NOTES = {
+    "profit_target_ratio": "A front ratio makes the most at its short strike at expiration: the "
+    "width plus the credit. That is only realistic in the last days, so the target is a small "
+    "share of it: at least 10%, per Tony Battista (tastylive).",
+    "profit_target_calendar": "A share of the debit paid. tastylive's calendar studies found "
+    "10% the best exit for success rate and P/L per day; they aim for 10% to 25%.",
     "max_underlying_bp": "Hard limit: an opening order that would take one underlying's buying "
     "power above this share of net liq is refused, for you, automanage and the scanner.",
     "max_index_bp": "The same limit for SPY, QQQ, IWM, DIA and the SPX, XSP, NDX and RUT indexes.",

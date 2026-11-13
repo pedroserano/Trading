@@ -768,3 +768,30 @@ def test_sim_account_refuses_stock(client):
         },
     )
     assert r.status_code == 400 and "no stock" in r.json()["detail"]
+
+
+def test_ticket_warns_on_debit_trades_and_thin_jade_lizards(client):
+    exps = client.get("/api/trade/SPY/expirations").json()
+    rows = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()["rows"]
+    rows = [r for r in rows if r["put"]["delta"] and r["call"]["delta"]]
+
+    def near(side, d):
+        return min(rows, key=lambda r: abs(abs(r[side]["delta"]) - d))
+
+    def preview(legs):
+        body = {"account": "sim", "intent": "open", "legs": legs}
+        return client.post("/api/orders/preview", json=body).json()["warnings"]
+
+    def leg(r, side, q):
+        return {"symbol": r[side]["symbol"], "quantity": q, "effect": "open"}
+
+    not_tasty = "Not a tastylive trade"
+    hi, lo = near("put", 0.4), near("put", 0.2)
+    assert any(not_tasty in w for w in preview([leg(hi, "put", 1), leg(lo, "put", -1)]))
+    assert any(not_tasty in w for w in preview([leg(hi, "put", 1)]))
+    assert not any(not_tasty in w for w in preview([leg(hi, "put", -1), leg(lo, "put", 1)]))
+    # A jade lizard whose credit is under its call spread's width is warned about.
+    sp, sc = near("put", 0.3), near("call", 0.2)
+    wide = max(rows, key=lambda r: r["strike"])
+    warn = preview([leg(sp, "put", -1), leg(sc, "call", -1), leg(wide, "call", 1)])
+    assert any("upside is not free of risk" in w for w in warn)

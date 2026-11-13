@@ -343,3 +343,58 @@ def test_bp_for_ratios_and_covered_calls():
         TradeLeg("C", 625, exp, 1, 1.0),
     ]
     assert bp_estimate(condor, 590, -400.0) == 400.0  # defined risk: the max loss
+
+
+# Every tastylive trade ---------------------------------------------------------------------
+
+
+def test_ratios_and_jade_lizards_are_recognised():
+    ratio = group([opt("P", 580, 1, 6.0), opt("P", 575, -2, 3.25)])
+    assert [n for n, _ in names(ratio)] == ["Put ratio 1×2"] and not ratio[0].defined_risk
+    call_ratio = group([opt("C", 600, 1, 4.0), opt("C", 610, -2, 2.25)])
+    assert [n for n, _ in names(call_ratio)] == ["Call ratio 1×2"]
+    lizard = group([opt("P", 560, -1, 3.0), opt("C", 610, -1, 2.0), opt("C", 612, 1, 1.0)])
+    assert [n for n, _ in names(lizard)] == ["Jade lizard"] and not lizard[0].defined_risk
+    # Unchanged: a vertical is still a vertical, an iron condor still an iron condor.
+    assert group([opt("P", 580, 1, 6.0), opt("P", 575, -1, 4.0)])[0].name == "Put vertical"
+    ic = [opt("P", 550, 1, 1), opt("P", 555, -1, 2), opt("C", 610, -1, 2), opt("C", 615, 1, 1)]
+    assert [x.name for x in group(ic)] == ["Iron condor"]
+
+
+def test_ratio_profit_is_a_share_of_width_plus_credit():
+    # 5 wide for a 0.50 credit: max profit 550 at the short strike; 10% of it is 55.
+    (st,) = group([opt("P", 580, 1, 6.0, mark=5.0), opt("P", 575, -2, 3.25, mark=2.2)])
+    evaluate(st, TODAY, 590, Rules())
+    assert st.numbers["max_profit"] == 550
+    assert st.numbers["pl"] == pytest.approx(110)  # 0.50 in, closes for +0.60
+    assert any(f["kind"] == "profit" for f in st.flags)
+    # The loss rule measures a ratio against what it can make, not its small credit.
+    (bad,) = group([opt("P", 580, 1, 6.0, mark=9.0), opt("P", 575, -2, 3.25, mark=6.0)])
+    evaluate(bad, TODAY, 570, Rules())
+    assert not any(f["kind"] == "loss" for f in bad.flags)  # down 250, under 2x 550
+
+
+def test_lizard_covered_call_and_calendar_profit_bases():
+    lizard = group(
+        [
+            opt("P", 560, -1, 3.0, mark=1.4),
+            opt("C", 610, -1, 2.0, mark=0.5),
+            opt("C", 612, 1, 1.0, mark=0.2),
+        ]
+    )[0]
+    evaluate(lizard, TODAY, 590, Rules())
+    assert lizard.numbers["max_profit"] == 400 and lizard.numbers["upside_risk"] == 0
+    assert any(f["kind"] == "profit" for f in lizard.flags)  # 230 of 400
+    # Covered call: on the call's credit alone, whatever the shares do.
+    cc = group([stock(100, 200.0, 180.0, "SPY"), opt("C", 210, -1, 2.0, mark=0.9)])[0]
+    evaluate(cc, TODAY, 180, Rules())
+    assert cc.name == "Covered call" and cc.numbers["option_open_value"] == 200
+    assert any(f["kind"] == "profit" for f in cc.flags)  # the call is 55% done
+    # Calendar: on the debit paid, 10% by default.
+    cal = group([opt("P", 580, -1, 3.0, mark=2.5, exp=NEAR), opt("P", 580, 1, 5.0, mark=4.75)])[0]
+    evaluate(cal, TODAY, 590, Rules())
+    assert cal.name == "Calendar" and any(f["kind"] == "profit" for f in cal.flags)  # 25 of 200
+    # Debit verticals and long options are never flagged for profit.
+    dv = group([opt("P", 580, 1, 3.0, mark=4.5), opt("P", 575, -1, 1.0, mark=1.5)])[0]
+    evaluate(dv, TODAY, 570, Rules())
+    assert not any(f["kind"] == "profit" for f in dv.flags)

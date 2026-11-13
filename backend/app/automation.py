@@ -11,12 +11,15 @@ Phase 4 runs it on the simulated account. See PLAN.md section 11.
 import asyncio
 import copy
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from functools import reduce
 from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
+from .strategies import CALENDARS, RATIOS, not_tasty, target_for
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -243,14 +246,23 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
     sessions = settings.get("earnings_close_sessions", 1)
     return {
         "profit": (
-            f"When: profit reaches {pct(rules.profit_target)} of the most the trade can make "
-            f"({pct(rules.profit_target_straddle)} for straddles and iron flies; set on the "
-            "Rules tab). Does: closes the whole trade. At Auto a GTC closing order rests at "
-            "that price from the start; at Propose or Notify you hear once it is reached."
+            f"When: credit trades at {pct(rules.profit_target)} of the credit (strangles, "
+            "short puts and calls, verticals, iron condors, jade lizards); straddles and iron "
+            f"flies at {pct(rules.profit_target_straddle)}; front ratios at "
+            f"{pct(rules.profit_target_ratio)} of their max profit, the width plus the credit "
+            f"(Tony Battista, tastylive: at least 10%); calendars and diagonals at "
+            f"{pct(rules.profit_target_calendar)} of the debit; a covered call at "
+            f"{pct(rules.profit_target)} of the call's credit, closing the call and keeping the "
+            "shares. All set on the Rules tab. Debit verticals and long options are not "
+            "tastylive trades and are left alone. Does: closes the trade. At Auto a GTC closing "
+            "order rests at that price from the start; at Propose or Notify you hear once it "
+            "is reached."
         ),
         "dte": (
-            f"When: {rules.manage_dte} DTE or less (Rules tab). Does: a defined-risk trade is "
-            f"{defined}; an undefined-risk trade rolls out to about "
+            f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
+            "month). Does: calendars and diagonals are closed, never rolled; a defined-risk "
+            f"trade is {defined}; an undefined-risk trade (a covered call: the call only) "
+            "rolls out to about "
             f"{settings['roll_target_dte']} DTE at the same strikes for a credit, or closes "
             f"instead when {' or '.join(closes)}. Details under Rolling."
         ),
@@ -259,8 +271,12 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             "(Rules tab). Does: a strangle rolls its untested side closer for a credit, at "
             f"most {settings['max_untested_rolls']} times per expiration; an iron condor "
             "rolls its untested vertical; an inverted strangle, or a deeply tested straddle "
-            "or narrow strangle, buys the guts and sells the wings. Details under Tested side "
-            "and Guts to wings."
+            'or narrow strangle, buys the guts and sells the wings. With "Short option in the '
+            'money: roll out for a credit" ticked, these also roll out in time for a credit '
+            "once in the money: a single short option, a front ratio (the whole ratio), a "
+            "covered call (the call; the shares stay) and a jade lizard's put (the call spread "
+            "stays: it holds no upside risk while the credit covers its width). Anything else "
+            "is a notification. Details under Tested side and Guts to wings."
         ),
         "loss": (
             f"When: an undefined-risk trade is down {rules.loss_multiple:g}x the credit it "
@@ -434,7 +450,13 @@ def decide(
     if levels.get("loss", "off") != "off" and "loss" in flags:
         out.append(Action("loss", "close", f"Loss reached {rules.loss_multiple:g}x the credit"))
     if levels.get("dte", "off") != "off" and dte is not None and 0 < dte <= rules.manage_dte:
-        if st["defined_risk"] and settings["dte_defined_action"] == "close":
+        if st["name"] in CALENDARS:
+            out.append(
+                Action(
+                    "dte", "close", f"Front month at {dte} DTE: calendars are closed, not rolled"
+                )
+            )
+        elif st["defined_risk"] and settings["dte_defined_action"] == "close":
             out.append(Action("dte", "close", f"{dte} DTE: defined-risk trades are closed"))
         elif settings["max_rolls"] and st.get("rolls", 0) >= settings["max_rolls"]:
             out.append(Action("dte", "close", f"{dte} DTE after {st['rolls']} rolls: close"))
@@ -501,9 +523,42 @@ def decide(
                     "The short strike is in the money: roll out in time for a credit",
                 )
             )
+        elif name in RATIOS and itm and settings.get("roll_single_itm"):
+            out.append(
+                Action(
+                    "tested",
+                    "roll",
+                    "The ratio's short strike is in the money: roll the ratio out in time for "
+                    "a credit",
+                )
+            )
+        elif name == "Covered call" and itm and settings.get("roll_single_itm"):
+            out.append(
+                Action(
+                    "tested",
+                    "roll_calls",
+                    "The covered call is in the money: roll the call out in time for a credit; "
+                    "the shares stay",
+                )
+            )
+        elif (
+            name == "Jade lizard"
+            and put
+            and spot is not None
+            and spot < put["strike"]
+            and settings.get("roll_single_itm")
+        ):
+            out.append(
+                Action(
+                    "tested",
+                    "roll_puts",
+                    "The lizard's short put is in the money: roll the put out in time for a "
+                    "credit; the call spread stays",
+                )
+            )
         else:
             out.append(Action("tested", "notify", "A short strike is tested"))
-    if levels.get("profit", "off") != "off" and n["open_value"] > 0:
+    if levels.get("profit", "off") != "off" and profit_basis(st) is not None:
         if levels["profit"] == "auto":
             out.append(Action("profit", "target", "Profit target order resting at the broker"))
         elif "profit" in flags:
@@ -543,11 +598,43 @@ def _exp(st: dict) -> date:
 
 
 def profit_target(st: dict, rules) -> float:
-    return (
-        rules.profit_target_straddle
-        if st["name"] in ("Straddle", "Iron fly")
-        else rules.profit_target
-    )
+    return target_for(st["name"], rules)
+
+
+def target_limit(st: dict, rules) -> float | None:
+    """The net per order unit that closes the trade with its profit target made: negative a
+    debit to pay (credit trades), positive a credit to sell for (calendars)."""
+    basis = profit_basis(st)
+    if basis is None:
+        return None
+    target_of, opened = basis
+    opts = [x for x in st["legs"] if x["kind"] == "OPTION"]
+    # Prices are per unit of the order: a 1x2 ratio is one unit of one long and two shorts.
+    units = reduce(math.gcd, (abs(int(x["quantity"])) for x in opts), 0) or 1
+    return round((profit_target(st, rules) * target_of - opened) / (units * 100), 2)
+
+
+def profit_basis(st: dict) -> tuple[float, float] | None:
+    """(what the target is a share of, the net it was opened for), both in dollars, for the
+    trades automanage takes profit on; None for the rest.
+
+    Credit trades: max profit (the credit; for a ratio the width plus the credit). A covered
+    call: the call's credit, the shares left out. Calendars and diagonals: the debit paid.
+    Debit verticals and long options are not tastylive trades and are left alone.
+    """
+    n = st["numbers"]
+    name, opened = st["name"], n["open_value"]
+    if not_tasty(name, opened):
+        return None
+    if name == "Covered call":
+        call = n.get("option_open_value")
+        return (call, call) if call and call > 0 else None
+    if name in CALENDARS:
+        return (-opened, opened) if opened < 0 else None
+    mp = n.get("max_profit")
+    if opened > 0 or (name in RATIOS and mp):
+        return (mp if mp and mp > 0 else opened, opened)
+    return None
 
 
 def sides(st: dict, kind: str) -> list[list[dict]]:
@@ -1090,12 +1177,12 @@ class AutomationService:
             done.append(f"place {action.rule}")
 
     async def _ensure_target(self, s, u, rules, done) -> None:
-        """Keeps one GTC closing order resting at the profit target of the cumulative credit."""
+        """Keeps one GTC closing order resting at the profit target: the net that closes the
+        trade with the target share of its basis made (see profit_basis)."""
         tid = s["trade_id"]
-        n = s["numbers"]
-        units = n["contracts"] or 1
-        pct = profit_target(s, rules)
-        limit = -round(n["open_value"] / (units * 100) * (1 - pct), 2)
+        limit = target_limit(s, rules)
+        if limit is None:
+            return
         working = self._working(tid)
         if self._busy(tid):
             return  # another automatic order is working on this trade
@@ -1131,8 +1218,9 @@ class AutomationService:
             self._log(
                 tid,
                 "profit",
-                f"Profit target order #{order['id']} resting at "
-                f"{abs(limit):.2f} debit ({round(pct * 100)}% of the credit so far)",
+                f"Profit target order #{order['id']} resting at {abs(limit):.2f} "
+                f"{'credit' if limit > 0 else 'debit'} "
+                f"({round(profit_target(s, rules) * 100)}% target)",
                 order_id=order["id"],
             )
             done.append("target")
@@ -1230,7 +1318,7 @@ class AutomationService:
                 }
                 for legs in sides(s, "close")
             ]
-        if action.kind == "roll":
+        if action.kind in ("roll", "roll_puts", "roll_calls"):
             exps = chain_mod.expirations(
                 await self.source.expirations(u["symbol"]), self.clock().date()
             )
@@ -1249,7 +1337,13 @@ class AutomationService:
                 or {}
             )
             out = []
-            for legs in sides(s, "roll"):
+            only = {"roll_puts": "P", "roll_calls": "C"}.get(action.kind)
+            groups = (
+                [[x for x in s["legs"] if x["kind"] == "OPTION" and x["put_call"] == only]]
+                if only
+                else sides(s, "roll")
+            )
+            for legs in groups:
                 body_legs = []
                 for x in legs:
                     side = "call" if x["put_call"] == "C" else "put"

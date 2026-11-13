@@ -15,6 +15,11 @@ from .options import Leg, day_pl
 class Rules:
     profit_target: float = 0.50
     profit_target_straddle: float = 0.25
+    # Front ratios (1x2): a share of the most they can make, the width plus the credit, which
+    # is only reached at the short strike in the last days (Tony Battista: at least 10%).
+    profit_target_ratio: float = 0.10
+    # Calendars and diagonals: a share of the debit paid (tastylive research: 10% did best).
+    profit_target_calendar: float = 0.10
     manage_dte: int = 21
     tested_delta: float = 0.30
     loss_multiple: float = 2.0
@@ -112,6 +117,44 @@ def group(legs: list[Leg]) -> list[Strategy]:
             taken = [pool.take(x, q) for x in (lp, sp, sc, lc)]
             add("Iron fly" if sp.strike == sc.strike else "Iron condor", taken, True)
 
+        # Jade lizards: a short put below a short call spread.
+        while True:
+            sp = _first(pool.options("P", True, exp), key=lambda x: -x.strike)
+            sc = _first(pool.options("C", True, exp), key=lambda x: x.strike)
+            if not (sp and sc and sp.strike < sc.strike) or pool.options("P", False, exp):
+                break
+            lc = _first(
+                [x for x in pool.options("C", False, exp) if x.strike > sc.strike],
+                key=lambda x: x.strike,
+            )
+            if not lc:
+                break
+            q = min(abs(x.quantity) for x in (sp, sc, lc))
+            add("Jade lizard", [pool.take(x, q) for x in (sp, sc, lc)], False)
+
+        # Front ratios (1x2): one long, two shorts further out of the money, same type.
+        for pc in ("P", "C"):
+            while True:
+                found = None
+                for lg in pool.options(pc, False, exp):
+                    outside = [
+                        s
+                        for s in pool.options(pc, True, exp)
+                        if (s.strike < lg.strike if pc == "P" else s.strike > lg.strike)
+                        and abs(s.quantity) >= 2 * abs(lg.quantity)
+                    ]
+                    if outside:
+                        s = min(outside, key=lambda x: abs(x.strike - lg.strike))
+                        found = (lg, s)
+                        break
+                if not found:
+                    break
+                lg, s = found
+                q = abs(lg.quantity)
+                taken = [pool.take(lg, q), pool.take(s, 2 * q)]
+                kind = "Put" if pc == "P" else "Call"
+                add(f"{kind} ratio 1×2", sorted(taken, key=lambda x: x.strike), False)
+
         # Verticals: pair each short with the nearest long of the same type and expiration.
         for pc in ("P", "C"):
             while True:
@@ -179,6 +222,29 @@ def group(legs: list[Leg]) -> list[Strategy]:
     return out
 
 
+RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
+CALENDARS = ("Calendar", "Diagonal")
+
+
+def not_tasty(name: str, open_value: float) -> bool:
+    """Debit verticals and long options: not tastylive trades, so never managed."""
+    if name in ("Long put", "Long call"):
+        return True
+    return name in ("Put vertical", "Call vertical") and open_value < 0
+
+
+def target_for(name: str, rules: Rules) -> float:
+    """The profit target for a kind of trade, as a share of its basis: max profit for credit
+    trades and ratios, the debit for calendars, the call's credit for a covered call."""
+    if name in ("Straddle", "Iron fly"):
+        return rules.profit_target_straddle
+    if name in RATIOS:
+        return rules.profit_target_ratio
+    if name in CALENDARS:
+        return rules.profit_target_calendar
+    return rules.profit_target
+
+
 def _first(items, key):
     return min(items, key=key) if items else None
 
@@ -236,10 +302,33 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         max_profit = open_value
     elif name in ("Long put", "Long call", "Calendar", "Diagonal"):
         max_loss = -open_value
+    elif name in RATIOS:
+        # Most at the short strike at expiration: the width plus the credit.
+        longs = [x for x in opts if not x.short]
+        shorts_ = [x for x in opts if x.short]
+        q = sum(x.quantity for x in longs)
+        width = abs(longs[0].strike - shorts_[0].strike) * 100 * q if longs and shorts_ else 0
+        max_profit = width + open_value
+    elif open_value > 0 and opts and name not in ("Covered call",):
+        # Jade lizards and other credit trades: at most the credit.
+        max_profit = open_value
 
     dtes = [leg.dte(today) for leg in opts]
     shorts = [leg for leg in opts if leg.short]
     pct = pl / max_profit if (pl is not None and max_profit and max_profit > 0) else None
+    upside_risk = None
+    option_open = None
+    if name == "Covered call":
+        # Managed on the call alone: the shares stay.
+        option_open = -sum(x.quantity * x.avg_price * x.multiplier for x in opts)
+        if option_open > 0 and all(x.mark is not None for x in opts):
+            opt_pl = sum(x.quantity * x.mark * x.multiplier for x in opts) + option_open
+            pct = opt_pl / option_open
+    elif name in CALENDARS and open_value < 0 and pl is not None:
+        pct = pl / -open_value  # a share of the debit paid
+    elif name == "Jade lizard":
+        calls = sorted(x.strike for x in opts if x.put_call == "C")
+        upside_risk = (calls[-1] - calls[0]) * 100 * contracts - open_value
 
     st.numbers = {
         "open_value": round(open_value, 2),
@@ -258,18 +347,27 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "vega": _round(_greek(legs, "vega")),
         "short_deltas": [None if x.delta is None else round(x.delta, 3) for x in shorts],
         "short_strikes": [x.strike for x in shorts],
+        # A jade lizard loses to the upside only when the credit is less than the call
+        # spread's width.
+        "upside_risk": None if upside_risk is None else round(max(upside_risk, 0), 2),
+        "option_open_value": None if option_open is None else round(option_open, 2),
     }
 
     flags = []
-    target = (
-        rules.profit_target_straddle if name in ("Straddle", "Iron fly") else rules.profit_target
-    )
-    if pct is not None and pct >= target:
+    target = target_for(name, rules)
+    if pct is not None and pct >= target and not not_tasty(name, open_value):
+        basis = (
+            "of the debit"
+            if name in CALENDARS
+            else "of the call's credit"
+            if name == "Covered call"
+            else "max"
+        )
         flags.append(
             {
                 "kind": "profit",
-                "label": f"{round(pct * 100)}% max",
-                "detail": f"Profit target {round(target * 100)}% reached",
+                "label": f"{round(pct * 100)}% {basis}",
+                "detail": f"Profit target {round(target * 100)}% {basis} reached",
             }
         )
     dte = st.numbers["dte"]
@@ -298,13 +396,16 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
                 + (" in the money" if itm else f" at or above {rules.tested_delta:.2f} delta"),
             }
         )
-    if not st.defined_risk and shorts and pl is not None and open_value > 0:
-        if pl <= -rules.loss_multiple * open_value:
+    # A ratio opens for a small credit, so its loss is measured against what it can make.
+    loss_basis = max_profit if name in RATIOS else open_value
+    if not st.defined_risk and shorts and pl is not None and loss_basis and loss_basis > 0:
+        if pl <= -rules.loss_multiple * loss_basis:
+            what = "the most it can make" if name in RATIOS else "the credit received"
             flags.append(
                 {
                     "kind": "loss",
                     "label": f"{rules.loss_multiple:g}x loss",
-                    "detail": f"Loss at {rules.loss_multiple:g}x the credit received",
+                    "detail": f"Loss at {rules.loss_multiple:g}x {what}",
                 }
             )
     if any(leg.mark is None or (leg.is_option and leg.delta is None) for leg in legs):

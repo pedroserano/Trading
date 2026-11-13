@@ -626,3 +626,70 @@ def test_every_level_has_a_hint_with_the_current_values():
     assert set(hints) == set(auto.RULES)
     assert "15:50" in hints["expiry"] and "0.1%" in hints["expiry"]
     assert "3x" in hints["loss"] and "50%" in hints["profit"] and "21 DTE" in hints["dte"]
+
+
+# Every tastylive trade ---------------------------------------------------------------------
+
+
+def test_profit_targets_per_kind_of_trade():
+    r = Rules()
+    strangle = strat(open_value=580.0)
+    assert auto.target_limit(strangle, r) == -2.90  # buy back at half the credit
+    ratio = strat(
+        name="Put ratio 1×2",
+        legs=[leg("P", 580, 1), leg("P", 575, -2)],
+        open_value=50.0,
+    )
+    ratio["numbers"]["max_profit"] = 550.0
+    assert auto.target_limit(ratio, r) == 0.05  # 10% of 550 made: close for a 0.05 credit
+    cal = strat(name="Calendar", open_value=-200.0, legs=[leg("P", 580, -1), leg("P", 580, 1)])
+    assert auto.target_limit(cal, r) == 2.20  # 10% on the 2.00 debit
+    cc = strat(name="Covered call", open_value=-19800.0, legs=[leg("C", 610, -1)])
+    cc["numbers"]["option_open_value"] = 200.0
+    assert auto.target_limit(cc, r) == -1.00
+    dv = strat(name="Put vertical", open_value=-200.0, legs=[leg("P", 580, 1), leg("P", 575, -1)])
+    assert auto.target_limit(dv, r) is None
+    assert not any(a.rule == "profit" for a in decide(dv, 590, r, merged_settings(None), ALL))
+
+
+def test_calendars_close_at_dte_whatever_the_defined_risk_action():
+    s = {**merged_settings(None), "dte_defined_action": "roll"}
+    cal = strat(name="Calendar", dte=20, defined=True, open_value=-200.0)
+    assert ("dte", "close") in kinds(decide(cal, 590, Rules(), s, ALL))
+
+
+def test_tested_ratio_covered_call_and_lizard_roll_with_the_switch():
+    on = {**merged_settings(None), "roll_single_itm": True}
+    off = merged_settings(None)
+    ratio = strat(
+        name="Put ratio 1×2",
+        legs=[leg("P", 580, 1, -0.6), leg("P", 575, -2, -0.55)],
+        flags=["tested"],
+    )
+    assert ("tested", "roll") in kinds(decide(ratio, 570, Rules(), on, ALL))
+    assert ("tested", "notify") in kinds(decide(ratio, 570, Rules(), off, ALL))
+    cc = strat(name="Covered call", legs=[leg("C", 580, -1, 0.7)], flags=["tested"])
+    assert ("tested", "roll_calls") in kinds(decide(cc, 590, Rules(), on, ALL))
+    lizard = strat(
+        name="Jade lizard",
+        legs=[leg("P", 590, -1, -0.6), leg("C", 610, -1, 0.1), leg("C", 612, 1, 0.08)],
+        flags=["tested"],
+    )
+    assert ("tested", "roll_puts") in kinds(decide(lizard, 585, Rules(), on, ALL))
+    # The calls being tested is no reason to roll the put.
+    assert ("tested", "notify") in kinds(decide(lizard, 611, Rules(), on, ALL))
+
+
+@pytest.mark.anyio
+async def test_lizard_put_roll_leaves_the_call_spread():
+    h = Harness([], QUOTES)
+    lizard = strat(
+        name="Jade lizard",
+        legs=[leg("P", 555, -1, -0.6), leg("C", 610, -1, 0.1), leg("C", 615, 1, 0.08)],
+    )
+    u = {"symbol": "SPY", "price": 550.0}
+    (body,) = await h.svc._bodies(
+        lizard, u, Action("tested", "roll_puts", "x"), merged_settings(None)
+    )
+    assert body["intent"] == "roll"
+    assert {x["symbol"] for x in body["legs"]} == {sym("P", 555), sym("P", 555, NEXT)}
