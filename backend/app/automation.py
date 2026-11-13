@@ -965,6 +965,7 @@ class AutomationService:
                 "trade_id": order.get("trade_id"),
                 "rule": "entry",
                 "automanage_on_fill": True,
+                "placed_at": time.time(),
             }
             self._log(None, "entry", f"Order #{order['id']}: automanage switches on when it fills")
             await self._save()
@@ -1025,7 +1026,14 @@ class AutomationService:
             done: list[str] = []
             snap = self.portfolio.snapshot or {}
             now = self.clock()
-            if st["paused"] or not self.broker.state:
+            if not self.broker.state:
+                return done
+            # Fills are recorded, and new trades switched on, at any time: paused or not, in
+            # the window or not.
+            self._record_fills()
+            if self._enable_pending(snap):
+                await self._save()
+            if st["paused"]:
                 return done
             # After the trading window, only the expiration-day close still acts, until the
             # market closes.
@@ -1442,6 +1450,88 @@ class AutomationService:
             )
             done.append("target")
 
+    def _record_fills(self) -> None:
+        """Forgets automatic orders that are no longer working, logging fills; a filled order
+        ticked "Automanage on fill" queues its new trade to be switched on (_enable_pending).
+        An entry order not seen at the broker yet is kept a while, in case its list lags."""
+        for oid, info in list(self.state["orders"].items()):
+            order = next((o for o in self.broker.state["orders"] if str(o["id"]) == oid), None)
+            if order is not None and order["status"] == "WORKING":
+                continue
+            if order is None and info["rule"] == "entry":
+                if time.time() - info.get("placed_at", time.time()) < 2 * 86400:
+                    info.setdefault("placed_at", time.time())
+                    continue
+            self.state["orders"].pop(oid)
+            if order is None or order["status"] != "FILLED":
+                continue
+            known = order.get("trade_id")
+            if (
+                info.get("automanage_on_fill")
+                and self.account != "live"
+                and known is not None
+                and not str(known).startswith("new:")
+            ):
+                # The simulated account names the trade on the order itself.
+                self.state["trades"][str(known)] = {"enabled": True}
+                self._log(known, info["rule"], "New trade filled; automanage on")
+            elif info.get("automanage_on_fill"):
+                opened = [
+                    x["symbol"]
+                    for x in order.get("legs", [])
+                    if x.get("effect", "open") == "open" or order.get("intent") == "open"
+                ]
+                self.state.setdefault("enable_pending", {})[oid] = {
+                    "symbols": sorted(set(opened)),
+                    "at": time.time(),
+                    "rule": info["rule"],
+                }
+            fill = order.get("fill_net")
+            self._log(
+                info["trade_id"],
+                info["rule"],
+                f"Order #{oid} filled"
+                + (
+                    f" at {abs(fill):.2f} {'credit' if fill > 0 else 'debit'}"
+                    if fill is not None
+                    else ""
+                ),
+                order_id=order["id"],
+            )
+
+    def _enable_pending(self, snap: dict) -> bool:
+        """Switches automanage on for new trades from fills queued by _record_fills, once the
+        positions show them: the trade holding the order's legs, whatever its ID (a Schwab
+        trade can be filed under an earlier one it was linked to). Gives up after 3 days."""
+        pending = self.state.get("enable_pending") or {}
+        changed = False
+        for oid, p in list(pending.items()):
+            want = set(p["symbols"])
+            # The trades holding the order's legs (usually one; legs grouped by shape can
+            # split across two).
+            found, held = [], set()
+            for u in snap.get("underlyings", []):
+                for x in u["strategies"]:
+                    have = {leg["symbol"] for leg in x["legs"]} & want
+                    if x.get("trade_id") is not None and have:
+                        found.append(str(x["trade_id"]))
+                        held |= have
+            if want and held == want:
+                for tid in found:
+                    self.state["trades"][tid] = {"enabled": True}
+                    self._log(tid, p["rule"], f"New trade filled (order #{oid}); automanage on")
+                pending.pop(oid)
+                changed = True
+            elif time.time() - p["at"] > 3 * 86400:
+                pending.pop(oid)
+                self._log(
+                    None,
+                    p["rule"],
+                    f"Order #{oid}: its trade never showed; automanage not switched on",
+                )
+                changed = True
+        return changed
+
     async def _step_orders(
         self, settings: dict, done: list[str], only: tuple[str, ...] | None = None
     ) -> None:
@@ -1449,33 +1539,10 @@ class AutomationService:
         With only, just those rules' orders move (fills are still recorded for all)."""
         every = settings["step_minutes"] * 60
         step = settings["step_cents"] / 100
+        self._record_fills()
         for oid, info in list(self.state["orders"].items()):
             order = next((o for o in self.broker.state["orders"] if str(o["id"]) == oid), None)
             if order is None or order["status"] != "WORKING":
-                self.state["orders"].pop(oid)
-                if order is not None and order["status"] == "FILLED":
-                    if info.get("automanage_on_fill"):
-                        new_id = order.get("trade_id")
-                        if (
-                            self.account == "live"
-                            or new_id is None
-                            or str(new_id).startswith("new:")
-                        ):
-                            new_id = f"c-{order['id']}"  # live trades are named by order
-                        self.state["trades"][str(new_id)] = {"enabled": True}
-                        self._log(new_id, info["rule"], "New trade filled; automanage on")
-                    fill = order.get("fill_net")
-                    self._log(
-                        info["trade_id"],
-                        info["rule"],
-                        f"Order #{oid} filled"
-                        + (
-                            f" at {abs(fill):.2f} {'credit' if fill > 0 else 'debit'}"
-                            if fill is not None
-                            else ""
-                        ),
-                        order_id=order["id"],
-                    )
                 continue
             if info["rule"] in ("profit", "entry"):
                 continue  # resting orders: never repriced

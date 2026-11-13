@@ -774,3 +774,33 @@ def test_rules_map_follows_the_settings():
     assert m2["itm_muted"]  # rolls set up, but the Tested level only notifies
     m3 = auto.rules_map(Rules(), {**on, "levels": {**on["levels"], "tested": "propose"}})
     assert not m3["itm_muted"] and m3["level_of"]["tested"] == "propose"
+
+
+@pytest.mark.anyio
+async def test_live_entry_fill_switches_on_the_trade_holding_its_legs_any_time():
+    # A Schwab fill can land in a trade named after an earlier one (linked as a roll), so
+    # the trade is found by its legs, and this happens paused and outside the window too.
+    h = Harness([], QUOTES)
+    h.svc.account = "live"
+    h.svc.clock = lambda: datetime(2026, 11, 11, 16, 30, tzinfo=ET)
+    order = {
+        "id": 777,
+        "status": "FILLED",
+        "intent": "open",
+        "trade_id": "c-777",
+        "fill_net": 1.0,
+        "legs": [
+            {"symbol": sym("P", 555), "quantity": -1},
+            {"symbol": sym("C", 610), "quantity": -1},
+        ],
+    }
+    h.broker.state = {"orders": [order]}
+    await h.svc.watch_entry(order)
+    await h.svc.set_paused(True)
+    h.portfolio.snapshot["underlyings"][0]["strategies"] = []
+    await h.svc.tick()  # filled, but not in the positions yet
+    assert "c-123" not in h.svc.state["trades"]
+    h.portfolio.snapshot["underlyings"][0]["strategies"] = [strat(tid="c-123")]
+    await h.svc.tick()
+    assert h.svc.state["trades"]["c-123"] == {"enabled": True}
+    assert not h.svc.state["enable_pending"]
