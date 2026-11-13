@@ -822,10 +822,11 @@ async def test_sim_entry_fill_after_hours_is_switched_on_and_saved():
     )
     assert order["status"] == "FILLED"
     await h.svc.watch_entry(order)
+    tid = str(order["trade_id"])
+    assert h.svc.state["trades"][tid] == {"enabled": True}  # at once, no wait for a pass
     h.svc.clock = lambda: datetime(2026, 11, 11, 18, 0, tzinfo=ET)
     h.portfolio.snapshot["session"] = "closed"
     await h.svc.tick()
-    tid = str(order["trade_id"])
     assert h.svc.state["trades"][tid] == {"enabled": True}
     saved = h.store.settings[h.svc.state_key]
     assert saved["trades"][tid] == {"enabled": True}

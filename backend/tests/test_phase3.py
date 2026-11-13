@@ -1,11 +1,9 @@
-import asyncio
 from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import guards
-from app.automation import merged_settings
 from app.config import Settings
 from app.datasource import DemoDataSource
 from app.main import create_app, summarize_preview
@@ -718,8 +716,7 @@ def test_automanage_on_fill_from_the_ticket(client):
     act = client.get("/api/activity?account=sim").json()
     assert [o["status"] for o in act["orders"]] == ["FILLED"]  # no GTC target order
     auto = client.app.state.automation
-    assert auto.state["orders"][str(order["id"])]["rule"] == "entry"
-    asyncio.run(auto._step_orders(merged_settings(None), []))
+    # The simulated account fills at once, so automanage is on as the order returns.
     tid = act["trades"][0]["id"]
     assert auto.state["trades"][str(tid)] == {"enabled": True}
     assert str(order["id"]) not in auto.state["orders"]

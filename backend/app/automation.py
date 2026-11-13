@@ -968,6 +968,11 @@ class AutomationService:
                 "placed_at": time.time(),
             }
             self._log(None, "entry", f"Order #{order['id']}: automanage switches on when it fills")
+            # Already filled (the simulated account fills at once): switch on now, not on the
+            # next pass.
+            if self.broker.state:
+                self._record_fills()
+                self._enable_pending(self.portfolio.snapshot or {})
             await self._save()
 
     async def set_paused(self, paused: bool, why: str = "by you") -> None:
