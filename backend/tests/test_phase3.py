@@ -832,3 +832,35 @@ def test_each_schwab_account_has_its_own_routes_limits_and_orders(client):
     other = client.post("/api/orders/preview", json={**body, "account": "live"}).json()
     assert any("not on the live list (QQQ)" in b for b in one["live_blocks"])
     assert not any("not on the live list" in b for b in other["live_blocks"])
+
+
+def test_each_schwab_account_has_its_own_levels_scanner_level_and_limits(client):
+    page = client.get("/connect").text
+    # Each rule's sentence has a level per account, by its Schwab name.
+    assert 'id="a-live-5678-profit"' in page and 'id="a-live-profit"' in page
+    assert ">Individual</span>" in page and ">Joint</span>" in page
+    assert 'id="s-level_acct_live-5678"' in page
+    assert 'id="l-symbols-live-5678"' in page and "Save Individual limits" in page
+    client.post(
+        "/automation/settings",
+        data={"_form": "automation", "acct_live-5678_level_dte": "notify"},
+    )
+    assert (
+        client.get("/api/automation?account=live-5678").json()["settings"]["levels"]["dte"]
+        == "notify"
+    )
+    assert client.get("/api/automation?account=live").json()["settings"]["levels"]["dte"] == (
+        "propose"
+    )
+    # No Auto on a Schwab account without LIVE_AUTO (demo: never).
+    client.post("/automation/settings", data={"acct_live-5678_level_profit": "auto"})
+    assert (
+        client.get("/api/automation?account=live-5678").json()["settings"]["levels"]["profit"]
+        == "propose"
+    )
+    client.post("/scanner/settings", data={"level_acct_live-5678": "notify"})
+    assert client.get("/api/scanner?account=live-5678").json()["level"] == "notify"
+    assert client.get("/api/scanner?account=live").json()["level"] == "off"
+    client.post("/live/settings", data={"account": "live-5678", "symbols": "QQQ IWM"})
+    page = client.get("/connect").text
+    assert "Individual: IWM, QQQ" in page and "Joint: SPY" in page

@@ -27,6 +27,9 @@ class AccountRegistry:
         self._created: float | None = None
         self.visible_count: int | None = None
         self.loaded = False
+        # The Account labels in the imported history sheet ("Joint", "Individual"), set by
+        # the app from the stored rows.
+        self.sheet_labels: list[str] = []
 
     # Stored list --------------------------------------------------------------------------
 
@@ -108,6 +111,25 @@ class AccountRegistry:
         base = a.get("name") or f"Account …{a['last4']}"
         same = [x for x in self.accounts if not x.get("gone") and (x.get("name") or "") == base]
         return f"{base} …{a['last4']}" if a.get("name") and len(same) > 1 else base
+
+    def sheet_label(self, key: str) -> str | None:
+        """Which of the history sheet's Account labels is this account's: the one chosen on
+        Settings, else "Joint" for the first account, else the label equal to its Schwab
+        name (ignoring case), else none."""
+        a = self.entry(key) or {}
+        if "sheet_label" in a:
+            return a["sheet_label"] or None
+        if key == PRIMARY:
+            return "Joint"
+        name = (a.get("name") or "").strip().lower()
+        return next((x for x in self.sheet_labels if x.lower() == name), None) if name else None
+
+    async def set_sheet_label(self, key: str, label: str | None) -> None:
+        a = self.entry(key)
+        if a is None:
+            raise ValueError("No such account")
+        a["sheet_label"] = label or ""
+        await self._save()
 
     def resolver(self, key: str):
         """An async callable giving the account's hash, for the services that read it."""

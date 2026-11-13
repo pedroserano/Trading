@@ -219,34 +219,62 @@ def account_levels(settings: dict, account: str) -> dict:
     return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in settings["levels_live"].items()}
 
 
+def _capped(levels: dict) -> dict:
+    cap = LEVELS.index("propose")
+    return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in levels.items()}
+
+
 def as_run(settings: dict, live_auto: bool) -> dict:
-    """The settings as they run: without LIVE_AUTO the Schwab account's Auto is Propose."""
+    """The settings as they run: without LIVE_AUTO no Schwab account's Auto is more than
+    Propose."""
     if live_auto:
         return settings
-    cap = LEVELS.index("propose")
     out = dict(settings)
-    out["levels_live"] = {
-        r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in settings["levels_live"].items()
+    out["levels_live"] = _capped(settings["levels_live"])
+    out["levels_by_account"] = {
+        k: _capped(v) for k, v in settings.get("levels_by_account", {}).items()
     }
     return out
 
 
-def parse_settings(form: dict, current: dict, live_auto: bool = False) -> dict:
+def level_field(rule: str, account: str) -> str:
+    """The form field for one rule's level on one account."""
+    if account == "sim":
+        return f"level_{rule}"
+    if account == "live":
+        return f"live_level_{rule}"
+    return f"acct_{account}_level_{rule}"
+
+
+def parse_settings(
+    form: dict, current: dict, live_auto: bool = False, accounts: list[str] | None = None
+) -> dict:
     """Validates the Settings form. Raises ValueError with a message for the page.
-    live_auto: whether the Schwab account may act at Auto (LIVE_AUTO=true)."""
+    live_auto: whether Schwab accounts may act at Auto (LIVE_AUTO=true); accounts: the
+    Schwab account keys besides "live"."""
     out = merged_settings(current)
     for rule in RULES:
-        for key, field in (("levels", f"level_{rule}"), ("levels_live", f"live_level_{rule}")):
-            v = form.get(field)
+        for account in ["sim", "live", *(accounts or [])]:
+            v = form.get(level_field(rule, account))
             if v is None:
                 continue
             if v not in LEVELS:
                 raise ValueError(f"{RULES[rule]}: unknown level")
-            if key == "levels_live" and v == "auto" and not live_auto:
+            if account != "sim" and v == "auto" and not live_auto:
                 raise ValueError(
-                    f"{RULES[rule]}: Auto on the Schwab account needs LIVE_AUTO=true in .env"
+                    f"{RULES[rule]}: Auto on a Schwab account needs LIVE_AUTO=true in .env"
                 )
-            out[key][rule] = v
+            if account == "sim":
+                out["levels"][rule] = v
+            elif account == "live":
+                out["levels_live"][rule] = v
+            else:
+                mine = out["levels_by_account"].setdefault(account, {})
+                mine.update({**account_levels(out, account), rule: v})
+    # An account left at its starting levels stores nothing, so it keeps following them.
+    out["levels_by_account"] = {
+        k: v for k, v in out["levels_by_account"].items() if v != _capped(out["levels_live"])
+    }
     if form.get("dte_defined_action") in ("close", "roll"):
         out["dte_defined_action"] = form["dte_defined_action"]
     if form.get("_form") == "automation":  # checkboxes are only sent when ticked
@@ -688,9 +716,12 @@ def profit_target(st: dict, rules) -> float:
     return target_for(st["name"], rules)
 
 
-def auto_fields(settings: dict, live_auto: bool = False) -> dict:
+def auto_fields(
+    settings: dict, live_auto: bool = False, accounts: list[tuple[str, str]] | None = None
+) -> dict:
     """Automanage's settings as plain.Field, for the step list (values and defaults).
-    live_auto: whether Auto is offered for the Schwab account (LIVE_AUTO=true)."""
+    live_auto: whether Auto is offered for Schwab accounts (LIVE_AUTO=true); accounts: the
+    Schwab accounts as (key, name), first "live"."""
     d = DEFAULT_SETTINGS
     out = {
         key: plain.Field(kind, settings[key], d[key], lo, hi)
@@ -701,16 +732,21 @@ def auto_fields(settings: dict, live_auto: bool = False) -> dict:
         out[f"level_{rule}"] = plain.Field(
             "select", settings["levels"][rule], d["levels"][rule], options=levels, id=f"a-{rule}"
         )
-        live = settings["levels_live"][rule]
-        if live == "auto" and not live_auto:
-            live = "propose"  # what runs: Auto is not allowed on Schwab without LIVE_AUTO
-        out[f"live_level_{rule}"] = plain.Field(
-            "select",
-            live,
-            d["levels_live"][rule],
-            options=[x for x in levels if live_auto or x[0] != "auto"],
-            id=f"a-live-{rule}",
-        )
+        group = [("simulated", f"level_{rule}")]
+        for key, name in accounts or [("live", "Schwab")]:
+            lv = account_levels(settings, key)[rule]
+            if lv == "auto" and not live_auto:
+                lv = "propose"  # what runs: no Auto on Schwab without LIVE_AUTO
+            field = level_field(rule, key)
+            out[field] = plain.Field(
+                "select",
+                lv,
+                account_levels(d, key)[rule],
+                options=[x for x in levels if live_auto or x[0] != "auto"],
+                id=f"a-live-{rule}" if key == "live" else f"a-{key}-{rule}",
+            )
+            group.append((name, field))
+        out[f"levels:{rule}"] = plain.Group(group)
     out["dte_defined_action"] = plain.Field(
         "select",
         settings["dte_defined_action"],
@@ -752,7 +788,7 @@ AUTO_STEPS = [
             "⟦rules:profit_target_ratio⟧ of the width plus the credit; calendars at "
             "⟦rules:profit_target_calendar⟧ of the debit; a covered call at "
             "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
-            "(simulated ⟦level_profit⟧, Schwab ⟦live_level_profit⟧; at Auto a closing order "
+            "(⟦levels:profit⟧; at Auto a closing order "
             "rests at the target from the start).",
             "Debit spreads and long options are not tastylive trades and are left alone.",
             "⟦?ticket_automanage⟧ The order ticket starts with Automanage on fill ticked.",
@@ -761,8 +797,7 @@ AUTO_STEPS = [
     (
         "2. Manage time",
         [
-            "At ⟦rules:manage_dte⟧ days to expiration (simulated ⟦level_dte⟧, Schwab "
-            "⟦live_level_dte⟧): roll an "
+            "At ⟦rules:manage_dte⟧ days to expiration (⟦levels:dte⟧): roll an "
             "undefined-risk trade out to about ⟦roll_target_dte⟧ days for a credit, at the "
             "same strikes. Close it instead when IV rank is under ⟦min_roll_ivr⟧, after "
             "⟦max_rolls⟧ rolls (0: no limit), or when the roll pays under ⟦min_roll_credit⟧ a "
@@ -773,8 +808,7 @@ AUTO_STEPS = [
     (
         "3. Defend a tested side, calmly",
         [
-            "When a short strike reaches ⟦rules:tested_delta⟧ delta (simulated ⟦level_tested⟧, "
-            "Schwab ⟦live_level_tested⟧): "
+            "When a short strike reaches ⟦rules:tested_delta⟧ delta (⟦levels:tested⟧): "
             "roll the safe side closer for a credit, to ⟦untested_target⟧, at most "
             "⟦max_untested_rolls⟧ times per expiration, leaving the trade leaning with its "
             "view or your bias.",
@@ -788,14 +822,13 @@ AUTO_STEPS = [
             "⟦?roll_single_itm⟧ When a short goes in the money, roll it out in time for a "
             "credit: a single option to ⟦single_roll_strike⟧, a ratio whole, a covered call "
             "up and out, a jade lizard's put down and out.",
-            "No panic exits: a loss of ⟦rules:loss_multiple⟧ the credit (simulated ⟦level_loss⟧, "
-            "Schwab ⟦live_level_loss⟧).",
+            "No panic exits: a loss of ⟦rules:loss_multiple⟧ the credit (⟦levels:loss⟧).",
         ],
     ),
     (
         "4. Expiration day",
         [
-            "From ⟦expiry_close_at⟧ ET (simulated ⟦level_expiry⟧, Schwab ⟦live_level_expiry⟧), "
+            "From ⟦expiry_close_at⟧ ET (⟦levels:expiry⟧), "
             "close any short still in the "
             "money, or within ⟦expiry_pin_margin⟧% of its strike (0: in the money only), so "
             "nothing is assigned by surprise.",
@@ -809,10 +842,9 @@ AUTO_STEPS = [
         "5. Earnings and dividends",
         [
             "Close a single-stock trade ⟦earnings_close_sessions⟧ sessions before the last "
-            "session ahead of an earnings report inside it (simulated ⟦level_earnings⟧, Schwab "
-            "⟦live_level_earnings⟧).",
+            "session ahead of an earnings report inside it (⟦levels:earnings⟧).",
             "Close a short call likely to be assigned before an ex-dividend date "
-            "(simulated ⟦level_dividend⟧, Schwab ⟦live_level_dividend⟧).",
+            "(⟦levels:dividend⟧).",
         ],
     ),
     (
@@ -858,13 +890,14 @@ def plain_summary(rules, settings: dict, live_auto: bool = False) -> list[tuple[
     return [(title, [plain.as_text(x, fields, rv) for x in lines]) for title, lines in AUTO_STEPS]
 
 
-def rules_map(rules, settings: dict) -> dict:
+def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = None) -> dict:
     """Every automanage rule on one page, from the current values: the levels, a grid of
     what each rule does for each kind of trade, the rules every trade shares, and the limits
-    over all of it. For the Rules map on Settings. A rule is greyed only when it is Off on
-    both accounts."""
+    over all of it. For the Rules map on Settings. accounts: the Schwab accounts as (key,
+    name). A rule is greyed only when it is Off on every account."""
     levels = settings["levels"]
-    live_levels = settings.get("levels_live", levels)
+    accounts = accounts or [("live", "Schwab")]
+    per = [levels] + [account_levels(settings, k) for k, _ in accounts]
 
     def pct(v: float) -> str:
         return f"{v * 100:g}%"
@@ -988,10 +1021,10 @@ def rules_map(rules, settings: dict) -> dict:
     margin = settings.get("expiry_pin_margin") or 0
     sessions = settings.get("earnings_close_sessions", 1)
     return {
-        "levels": [(r, RULES[r], levels.get(r, "off"), live_levels.get(r, "off")) for r in RULES],
+        "accounts": ["Simulated"] + [name for _, name in accounts],
+        "levels": [(r, RULES[r], [lv.get(r, "off") for lv in per]) for r in RULES],
         "level_of": {
-            r: levels.get(r, "off") if levels.get(r, "off") != "off" else live_levels.get(r, "off")
-            for r in RULES
+            r: next((lv[r] for lv in per if lv.get(r, "off") != "off"), "off") for r in RULES
         },
         "columns": [
             ("profit", "Profit target"),

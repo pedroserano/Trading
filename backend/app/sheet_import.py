@@ -79,8 +79,9 @@ def _clean(v):
     return v
 
 
-def read_workbook(content: bytes, account: str = "Joint") -> tuple[list[SheetRow], dict]:
-    """Rows for one account from an uploaded .xlsx file, keyed by their opening details."""
+def read_workbook(content: bytes, account: str | None = "Joint") -> tuple[list[SheetRow], dict]:
+    """Rows from an uploaded .xlsx file, keyed by their opening details: for one account
+    (its label in the Account column), or for every labelled account with account=None."""
     import openpyxl
 
     try:
@@ -96,24 +97,29 @@ def read_workbook(content: bytes, account: str = "Joint") -> tuple[list[SheetRow
             "The Trades tab's columns are not laid out as expected "
             f"(found {header[:4]} ... {header[16:18]})"
         )
-    rows, counts, seen = [], {"rows": 0, "other_accounts": 0}, {}
+    rows, counts, seen = [], {"rows": 0, "other_accounts": 0, "by_account": {}}, {}
     for r in ws.iter_rows(min_row=2, values_only=True):
         if not r or not r[0]:
             continue
         counts["rows"] += 1
         data = {name: _clean(r[i]) if i < len(r) else None for name, i in COL.items()}
-        if (data["account"] or "") != account:
+        label = (data["account"] or "").strip()
+        if not label or (account is not None and label != account):
             counts["other_accounts"] += 1
             continue
+        counts["by_account"][label] = counts["by_account"].get(label, 0) + 1
         # The opening details identify a row; an occurrence number separates identical rows.
         ident = "|".join(
             str(data[k])
             for k in ("underlying", "strikes", "strat", "exp", "open_date", "shares", "open_price")
         )
+        # Joint rows keep the keys they were first imported with; other accounts' rows carry
+        # their label, so two accounts' identical trades stay two rows.
+        ident = ident if label == "Joint" else f"{label}|{ident}"
         n = seen.get(ident, 0)
         seen[ident] = n + 1
         key = hashlib.sha256(f"{ident}|{n}".encode()).hexdigest()[:16]
-        rows.append(SheetRow(key=key, account=account, data=data))
+        rows.append(SheetRow(key=key, account=label, data=data))
     counts["account_rows"] = len(rows)
     return rows, counts
 

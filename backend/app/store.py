@@ -32,6 +32,12 @@ class MemoryStore:
     async def sheet_rows(self, account: str) -> list[tuple[str, dict]]:
         return [(k, d) for k, (a, d) in self.sheet.items() if a == account]
 
+    async def sheet_accounts(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for a, _ in self.sheet.values():
+            out[a] = out.get(a, 0) + 1
+        return out
+
     async def upsert_prices(self, symbol: str, closes: list[tuple[date, float]]) -> None:
         self.daily.setdefault(symbol, {}).update(dict(closes))
 
@@ -223,6 +229,12 @@ class PgStore:
                 "SELECT row_key, data FROM sheet_rows WHERE account = %s", (account,)
             )
             return [(k, d) for k, d in await cur.fetchall()]
+
+    async def sheet_accounts(self) -> dict[str, int]:
+        """The history sheet's Account labels and how many rows each has."""
+        async with self._pool.connection() as conn:
+            cur = await conn.execute("SELECT account, count(*) FROM sheet_rows GROUP BY account")
+            return {a: int(n) for a, n in await cur.fetchall()}
 
     async def upsert_prices(self, symbol: str, closes: list[tuple[date, float]]) -> None:
         async with self._pool.connection() as conn:

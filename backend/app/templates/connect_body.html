@@ -104,25 +104,30 @@
   <p class="dim small">Every Schwab order, yours or automatic, stays within these. Whether orders
      reach Schwab at all is set only in <code>.env</code> (<code>LIVE_TRADING</code>, and
      <code>LIVE_AUTO</code> for automatic ones); the Automation and Scanner tabs show which are on.</p>
+  {% for la in live_accounts %}
+  {% set sfx = "" if la.key == "live" else "-" ~ la.key %}
   <form method="post" action="/live/settings">
-    {{ check("all_symbols", "Any underlying", live.all_symbols, false, "The list below is then not used, and the live scanner works from your watchlist.") }}
+    <input type="hidden" name="account" value="{{ la.key }}">
+    {% if live_accounts|length > 1 %}<p class="small step-title"><b>{{ la.name }}</b></p>{% endif %}
+    {{ check("all_symbols", "Any underlying", la.all_symbols, false, "The list below is then not used, and the scanner works from your watchlist for this account.") }}
     <div class="rule">
-      {{ label("l-symbols", "Underlyings allowed live", "") }}
-      <span class="rule-input"><input id="l-symbols" type="text" name="symbols"
-        value="{{ live.symbols|join(' ') }}" style="width:160px"></span>
+      {{ label("l-symbols" ~ sfx, "Underlyings allowed live", "") }}
+      <span class="rule-input"><input id="l-symbols{{ sfx }}" type="text" name="symbols"
+        value="{{ la.symbols|join(' ') }}" style="width:160px"></span>
     </div>
     <div class="rule">
-      {{ label("l-max", "Contracts per leg, at most", "") }}
-      <span class="rule-input"><input id="l-max" type="number" name="max_contracts" min="1" max="50"
-        step="1" value="{{ live.max_contracts }}" data-default="1"><span class="dim unit">contracts</span></span>
+      {{ label("l-max" ~ sfx, "Contracts per leg, at most", "") }}
+      <span class="rule-input"><input id="l-max{{ sfx }}" type="number" name="max_contracts" min="1" max="50"
+        step="1" value="{{ la.max_contracts }}" data-default="1"><span class="dim unit">contracts</span></span>
     </div>
     <div class="rule">
-      {{ label("l-bp", "Buying power for one trade, at most", "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
-      <span class="rule-input"><input id="l-bp" type="number" name="max_bp_share" min="0.5" max="50"
-        step="any" value="{{ '%g'|format(live.max_bp_share * 100) }}" data-default="{{ '%g'|format(scan_defaults.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
+      {{ label("l-bp" ~ sfx, "Buying power for one trade, at most", "Set by the margin type (" ~ ("portfolio margin: 2.5%" if rules.margin_type == "pm" else "Reg T: 5%") ~ ") when it is switched; adjustable here.") }}
+      <span class="rule-input"><input id="l-bp{{ sfx }}" type="number" name="max_bp_share" min="0.5" max="50"
+        step="any" value="{{ '%g'|format(la.max_bp_share * 100) }}" data-default="{{ '%g'|format(scan_defaults.max_bp_share * 100) }}"><span class="dim unit">% net liq</span></span>
     </div>
-    <p class="save"><button class="primary" type="submit">Save Schwab limits</button></p>
+    <p class="save"><button class="primary" type="submit">Save {{ la.name if live_accounts|length > 1 else "Schwab" }} limits</button></p>
   </form>
+  {% endfor %}
 </section>
 </div>
 
@@ -184,9 +189,9 @@
       <p class="dim small">From your saved settings. A greyed cell's rule is Off; Notify only
         sends a message, Propose waits for your tap, Auto places the order.</p>
       <table class="rmap-levels">
-        <tr><th>Rule</th><th>Simulated</th><th>Schwab</th></tr>
-        {% for key, name, lv, live_lv in rmap.levels %}
-        <tr class="{{ 'off' if lv == 'off' and live_lv == 'off' else '' }}"><td>{{ name }}</td><td>{{ lv|capitalize }}{% if key == 'tested' and rmap.itm_muted %} <span class="warn-note">· in-the-money rolls only notify at this level</span>{% endif %}</td><td>{{ live_lv|capitalize }}</td></tr>
+        <tr><th>Rule</th>{% for a in rmap.accounts %}<th>{{ a }}</th>{% endfor %}</tr>
+        {% for key, name, lvs in rmap.levels %}
+        <tr class="{{ 'off' if rmap.level_of[key] == 'off' else '' }}"><td>{{ name }}{% if key == 'tested' and rmap.itm_muted %} <span class="warn-note">· in-the-money rolls only notify at Notify</span>{% endif %}</td>{% for lv in lvs %}<td>{{ lv|capitalize }}</td>{% endfor %}</tr>
         {% endfor %}
       </table>
       <p class="dim small rmap-swipe">Swipe the table sideways for every rule.</p>
@@ -366,12 +371,35 @@
   <h2>Accounts</h2>
   {% if accounts %}
   <p class="small">Used in the app, each with its own positions, history, automanage and limits:</p>
-  <ul class="small rmap-list">{% for a in accounts %}<li><b>{{ a.name }}</b> <span class="dim">…{{ a.last4 }}</span></li>{% endfor %}</ul>
+  <table class="small">
+    <tr><th style="text-align:left">Account</th><th style="text-align:left">Imported history</th></tr>
+    {% for a in accounts %}
+    <tr>
+      <td style="text-align:left"><b>{{ a.name }}</b> <span class="dim">…{{ a.last4 }}</span></td>
+      <td style="text-align:left">
+        <form method="post" action="/accounts/sheet-label" style="display:inline">
+          <input type="hidden" name="account" value="{{ a.key }}">
+          <select name="label" aria-label="Imported history for {{ a.name }}" onchange="this.form.submit()">
+            <option value="" {% if not a.sheet_label %}selected{% endif %}>None</option>
+            {% for l in sheet_labels %}<option value="{{ l }}" {% if a.sheet_label == l %}selected{% endif %}>The sheet's {{ l }} rows</option>{% endfor %}
+          </select>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
   {% elif not error %}
   <p class="dim">Schwab returned no accounts.</p>
   {% endif %}
   <p class="dim small">Every account ticked on Schwab's consent screen at sign-in is used, by the
      name it has in Schwab. To add or drop one, sign in again and tick or untick it.</p>
+  <form method="post" action="/history/import" enctype="multipart/form-data" class="small">
+    <p><b>Import trading history</b>: the workbook's Trades tab, every account's rows at once.
+       Each account above takes the rows labelled for it in the sheet's Account column (Joint
+       for the first account; another by the same name as in Schwab, or as chosen above).
+       Importing again adds only new rows.</p>
+    <p><input type="file" name="file" accept=".xlsx" required> <button type="submit">Import</button></p>
+  </form>
 </section>
 {% endif %}
 

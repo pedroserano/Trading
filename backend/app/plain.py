@@ -7,6 +7,7 @@ setting's value goes:
     ⟦?key⟧         a switch on this form: a checkbox that starts the sentence it turns on
     ⟦rules:key⟧    a value set on the Rules tab: shown, and linked there
     ⟦link:text|to⟧ a link to another part of Settings (to: a tab, or an element id)
+    ⟦levels:name⟧  one setting per account, "Simulated [..], Joint [..]" (a Group in fields)
 
 as_text() fills the tokens with values (for the API and tests); as_html() turns them into
 inputs for the Settings page, so the explanation is the form.
@@ -32,6 +33,13 @@ class Field:
     id: str = ""  # the element id, when not prefix-key
 
 
+@dataclass
+class Group:
+    """Several fields shown together, each after its label: one per account."""
+
+    items: list[tuple[str, str]]  # (label, field key)
+
+
 def fmt(f: Field, v) -> str:
     if f.kind == "check":
         return "on" if v else "off"
@@ -46,7 +54,7 @@ def fmt(f: Field, v) -> str:
     return str(v)
 
 
-def as_text(text: str, fields: dict[str, Field], rules: dict[str, str] | None = None) -> str:
+def as_text(text: str, fields: dict, rules: dict[str, str] | None = None) -> str:
     """The explanation with every token replaced by its current value."""
 
     def sub(m):
@@ -58,6 +66,10 @@ def as_text(text: str, fields: dict[str, Field], rules: dict[str, str] | None = 
         if tok.startswith("?"):
             return ""  # a switch reads as part of its sentence
         f = fields.get(tok)
+        if isinstance(f, Group):
+            return ", ".join(
+                f"{label} {fmt(fields[k], fields[k].value)}" for label, k in f.items if k in fields
+            )
         return fmt(f, f.value) if f else "?"
 
     return re.sub(r"\s+", " ", TOKEN.sub(sub, text)).strip()
@@ -108,7 +120,7 @@ def _input(name: str, f: Field, prefix: str) -> str:
 
 def as_html(
     text: str,
-    fields: dict[str, Field],
+    fields: dict,
     rules: dict[str, tuple[str, str]] | None = None,
     prefix: str = "x",
 ) -> Markup:
@@ -126,6 +138,14 @@ def as_html(
             out.append(
                 f'<a class="inl-rule" href="#/settings/{_attr(to)}" '
                 f'title="Set on the Rules tab">{escape(shown)}</a>'
+            )
+        elif isinstance(fields.get(tok), Group):
+            out.append(
+                ", ".join(
+                    f'<span class="inl-acct">{escape(label)}</span> {_input(k, fields[k], prefix)}'
+                    for label, k in fields[tok].items
+                    if k in fields
+                )
             )
         else:
             key = tok.lstrip("?")

@@ -208,7 +208,12 @@ def converted():
 
 def test_read_keeps_joint_rows_with_stable_keys():
     rows, counts = sheet_import.read_workbook(workbook())
-    assert counts == {"rows": 9, "other_accounts": 1, "account_rows": 8}
+    assert counts == {
+        "rows": 9,
+        "other_accounts": 1,
+        "account_rows": 8,
+        "by_account": {"Joint": 8},
+    }
     again, _ = sheet_import.read_workbook(workbook())
     assert [r.key for r in rows] == [r.key for r in again]
     assert len({r.key for r in rows}) == 8
@@ -428,11 +433,25 @@ def rebuild(client):
     client.portal.call(client.app.state.chain_service.rebuild)
 
 
-def test_settings_no_longer_offers_the_import(client):
+def test_the_import_sends_each_label_to_its_account(client):
+    """Joint rows stay with the first account; Individual rows go to the account named
+    Individual in Schwab; importing again adds nothing."""
     page = client.get("/connect").text
-    assert 'id="history"' not in page and "/history/import" not in page
+    assert "/history/import" in page
     r = client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
-    assert r.status_code in (404, 405)
+    assert r.status_code == 303
+    assert sorted(a for a, _ in client.store.sheet.values()) == ["Individual"] + ["Joint"] * 8
+    joint = client.get("/api/activity?account=live").json()
+    indiv = client.get("/api/activity?account=live-5678").json()
+    assert joint["sheet"]["rows"] == 8 and indiv["sheet"]["rows"] == 1
+    again = client.post("/history/import", files={"file": ("b.xlsx", workbook(), "x")})
+    assert again.status_code == 303 and len(client.store.sheet) == 9
+    assert "0 new" in client.get("/connect").text
+    # A label can be moved by hand: Individual's history off, then back.
+    client.post("/accounts/sheet-label", data={"account": "live-5678", "label": ""})
+    assert client.get("/api/activity?account=live-5678").json()["sheet"]["rows"] == 0
+    client.post("/accounts/sheet-label", data={"account": "live-5678", "label": "Individual"})
+    assert client.get("/api/activity?account=live-5678").json()["sheet"]["rows"] == 1
 
 
 def test_stored_history_feeds_activity_dashboard_and_export(client):

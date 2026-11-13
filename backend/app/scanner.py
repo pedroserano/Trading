@@ -152,15 +152,24 @@ def merged(saved: dict | None) -> dict:
     return s
 
 
-def parse_form(form: dict, current: dict | None) -> dict:
+def parse_form(
+    form: dict, current: dict | None, accounts: list[str] | None = None, live_auto=None
+) -> dict:
     """Validates the Settings form. Raises ValueError with a message for the page."""
     out = merged(current)
-    for acct in ("sim", "live"):
-        v = form.get(f"level_{acct}")
-        if v is not None:
-            if v not in LEVELS:
-                raise ValueError("Scanner: unknown level")
+    for acct in ["sim", "live", *(accounts or [])]:
+        v = form.get(level_field(acct))
+        if v is None:
+            continue
+        if v not in LEVELS:
+            raise ValueError("Scanner: unknown level")
+        if acct != "sim" and v == "auto" and live_auto is False:
+            raise ValueError("Scanner: Auto on a Schwab account needs LIVE_AUTO=true in .env")
+        if acct in ("sim", "live"):
             out[f"level_{acct}"] = v
+        else:
+            mine = {**out.get("level_by_account", {}), acct: v}
+            out["level_by_account"] = {k: x for k, x in mine.items() if x != "off"}
     for key, label, lo, hi, kind, _unit in FIELDS:
         if key not in form:
             continue
@@ -197,9 +206,20 @@ LEVEL_LABELS = {"off": "Off", "notify": "Notify", "propose": "Propose", "auto": 
 EARNINGS_INSIDE = [("skip", "skip the stock"), ("defined", "allow only a defined-risk spread")]
 
 
-def scan_fields(s: dict, live_auto: bool = True, defaults: dict | None = None) -> dict:
+def level_field(account: str) -> str:
+    """The form field for an account's scanner level."""
+    return f"level_{account}" if account in ("sim", "live") else f"level_acct_{account}"
+
+
+def scan_fields(
+    s: dict,
+    live_auto: bool = True,
+    defaults: dict | None = None,
+    accounts: list[tuple[str, str]] | None = None,
+) -> dict:
     """The scanner's settings as plain.Field, for the step list (values and defaults; some
-    defaults follow the margin type, so the page passes its own)."""
+    defaults follow the margin type, so the page passes its own). accounts: the Schwab
+    accounts as (key, name), the first ("live") first."""
     d = {**DEFAULTS, **(defaults or {})}
     out = {
         key: plain.Field(kind, s[key], d[key], lo, hi)
@@ -208,12 +228,20 @@ def scan_fields(s: dict, live_auto: bool = True, defaults: dict | None = None) -
     out["scan_time"] = plain.Field("time", s["scan_time"], d["scan_time"])
     levels = list(LEVEL_LABELS.items())
     out["level_sim"] = plain.Field("select", s["level_sim"], d["level_sim"], options=levels)
-    out["level_live"] = plain.Field(
-        "select",
-        s["level_live"],
-        d["level_live"],
-        options=[x for x in levels if live_auto or x[0] != "auto"],
-    )
+    group = [("Simulated:", "level_sim")]
+    for key, name in accounts or [("live", "Schwab account")]:
+        lv = account_level(s, key)
+        if lv == "auto" and not live_auto:
+            lv = "propose"  # what runs: no Auto on Schwab without LIVE_AUTO
+        out[level_field(key)] = plain.Field(
+            "select",
+            lv,
+            account_level(d, key),
+            options=[x for x in levels if live_auto or x[0] != "auto"],
+            id=f"s-{level_field(key)}",
+        )
+        group.append((f"{name}:", level_field(key)))
+    out["levels:scan"] = plain.Group(group)
     out["earnings_inside"] = plain.Field(
         "select", s.get("earnings_inside", "skip"), d["earnings_inside"], options=EARNINGS_INSIDE
     )
@@ -240,18 +268,27 @@ BIAS_LINES = {
 }
 
 
-def scan_steps(bias: str, live_symbols: list[str] | None) -> list[tuple[str, list[str]]]:
+def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
     """How the scanner picks trades, in plain words and in order, with tokens where each
-    setting goes (see plain.py)."""
-    live = "SPY and your watchlist" if live_symbols is None else ", ".join(live_symbols)
+    setting goes (see plain.py). live_symbols: the Schwab account's allowed underlyings
+    (None: any), or {account name: the same} for several accounts."""
+
+    def allowed(syms):
+        return "SPY and your watchlist" if syms is None else ", ".join(syms)
+
+    if isinstance(live_symbols, dict) and len(live_symbols) > 1:
+        live = "; ".join(f"{n}: {allowed(x)}" for n, x in live_symbols.items())
+        live_line = f"Schwab accounts: {live} (⟦link:Schwab limits|live⟧)."
+    else:
+        one = next(iter(live_symbols.values())) if isinstance(live_symbols, dict) else live_symbols
+        live_line = f"Schwab account: {allowed(one)} (⟦link:Schwab limits|live⟧)."
     return [
         (
             "1. Which stocks it looks at",
             [
                 "Once a day at ⟦scan_time⟧ ET, then again every ⟦scan_every⟧ minutes until "
                 "the close (0: once a day), and whenever you tap Scan now.",
-                "Simulated account: SPY and your ⟦link:watchlist|watchlist⟧. Schwab account: "
-                f"{live} (⟦link:Schwab limits|live⟧).",
+                "Simulated account: SPY and your ⟦link:watchlist|watchlist⟧. " + live_line,
                 "It opens strangles, iron condors, and one-sided puts or calls (or their "
                 "spreads). Ratios, jade lizards and the rest are yours to open by hand.",
             ],
@@ -342,9 +379,8 @@ def scan_steps(bias: str, live_symbols: list[str] | None) -> list[tuple[str, lis
         (
             "7. What happens next",
             [
-                "Simulated account: ⟦level_sim⟧. Schwab account: ⟦level_live⟧. Notify sends a "
-                "message, Propose waits for your tap, Auto places the order (the Schwab account "
-                "only with LIVE_AUTO=true in .env).",
+                "⟦levels:scan⟧. Notify sends a message, Propose waits for your tap, Auto "
+                "places the order (a Schwab account only with LIVE_AUTO=true in .env).",
                 "⟦?automanage_new⟧ Switch automanage on for each new trade once it fills, "
                 "managed with the view it was opened with.",
                 "Each run's trades, and what was skipped and why, show on the Watchlist page "

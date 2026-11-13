@@ -27,7 +27,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, indexweights, plain, portfolio_view, signals, targets
+from . import guards, indexweights, plain, portfolio_view, sheet_import, signals, targets
 from . import scanner as scan_mod
 from .accounts import AccountRegistry
 from .analysis import TradeLeg, analyze
@@ -333,7 +333,13 @@ def create_app(
             schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
         )
         portfolio.stream = stream
-    chain_service = ChainService(source, store, portfolio, registry.resolver("live"))
+    chain_service = ChainService(
+        source,
+        store,
+        portfolio,
+        registry.resolver("live"),
+        sheet_label=lambda: registry.sheet_label("live"),
+    )
     order_check = OrderCheckService(
         source, store, registry.resolver("live"), enabled=lambda: connection_status().connected
     )
@@ -468,6 +474,7 @@ def create_app(
         await earnings.load()
         schwab.load()
         await registry.load()
+        registry.sheet_labels = sorted(await store.sheet_accounts())
         if connection_status().connected:
             try:
                 await registry.refresh()
@@ -614,7 +621,7 @@ def create_app(
         status = connection_status()
         error = request.session.pop("flash", None)
         notice = request.session.pop("notice", None)
-        accounts = registry.in_use()
+        accounts = [{**a, "sheet_label": registry.sheet_label(a["key"])} for a in registry.in_use()]
         return templates.TemplateResponse(
             request,
             "connect_body.html" if fragment else "connect.html",
@@ -622,6 +629,7 @@ def create_app(
                 "demo": demo,
                 "status": status,
                 "accounts": accounts,
+                "sheet_labels": registry.sheet_labels,
                 "error": error,
                 "notice": notice,
                 "db_error": await store.ping(),
@@ -648,6 +656,11 @@ def create_app(
                 "biases": targets.BIASES,
                 "auto": merged_settings(await store.get_setting(SETTINGS_KEY)),
                 "live": await live_broker.status(),
+                "live_accounts": [
+                    {"key": k, "name": n, **(await brokers[k].config())}
+                    for k, n in schwab_accounts()
+                    if k in brokers
+                ],
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
                 "scan_steps_html": await scan_steps_html(rules_now),
                 "scan_fields": scan_mod.FIELDS,
@@ -666,6 +679,7 @@ def create_app(
                         merged_settings(await store.get_setting(SETTINGS_KEY)),
                         live_broker.auto_cap() == "auto",
                     ),
+                    schwab_accounts(),
                 ),
                 "runs_by_itself": await runs_by_itself(),
                 "auto_levels": LEVELS,
@@ -714,6 +728,52 @@ def create_app(
     async def schwab_disconnect():
         await schwab.disconnect()
         return RedirectResponse(settings_url("connection"), status_code=303)
+
+    @app.post("/accounts/sheet-label", dependencies=[Depends(require_login)])
+    async def account_sheet_label(request: Request, account: str = Form(), label: str = Form("")):
+        """Which of the history sheet's Account labels is a Schwab account's imported
+        history (empty: none)."""
+        try:
+            if label and label not in registry.sheet_labels:
+                raise ValueError(f"The history sheet has no account labelled {label!r}")
+            await registry.set_sheet_label(account, label)
+            if account in chains:
+                await chains[account].rebuild()
+                portfolios[account].refresh_soon()
+            request.session["notice"] = f"{registry.name(account)}: imported history " + (
+                f"from the sheet's {label} rows." if label else "none."
+            )
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("account"), status_code=303)
+
+    @app.post("/history/import", dependencies=[Depends(require_login)])
+    async def history_import(request: Request, file: UploadFile = File(...)):
+        """The trading-history workbook, every account's rows at once: Joint rows to the
+        first account, other labels (Individual) to the account that takes them."""
+        data = await file.read(25 * 1024 * 1024 + 1)
+        if len(data) > 25 * 1024 * 1024:
+            request.session["flash"] = "That file is larger than 25 MB."
+            return RedirectResponse(settings_url("account"), status_code=303)
+        try:
+            rows, counts = sheet_import.read_workbook(data, None)
+        except sheet_import.SheetError as e:
+            request.session["flash"] = str(e)
+            return RedirectResponse(settings_url("account"), status_code=303)
+        result = await store.upsert_sheet_rows(rows)
+        registry.sheet_labels = sorted(await store.sheet_accounts())
+        for key, cs in list(chains.items()):
+            await cs.rebuild()
+            portfolios[key].refresh_soon()
+        where = []
+        for label, n in sorted(counts["by_account"].items()):
+            to = [a["name"] for a in registry.in_use() if registry.sheet_label(a["key"]) == label]
+            where.append(f"{n} {label} rows to {to[0] if to else 'no account yet (choose below)'}")
+        request.session["notice"] = (
+            f"Imported {'; '.join(where) or 'no rows'}: {result['new']} new, "
+            f"{result['updated']} updated, {result['unchanged']} unchanged."
+        )
+        return RedirectResponse(settings_url("account"), status_code=303)
 
     @app.post("/notify/test", dependencies=[Depends(require_login)])
     async def notify_test(request: Request):
@@ -799,7 +859,12 @@ def create_app(
     async def scanner_settings_save(request: Request):
         form = dict(await request.form())
         try:
-            new = scan_mod.parse_form(form, await store.get_setting(scan_mod.SETTINGS_KEY))
+            new = scan_mod.parse_form(
+                form,
+                await store.get_setting(scan_mod.SETTINGS_KEY),
+                accounts=[k for k, _ in schwab_accounts() if k != "live"],
+                live_auto=live_broker.auto_cap() == "auto",
+            )
             await store.set_setting(scan_mod.SETTINGS_KEY, new)
             request.session["notice"] = "Scanner settings saved."
         except ValueError as e:
@@ -810,8 +875,11 @@ def create_app(
     async def live_settings_save(request: Request):
         form = dict(await request.form())
         try:
-            await live_broker.set_config(form)
-            notice = "Schwab limits saved."
+            account = str(form.get("account") or "live")
+            if account not in brokers:
+                raise ValueError("No such Schwab account")
+            await brokers[account].set_config(form)
+            notice = f"{registry.name(account)}: Schwab limits saved."
             request.session["notice"] = notice
         except ValueError as e:
             request.session["flash"] = str(e)
@@ -825,6 +893,7 @@ def create_app(
                 form,
                 await store.get_setting(SETTINGS_KEY),
                 live_auto=live_broker.auto_cap() == "auto",
+                accounts=[k for k, _ in schwab_accounts() if k != "live"],
             )
             await store.set_setting(SETTINGS_KEY, new)
             request.session["notice"] = "Automanage settings saved."
@@ -852,15 +921,16 @@ def create_app(
                 share = 0.05 * MARGIN_SCALE[rules.margin_type]
                 scan = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
                 await store.set_setting(scan_mod.SETTINGS_KEY, {**scan, "max_bp_share": share})
-                live = await live_broker.config()
-                await live_broker.set_config(
-                    {
-                        "all_symbols": live["all_symbols"],
-                        "symbols": " ".join(live["symbols"]),
-                        "max_contracts": live["max_contracts"],
-                        "max_bp_share": share * 100,
-                    }
-                )
+                for b in list(brokers.values()):
+                    live = await b.config()
+                    await b.set_config(
+                        {
+                            "all_symbols": live["all_symbols"],
+                            "symbols": " ".join(live["symbols"]),
+                            "max_contracts": live["max_contracts"],
+                            "max_bp_share": share * 100,
+                        }
+                    )
                 request.session["notice"] = (
                     f"Margin type set to {MARGIN_TYPES[rules.margin_type]}: buying-power limits "
                     f"reset to its defaults (one underlying {rules.max_underlying_bp:.1%}, an "
@@ -895,6 +965,12 @@ def create_app(
     async def api_snapshot(account: str = "live"):
         known(account)
         return JSONResponse(portfolios[account].snapshot or {"pending": True})
+
+    def schwab_accounts() -> list[tuple[str, str]]:
+        """The Schwab accounts the app runs, as (key, name), the first account first."""
+        out = [(a["key"], a["name"]) for a in registry.in_use() if a["key"] in portfolios]
+        out.sort(key=lambda x: x[0] != "live")
+        return out or [("live", registry.name("live") if registry.entry("live") else "Schwab")]
 
     def known(account: str) -> None:
         """A route's account: "sim" or a Schwab account key the app runs."""
@@ -1471,7 +1547,9 @@ def create_app(
         )
         pf.stream = stream
         pf.earnings = earnings.info
-        cs = ChainService(source, store, pf, resolve, account=key)
+        cs = ChainService(
+            source, store, pf, resolve, account=key, sheet_label=lambda: registry.sheet_label(key)
+        )
         pf.trade_info = cs.trade_info
         pf.chain_holdings = cs.holdings
         portfolios[key] = pf
@@ -1564,9 +1642,16 @@ def create_app(
         known(account)
         return await automations[account].view()
 
+    async def allowed_symbols() -> dict:
+        """Each Schwab account's allowed underlyings (None: any), by its name."""
+        out = {}
+        for key, name in schwab_accounts():
+            c = await brokers[key].config() if key in brokers else {"all_symbols": True}
+            out[name] = None if c.get("all_symbols") else list(c["symbols"])
+        return out
+
     async def scanner_map() -> dict:
-        c = await live_broker.config()
-        live_syms = None if c.get("all_symbols") else list(c["symbols"])
+        live_syms = await allowed_symbols()
         return scan_mod.scan_map(
             scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
             live_syms,
@@ -1576,11 +1661,11 @@ def create_app(
 
     async def scan_steps_html(rules_now) -> list:
         """The scanner's step list for Settings, with each setting editable in place."""
-        c = await live_broker.config()
-        live_syms = None if c.get("all_symbols") else list(c["symbols"])
+        live_syms = await allowed_symbols()
         s = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
-        st = await live_broker.status()
-        fields = scan_mod.scan_fields(s, st.get("auto_cap") == "auto", scan_defaults(rules_now))
+        fields = scan_mod.scan_fields(
+            s, live_broker.auto_cap() == "auto", scan_defaults(rules_now), schwab_accounts()
+        )
         rv = scan_mod.rules_values(rules_now)
         return [
             (title, [plain.as_html(line, fields, rv, "s") for line in lines])
@@ -1593,7 +1678,9 @@ def create_app(
         scan_s = scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
         live = await live_broker.status()
         out = []
-        for acct, name in (("sim", "Simulated"), ("live", "Schwab")):
+        for acct, name in [("sim", "Simulated"), *schwab_accounts()]:
+            if acct not in automations:
+                continue
             v = await automations[acct].view()
             parts = []
             if not v.get("auto_possible", True):
@@ -1604,7 +1691,7 @@ def create_app(
                 parts.append(f"Auto holding: {v['blocked']}")
             else:
                 parts.append("Auto on (header)")
-            if acct == "live":
+            if acct != "sim":
                 if live.get("demo"):
                     parts.append("demo mode: no Schwab orders")
                 elif not live["on"]:
@@ -1633,7 +1720,7 @@ def create_app(
 
     def auto_steps_html(rules_now, settings_now) -> list:
         """Automanage's step list for Settings, with each setting editable in place."""
-        fields = auto_fields(settings_now, live_broker.auto_cap() == "auto")
+        fields = auto_fields(settings_now, live_broker.auto_cap() == "auto", schwab_accounts())
         rv = auto_rules_values(rules_now)
         return [
             (title, [plain.as_html(x, fields, rv, "a") for x in lines])
@@ -1650,7 +1737,7 @@ def create_app(
             merged_settings(await store.get_setting(SETTINGS_KEY)),
             live_broker.auto_cap() == "auto",
         )
-        return rules_map(await preferences.rules(), settings_now)
+        return rules_map(await preferences.rules(), settings_now, schwab_accounts())
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
     async def api_automation_trade(body: AutoTradeIn, account: Acct = "sim"):
