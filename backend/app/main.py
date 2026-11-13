@@ -41,6 +41,7 @@ from .automation import (
     merged_settings,
     parse_settings,
     rule_hints,
+    rules_map,
 )
 from .chain_service import SHEET_ACCOUNT, ChainService
 from .config import Settings, get_settings
@@ -601,6 +602,9 @@ def create_app(
                 "earnings_manual": await earnings.manual_text(),
                 "auto_rules": RULES,
                 "auto_rule_hints": rule_hints(
+                    rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
+                ),
+                "rmap": rules_map(
                     rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
                 ),
                 "auto_levels": LEVELS,
@@ -1341,6 +1345,11 @@ def create_app(
     @app.get("/api/automation", dependencies=[Depends(require_login)])
     async def api_automation(account: Acct = "sim"):
         return await automations[account].view()
+
+    @app.get("/api/automation/map", dependencies=[Depends(require_login)])
+    async def api_automation_map():
+        settings_now = merged_settings(await store.get_setting(SETTINGS_KEY))
+        return rules_map(await preferences.rules(), settings_now)
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
     async def api_automation_trade(body: AutoTradeIn, account: Acct = "sim"):

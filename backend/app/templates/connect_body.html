@@ -134,6 +134,46 @@
 <div class="tab-panel" data-tab="automation" data-label="Automation">
 <section id="automation">
   <h2>Automation</h2>
+  <details class="group advanced rules-map">
+    <summary>Rules map: every rule, every trade</summary>
+    <div class="rmap-body">
+      <p class="dim small">From your saved settings. A greyed cell's rule is Off; Notify only
+        sends a message, Propose waits for your tap, Auto places the order.</p>
+      <table class="rmap-levels">
+        <tr><th>Rule</th><th>Level</th></tr>
+        {% for key, name, lv in rmap.levels %}
+        <tr class="{{ 'off' if lv == 'off' else '' }}"><td>{{ name }}</td><td>{{ lv|capitalize }}{% if key == 'tested' and rmap.itm_muted %} <span class="warn-note">· in-the-money rolls only notify at this level</span>{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+      <p class="dim small rmap-swipe">Swipe the table sideways for every rule.</p>
+      <div class="rmap-scroll">
+        <table class="rmap-grid">
+          <tr><th>Trade</th>{% for key, label in rmap.columns %}<th>{{ label }}</th>{% endfor %}</tr>
+          {% for row in rmap.trades %}
+          <tr>
+            <td>{{ row[0] }}</td>
+            {% for col in rmap.columns %}
+              {% set rule = col[0] %}
+              {% set level = rmap.level_of[rule] %}
+              <td class="{{ 'off' if level == 'off' else '' }}">{{ row[loop.index] }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      <p class="dim small">{{ rmap.roll_note }}{% if not rmap.itm_switch %} In-the-money rolls need "Short option in the money: roll out for a credit" ticked under Tested side.{% endif %}</p>
+      <p class="small"><b>Every trade with a short option</b></p>
+      <ul class="small rmap-list">
+        {% for key, text in rmap.common %}
+        <li class="{{ 'off' if rmap.level_of[key] == 'off' else '' }}">{{ text }}</li>
+        {% endfor %}
+      </ul>
+      <p class="small"><b>Over all of it</b></p>
+      <ul class="small rmap-list">
+        {% for text in rmap.limits %}<li>{{ text }}</li>{% endfor %}
+      </ul>
+    </div>
+  </details>
   <form method="post" action="/automation/settings">
     <input type="hidden" name="_form" value="automation">
     {% call group("Levels", "For every trade with Automanage ticked on Positions. Off: nothing. Notify: a message. Propose: an order waits for your tap. Auto: placed at mid and stepped toward natural. The Schwab account stops at Propose unless Live trading is set to Manual and automatic (and LIVE_AUTO=true).") %}

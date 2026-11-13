@@ -754,3 +754,23 @@ def test_single_roll_strike_setting_is_validated():
     )
     with pytest.raises(ValueError, match="unknown choice"):
         parse_settings({"single_roll_strike": "sideways"}, None)
+
+
+def test_rules_map_follows_the_settings():
+    s = merged_settings(None)
+    m = auto.rules_map(Rules(), s)
+    names = [row[0] for row in m["trades"]]
+    assert {"Strangle", "Ratio 1×2", "Jade lizard", "Covered call", "Calendar / diagonal"} <= set(
+        names
+    )
+    assert all(len(row) == len(m["columns"]) + 1 for row in m["trades"])
+    ratio = dict((row[0], row) for row in m["trades"])["Ratio 1×2"]
+    assert ratio[1] == "10% of width + credit" and "switch off" in ratio[4]
+    on = {**s, "roll_single_itm": True, "single_roll_strike": "further"}
+    m2 = auto.rules_map(Rules(profit_target_ratio=0.2), on)
+    rows = {row[0]: row for row in m2["trades"]}
+    assert rows["Ratio 1×2"][1] == "20% of width + credit"
+    assert "furthest strike" in rows["Short put / call"][4]
+    assert m2["itm_muted"]  # rolls set up, but the Tested level only notifies
+    m3 = auto.rules_map(Rules(), {**on, "levels": {**on["levels"], "tested": "propose"}})
+    assert not m3["itm_muted"] and m3["level_of"]["tested"] == "propose"

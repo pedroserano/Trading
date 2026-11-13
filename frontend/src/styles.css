@@ -553,6 +553,19 @@ td .earn { margin-left: 0; }
 .settings-page .advanced > summary::before { content: "▸"; font-size: 11px; }
 .settings-page .advanced[open] > summary::before { content: "▾"; }
 .settings-page .advanced-body { display: flex; flex-direction: column; }
+.settings-page .rmap-body { padding: 4px 0 8px; }
+.settings-page .rmap-levels { width: 100%; max-width: 520px; margin-bottom: 12px; }
+.settings-page .rmap-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.settings-page .rmap-grid td, .settings-page .rmap-grid th { text-align: left; white-space: normal; vertical-align: top;
+  font-size: 13px; min-width: 130px; }
+.settings-page .rmap-grid td:first-child, .settings-page .rmap-grid th:first-child { position: sticky; left: 0;
+  background: var(--panel); min-width: 110px; font-weight: 600; }
+.settings-page .rmap-levels td:first-child { white-space: normal; }
+.settings-page .rules-map .off { color: var(--dim); opacity: 0.55; }
+.settings-page .rmap-list { margin: 4px 0 10px; padding-left: 18px; }
+.settings-page .rmap-list li { margin: 2px 0; }
+.settings-page .rmap-swipe { display: none; margin: 0 0 4px; }
+@media (max-width: 700px) { .settings-page .rmap-swipe { display: block; } }
 .settings-page .advanced-body > .reset-group { align-self: flex-end; margin: 2px 0 2px; }
 .settings-page .rule { position: relative; }
 .settings-page .rule-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }

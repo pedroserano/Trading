@@ -615,6 +615,180 @@ def profit_target(st: dict, rules) -> float:
     return target_for(st["name"], rules)
 
 
+def rules_map(rules, settings: dict) -> dict:
+    """Every automanage rule on one page, from the current values: the levels, a grid of
+    what each rule does for each kind of trade, the rules every trade shares, and the limits
+    over all of it. For the Rules map on Settings."""
+    levels = settings["levels"]
+
+    def pct(v: float) -> str:
+        return f"{v * 100:g}%"
+
+    ivr, rolls, least = settings["min_roll_ivr"], settings["max_rolls"], settings["min_roll_credit"]
+    instead = [f"IV rank is under {ivr}"]
+    if rolls:
+        instead.append(f"the trade has been rolled {rolls} times")
+    instead.append(f"the roll pays under {least:g} credit" if least else "the roll pays no credit")
+    roll_note = "closes instead when " + ", or ".join(instead)
+    out_to = f"Roll out to ~{settings['roll_target_dte']} DTE, same strikes"
+    defined = "Close" if settings["dte_defined_action"] == "close" else "Roll out, same strikes"
+    switch = settings.get("roll_single_itm", False)
+    single = (
+        "down/up and out, furthest strike that pays"
+        if settings.get("single_roll_strike") == "further"
+        else "same strike"
+    )
+    untested = settings["max_untested_rolls"]
+    loss = f"{rules.loss_multiple:g}× credit"
+
+    def itm(text: str) -> str:
+        return text if switch else f"{text} (switch off: notify)"
+
+    trades = [
+        (
+            "Strangle",
+            f"{pct(rules.profit_target)} of credit",
+            out_to,
+            f"Roll untested side closer (≤{untested} per expiration); inverted: guts to wings",
+            "As tested",
+            loss,
+        ),
+        (
+            "Straddle",
+            f"{pct(rules.profit_target_straddle)} of credit",
+            out_to,
+            f"Roll untested side; short past {settings['guts_near_delta']:.2f}Δ: guts to wings",
+            "As tested",
+            loss,
+        ),
+        (
+            "Iron condor",
+            f"{pct(rules.profit_target)} of credit",
+            defined,
+            "Roll untested vertical, same width"
+            if settings.get("roll_ic_untested", True)
+            else "Notify",
+            "As tested",
+            "— (defined risk)",
+        ),
+        (
+            "Iron fly",
+            f"{pct(rules.profit_target_straddle)} of credit",
+            defined,
+            "Notify",
+            "Notify",
+            "— (defined risk)",
+        ),
+        (
+            "Credit vertical",
+            f"{pct(rules.profit_target)} of credit",
+            defined,
+            "Notify",
+            "Notify",
+            "— (defined risk)",
+        ),
+        (
+            "Short put / call",
+            f"{pct(rules.profit_target)} of credit",
+            "Roll out, same strike",
+            "Notify",
+            itm(f"Roll out, {single}"),
+            loss,
+        ),
+        (
+            "Ratio 1×2",
+            f"{pct(rules.profit_target_ratio)} of width + credit",
+            out_to,
+            "Notify",
+            itm("Roll the whole ratio, same strikes"),
+            f"{rules.loss_multiple:g}× max profit",
+        ),
+        (
+            "Jade lizard",
+            f"{pct(rules.profit_target)} of credit",
+            out_to,
+            "Notify",
+            itm("Put down and out; call spread stays"),
+            loss,
+        ),
+        (
+            "Covered call",
+            f"{pct(rules.profit_target)} of the call's credit (closes the call)",
+            "Roll the call out, same strike",
+            "Notify",
+            itm("Call up and out; shares stay"),
+            "—",
+        ),
+        (
+            "Calendar / diagonal",
+            f"{pct(rules.profit_target_calendar)} of debit",
+            "Close (front month)",
+            "Notify",
+            "Notify",
+            "— (defined risk)",
+        ),
+        ("Debit vertical, long option", "Not managed: not tastylive trades", "—", "—", "—", "—"),
+    ]
+    margin = settings.get("expiry_pin_margin") or 0
+    sessions = settings.get("earnings_close_sessions", 1)
+    return {
+        "levels": [(r, RULES[r], levels.get(r, "off")) for r in RULES],
+        "level_of": {r: levels.get(r, "off") for r in RULES},
+        "columns": [
+            ("profit", "Profit target"),
+            ("dte", f"At {rules.manage_dte} DTE"),
+            ("tested", f"Tested (≥{rules.tested_delta:.2f}Δ)"),
+            ("tested", "In the money"),
+            ("loss", "Loss"),
+        ],
+        "trades": trades,
+        "roll_note": f"A roll at {rules.manage_dte} DTE {roll_note}.",
+        "itm_switch": switch,
+        # In-the-money rolls set up, but the Tested level only notifies.
+        "itm_muted": switch and levels.get("tested") == "notify",
+        "common": [
+            (
+                "expiry",
+                f"Expiration day: from {settings.get('expiry_close_at', '15:45')} ET, a short "
+                "still in the money"
+                + (f" or within {pct(margin)} of its strike" if margin else "")
+                + " is closed (12:45 on early-close days)",
+            ),
+            (
+                "earnings",
+                "Earnings: a single-stock trade expiring after the report closes "
+                + (
+                    "on the last session before it"
+                    if not sessions
+                    else f"{sessions} session{'s' if sessions != 1 else ''} before the last "
+                    "session ahead of it"
+                ),
+            ),
+            (
+                "dividend",
+                "Ex-dividend: an in-the-money short call likely assigned early closes by the "
+                "last session before the ex-date",
+            ),
+        ],
+        "limits": [
+            f"Acts {settings['window_start']} to {settings['window_end']} ET (the "
+            "expiration-day close runs until the market closes)",
+            f"At most {settings['daily_cap']} automatic orders a day; each starts at mid and "
+            f"steps {settings['step_cents']}¢ every {settings['step_minutes']} min toward "
+            f"natural, up to {pct(settings['max_concession'])} of the way",
+            "Pauses itself on stale prices"
+            + (
+                f", once net liq is down {pct(settings['daily_loss_limit'])} for the day"
+                if settings["daily_loss_limit"]
+                else ""
+            )
+            + ", and while the Schwab sign-in has under a day left",
+            "The Schwab account stops at Propose unless Live trading allows automatic orders "
+            "(and LIVE_AUTO=true)",
+        ],
+    }
+
+
 def roll_strike(rows: list[dict], side: str, short: dict, settings: dict) -> dict | None:
     """The chain row to roll a short to in the new expiration: as far out of the money as a
     credit allows (a put down, a call up), never closer to the money than its strike now.
