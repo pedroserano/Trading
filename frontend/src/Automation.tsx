@@ -150,26 +150,42 @@ export function AutoPanel({ st }: { st: StrategyView }) {
   const { view, update } = useContext(AutomationContext);
   const [error, setError] = useState<string | null>(null);
   if (!view || st.trade_id === null) return null;
-  const enabled = !!view.trades[String(st.trade_id)]?.enabled;
-  const save = async (on: boolean) => {
+  const trade = view.trades[String(st.trade_id)];
+  const enabled = !!trade?.enabled;
+  const post = async (body: { enabled?: boolean; view?: string }) => {
     setError(null);
     try {
       update(
         await postJson<AutomationView>(`/api/automation/trade?account=${view.account}`, {
           trade_id: st.trade_id,
-          enabled: on,
+          ...body,
         }),
       );
     } catch (e) {
       setError(String((e as Error).message));
     }
   };
+  const save = (on: boolean) => post({ enabled: on });
   return (
     <span className="auto-panel" onClick={(e) => e.stopPropagation()}>
       <label className="check">
         <input type="checkbox" checked={enabled} onChange={(e) => save(e.target.checked)} />
         Automanage
       </label>
+      {enabled ? (
+        <select
+          className="view-select"
+          value={trade?.view ?? "portfolio"}
+          onChange={(e) => post({ view: e.target.value })}
+          title="This trade's view: a defensive roll leaves it leaning this way. Portfolio follows the delta bias in Settings."
+          aria-label="This trade's view"
+        >
+          <option value="portfolio">View: portfolio</option>
+          <option value="neutral">View: neutral</option>
+          <option value="bullish">View: bullish</option>
+          <option value="bearish">View: bearish</option>
+        </select>
+      ) : null}
       {enabled ? (
         <a className="sub" href="#/settings/automation" title="Change these in Settings">
           {summary(view.settings.levels)}

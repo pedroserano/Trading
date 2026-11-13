@@ -73,8 +73,14 @@ RULE_NOTES = {
     "band after. Neutral is tastylive's default: new trades are symmetric and a tested trade "
     "is rolled back to neutral. Bullish: the scanner sells puts closer than calls until "
     "portfolio delta reaches the middle of the band, and a tested-side roll leaves the trade "
-    "slightly long rather than flat. Bearish is the mirror. Profit targets, 21 DTE and the "
-    "other exits are the same whatever the bias.",
+    "slightly long rather than flat. Bearish is the mirror. Contrarian keeps the neutral band "
+    "and takes the other side of price extremes, trade by trade: after an outsized drop it "
+    "sells the put side closer, after a spike the call side. That is the pot-odds idea (Tom "
+    "Sosnoff, Tony Battista): the stock has already used much of its expected range, so the "
+    "side against the move collects more for the risk. Each such trade keeps that view "
+    "through its rolls. A position's own view (Positions) or an underlying's (Watchlist) "
+    "comes before the bias. Profit targets, 21 DTE and the other exits are the same "
+    "whatever the bias.",
     "block_over_ceiling": "Hard limit: an opening order that would take total buying power in "
     "use above the ceiling for the current VIX is refused. Unticked, it is only a warning.",
 }
@@ -126,6 +132,24 @@ class Preferences:
 
     async def set_watchlist(self, symbols: list[str]) -> None:
         await self.store.set_setting("watchlist", symbols[:MAX_WATCHLIST])
+
+    async def symbol_views(self) -> dict[str, str]:
+        """Your view on an underlying, for the scanner: bullish, bearish or neutral. A symbol
+        not listed follows the portfolio bias and the price-extreme lean."""
+        return dict(await self.store.get_setting("symbol_views") or {})
+
+    async def set_symbol_view(self, symbol: str, view: str | None) -> dict[str, str]:
+        from .targets import VIEWS
+
+        if view is not None and view not in VIEWS:
+            raise ValueError("View: neutral, bullish or bearish")
+        views = await self.symbol_views()
+        if view is None:
+            views.pop(symbol, None)
+        else:
+            views[symbol] = view
+        await self.store.set_setting("symbol_views", views)
+        return views
 
     async def rules(self) -> Rules:
         saved = await self.store.get_setting("rules") or {}

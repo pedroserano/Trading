@@ -20,6 +20,9 @@ from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
 from .strategies import CALENDARS, RATIOS, not_tasty, target_for
+from .targets import VIEWS
+
+UNSET = object()
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -279,10 +282,8 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             f"most {settings['max_untested_rolls']} times per expiration; an iron condor "
             "rolls its untested vertical"
             + (
-                f" (to the tested side's delta shifted {BIAS_SHIFT:g} toward your "
-                f"{rules.delta_bias} bias, so the roll leaves it leaning that way)"
-                if getattr(rules, "delta_bias", "neutral") != "neutral"
-                else ""
+                f" (to the tested side's delta shifted {BIAS_SHIFT:g} toward the trade's "
+                "view, or else your bias, so the roll leaves it leaning that way)"
             )
             + "; an inverted strangle, or a deeply tested straddle "
             'or narrow strangle, buys the guts and sells the wings. With "Short option in the '
@@ -648,11 +649,15 @@ def rules_map(rules, settings: dict) -> dict:
     untested = settings["max_untested_rolls"]
     loss = f"{rules.loss_multiple:g}× credit"
     bias = getattr(rules, "delta_bias", "neutral")
-    bias_note = (
-        f", leaving it slightly {'long' if bias == 'bullish' else 'short'} ({bias} bias)"
-        if bias != "neutral" and settings.get("untested_target", "match") == "match"
-        else ""
-    )
+    if settings.get("untested_target", "match") != "match":
+        bias_note = ""
+    elif bias in ("bullish", "bearish"):
+        bias_note = (
+            f", leaning {'long' if bias == 'bullish' else 'short'} with the trade's view, "
+            f"else your {bias} bias"
+        )
+    else:
+        bias_note = ", leaning with the trade's view if it has one"
 
     def itm(text: str) -> str:
         return text if switch else f"{text} (switch off: notify)"
@@ -811,7 +816,7 @@ def untested_target(tested_delta: float, untested_pc: str, bias: str) -> float:
     neutral), shifted a little toward a bullish or bearish bias so the roll leaves the trade
     leaning that way. A short put adds long delta, a short call short delta."""
     target = min(tested_delta, 0.5)
-    if bias == "neutral":
+    if bias not in ("bullish", "bearish"):
         return target
     toward = (untested_pc == "P") == (bias == "bullish")
     shifted = target + BIAS_SHIFT if toward else target - BIAS_SHIFT
@@ -978,14 +983,40 @@ class AutomationService:
         )
         log.info("Automation (%s): trade %s %s: %s", self.account, trade_id, rule, text)
 
-    async def set_trade(self, trade_id, enabled: bool) -> None:
-        """Switches automanage on or off for one trade. The rules come from Settings."""
+    async def set_trade(self, trade_id, enabled: bool | None = None, view=UNSET) -> None:
+        """Switches automanage on or off for one trade, and/or sets its view (bullish,
+        bearish, neutral; None follows the portfolio bias). The rules come from Settings."""
+        if view is not UNSET and view is not None and view not in VIEWS:
+            raise ValueError("View: neutral, bullish or bearish")
         async with self.lock:
             st = await self.load()
-            st["trades"][str(trade_id)] = {"enabled": enabled}
+            t = st["trades"].setdefault(str(trade_id), {"enabled": False})
+            if enabled is not None:
+                t["enabled"] = enabled
+            if view is not UNSET:
+                if view is None:
+                    t.pop("view", None)
+                else:
+                    t["view"] = view
             await self._save()
 
-    async def watch_entry(self, order: dict) -> None:
+    def _switch_on(self, tid, view: str | None) -> None:
+        """Automanage on for a new trade, keeping anything already stored for it."""
+        t = self.state["trades"].setdefault(str(tid), {})
+        t["enabled"] = True
+        if view in VIEWS:
+            t["view"] = view
+
+    def trade_view(self, tid, rules) -> str:
+        """The direction automanage leans this trade's rolls: its own view, else the
+        portfolio bias (contrarian counts as neutral here: its view is set per trade)."""
+        own = (self.state or {}).get("trades", {}).get(str(tid), {}).get("view")
+        if own in VIEWS:
+            return own
+        bias = getattr(rules, "delta_bias", "neutral")
+        return bias if bias in VIEWS else "neutral"
+
+    async def watch_entry(self, order: dict, view: str | None = None) -> None:
         """An opening order placed from the ticket with "Automanage on fill" ticked: the new
         trade is switched to automanage once it fills. The order itself is left as placed."""
         async with self.lock:
@@ -995,6 +1026,7 @@ class AutomationService:
                 "rule": "entry",
                 "automanage_on_fill": True,
                 "placed_at": time.time(),
+                "view": view if view in VIEWS else None,
             }
             self._log(None, "entry", f"Order #{order['id']}: automanage switches on when it fills")
             # Already filled (the simulated account fills at once): switch on now, not on the
@@ -1306,12 +1338,13 @@ class AutomationService:
                 done,
                 manual=True,
                 automanage=p.get("automanage", False),
+                view=p.get("view"),
             )
             await self._save()
             return done
 
     async def _place_all(
-        self, tid, action, bodies, settings, done, manual=False, automanage=False
+        self, tid, action, bodies, settings, done, manual=False, automanage=False, view=None
     ) -> str | None:
         """Places each body at mid. Returns "wide" when an automatic order was skipped for
         its bid/ask spread, so the caller can try again later."""
@@ -1420,6 +1453,7 @@ class AutomationService:
                 "stepped_at": time.time(),
                 # A new trade from the scanner: switch automanage on once it fills.
                 "automanage_on_fill": automanage,
+                "view": view,
             }
             self._log(
                 tid,
@@ -1510,7 +1544,7 @@ class AutomationService:
                 and not str(known).startswith("new:")
             ):
                 # The simulated account names the trade on the order itself.
-                self.state["trades"][str(known)] = {"enabled": True}
+                self._switch_on(known, info.get("view"))
                 self._log(known, info["rule"], "New trade filled; automanage on")
             elif info.get("automanage_on_fill"):
                 opened = [
@@ -1522,6 +1556,7 @@ class AutomationService:
                     "symbols": sorted(set(opened)),
                     "at": time.time(),
                     "rule": info["rule"],
+                    "view": info.get("view"),
                 }
             fill = order.get("fill_net")
             self._log(
@@ -1556,7 +1591,7 @@ class AutomationService:
                         held |= have
             if want and held == want:
                 for tid in found:
-                    self.state["trades"][tid] = {"enabled": True}
+                    self._switch_on(tid, p.get("view"))
                     self._log(tid, p["rule"], f"New trade filled (order #{oid}); automanage on")
                 pending.pop(oid)
                 changed = True
@@ -1754,7 +1789,7 @@ class AutomationService:
         rules = await self.preferences.rules()
         if settings.get("untested_target", "match") == "match":
             target = untested_target(
-                abs(tested["delta"]), untested["put_call"], getattr(rules, "delta_bias", "neutral")
+                abs(tested["delta"]), untested["put_call"], self.trade_view(s["trade_id"], rules)
             )
         else:
             target = rules.tested_delta

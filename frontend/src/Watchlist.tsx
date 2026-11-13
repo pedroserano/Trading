@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getJson } from "./api";
+import { getJson, postJson } from "./api";
 import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
@@ -34,6 +34,8 @@ function RangeBar({ x }: { x: PriceExtreme | null | undefined }) {
 
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchRow[] | null>(null);
+  // Your view per underlying, for the scanner: absent follows the portfolio bias.
+  const [views, setViews] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "symbol", desc: false });
 
@@ -41,9 +43,10 @@ export default function Watchlist() {
     let stop = false;
     const load = async () => {
       try {
-        const r = await getJson<{ rows: WatchRow[] }>("/api/watchlist");
+        const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string> }>("/api/watchlist");
         if (!stop) {
           setRows(r.rows);
+          setViews(r.views ?? {});
           setError(null);
         }
       } catch (e) {
@@ -106,6 +109,12 @@ export default function Watchlist() {
           <thead>
             <tr>
               {th("symbol", "Symbol")}
+              <th
+                className="l"
+                title="Your view for the scanner: its new trades here lean this way (puts closer when bullish, calls when bearish), and keep leaning that way through their rolls. Auto follows the portfolio bias and price extremes."
+              >
+                View
+              </th>
               <th>Last</th>
               {th("change", "Chg")}
               {th("range", "52w", "Where the price sits in its 52-week range of closes, 0% at the low")}
@@ -149,6 +158,29 @@ export default function Watchlist() {
                       no options data
                     </span>
                   ) : null}
+                </td>
+                <td className="l" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <select
+                    className={`view-select ${views[r.symbol] ? "set" : ""}`}
+                    value={views[r.symbol] ?? "auto"}
+                    aria-label={`Your view on ${r.symbol}`}
+                    onChange={async (e) => {
+                      try {
+                        const out = await postJson<{ views: Record<string, string> }>("/api/watchlist/view", {
+                          symbol: r.symbol,
+                          view: e.target.value,
+                        });
+                        setViews(out.views);
+                      } catch (err) {
+                        setError(String((err as Error).message));
+                      }
+                    }}
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="neutral">Neutral</option>
+                    <option value="bullish">Bullish</option>
+                    <option value="bearish">Bearish</option>
+                  </select>
                 </td>
                 <td>{num(r.price, 2)}</td>
                 <td className={tone(r.change_pct)}>

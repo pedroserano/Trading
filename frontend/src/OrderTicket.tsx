@@ -92,6 +92,8 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   // "Automanage on fill": the default comes from Settings, Automation. The Profit target rule
   // then closes the trade at its target (50%, 25% for straddles), at the level set there.
   const [manage, setManage] = useState(false);
+  // The new trade's view for automanage's rolls; "portfolio" follows the delta bias.
+  const [tradeView, setTradeView] = useState("portfolio");
   const [profitLevel, setProfitLevel] = useState<string | null>(null);
   useEffect(() => {
     if (spec.intent !== "open") return;
@@ -209,6 +211,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         limit_net: limit,
         duration,
         automanage: spec.intent === "open" && manage,
+        view: spec.intent === "open" && manage && tradeView !== "portfolio" ? tradeView : null,
       });
       setPlaced(o);
     } catch (e) {
@@ -374,6 +377,20 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     <span className="dim-text"> (profit target: {profitLevel})</span>
                   ) : null}
                 </label>
+              ) : null}
+              {spec.intent === "open" && manage ? (
+                <select
+                  className="view-select"
+                  value={tradeView}
+                  onChange={(e) => setTradeView(e.target.value)}
+                  title="The trade's view: a defensive roll leaves it leaning this way. Portfolio follows the delta bias in Settings."
+                  aria-label="The new trade's view"
+                >
+                  <option value="portfolio">View: portfolio</option>
+                  <option value="neutral">View: neutral</option>
+                  <option value="bullish">View: bullish</option>
+                  <option value="bearish">View: bearish</option>
+                </select>
               ) : null}
             </div>
 

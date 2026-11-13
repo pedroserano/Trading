@@ -5,13 +5,25 @@ daily theta at about 0.1% to 0.3% of net liq. These are pure functions: the snap
 order ticket and the scanner all use them, and none of them place a hedge on their own.
 """
 
-BIASES = {"neutral": "Neutral", "bullish": "Bullish", "bearish": "Bearish"}
+BIASES = {
+    "neutral": "Neutral",
+    "bullish": "Bullish",
+    "bearish": "Bearish",
+    "contrarian": "Contrarian",
+}
+# A position's or an underlying's own view; None follows the portfolio.
+VIEWS = ("neutral", "bullish", "bearish")
+VIEW_TILT = {"bullish": "down", "bearish": "up", "neutral": None}
+TILT_VIEW = {"down": "bullish", "up": "bearish", None: "neutral"}
 # Our own defaults, not published tastytrade numbers: a neutral book within 5% of net liq
 # either side, a leaning book up to 15% toward its side and never the other way.
 BIAS_BANDS = {
     "neutral": (-0.05, 0.05),
     "bullish": (0.0, 0.15),
     "bearish": (-0.15, 0.0),
+    # Contrarian keeps the book balanced and takes its view one trade at a time, against
+    # price extremes.
+    "contrarian": (-0.05, 0.05),
 }
 
 

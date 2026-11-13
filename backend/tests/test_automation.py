@@ -840,4 +840,24 @@ def test_untested_roll_leans_toward_the_bias():
     assert t(0.35, "C", "bearish") == 0.40 and t(0.35, "P", "bearish") == 0.30
     assert t(0.60, "P", "bullish") == 0.5 and t(0.12, "C", "bullish") == 0.10
     m = auto.rules_map(Rules(delta_bias="bullish"), merged_settings(None))
-    assert "slightly long (bullish bias)" in dict((r[0], r) for r in m["trades"])["Strangle"][3]
+    assert (
+        "leaning long with the trade's view, else your bullish bias"
+        in (dict((r[0], r) for r in m["trades"])["Strangle"][3])
+    )
+
+
+@pytest.mark.anyio
+async def test_a_trade_view_survives_toggling_and_steers_its_rolls():
+    h = Harness([], QUOTES)
+    svc = h.svc
+    await svc.set_trade(7, True, view="bearish")
+    await svc.set_trade(7, False)
+    await svc.set_trade(7, True)
+    assert svc.state["trades"]["7"] == {"enabled": True, "view": "bearish"}
+    # The trade's own view beats the portfolio bias; without one, the bias.
+    assert svc.trade_view(7, Rules(delta_bias="bullish")) == "bearish"
+    await svc.set_trade(7, view=None)
+    assert svc.trade_view(7, Rules(delta_bias="bullish")) == "bullish"
+    assert svc.trade_view(7, Rules(delta_bias="contrarian")) == "neutral"
+    with pytest.raises(ValueError):
+        await svc.set_trade(7, view="sideways")

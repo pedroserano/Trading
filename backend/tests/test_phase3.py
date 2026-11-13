@@ -792,3 +792,22 @@ def test_ticket_warns_on_debit_trades_and_thin_jade_lizards(client):
     wide = max(rows, key=lambda r: r["strike"])
     warn = preview([leg(sp, "put", -1), leg(sc, "call", -1), leg(wide, "call", 1)])
     assert any("upside is not free of risk" in w for w in warn)
+
+
+def test_views_per_underlying_and_per_trade_through_the_api(client):
+    r = client.post("/api/watchlist/view", json={"symbol": "SPY", "view": "bullish"})
+    assert r.status_code == 200 and r.json()["views"] == {"SPY": "bullish"}
+    assert client.get("/api/watchlist").json()["views"] == {"SPY": "bullish"}
+    assert (
+        client.post("/api/watchlist/view", json={"symbol": "SPY", "view": "up"}).status_code == 400
+    )
+    assert (
+        client.post("/api/watchlist/view", json={"symbol": "SPY", "view": "auto"}).json()["views"]
+        == {}
+    )
+    v = client.post("/api/automation/trade?account=sim", json={"trade_id": 5, "view": "bearish"})
+    assert v.json()["trades"]["5"] == {"enabled": False, "view": "bearish"}
+    v = client.post("/api/automation/trade?account=sim", json={"trade_id": 5, "view": "portfolio"})
+    assert v.json()["trades"]["5"] == {"enabled": False}
+    bad = client.post("/api/automation/trade?account=sim", json={"trade_id": 5, "view": "x"})
+    assert bad.status_code == 400

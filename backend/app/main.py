@@ -131,6 +131,8 @@ class OrderIn(BaseModel):
     profit_target: float | None = Field(None, ge=0.05, le=0.95)
     # Opening orders: switch automanage on for the new trade once it fills.
     automanage: bool = False
+    # The new trade's view for automanage: neutral, bullish, bearish (None: the portfolio's).
+    view: str | None = None
 
 
 class LinkIn(BaseModel):
@@ -144,7 +146,14 @@ class SplitIn(BaseModel):
 
 class AutoTradeIn(BaseModel):
     trade_id: int | str
-    enabled: bool
+    enabled: bool | None = None
+    # The trade's own view: neutral, bullish or bearish; "portfolio" follows the bias.
+    view: str | None = None
+
+
+class SymbolViewIn(BaseModel):
+    symbol: str
+    view: str  # neutral, bullish, bearish, or "auto" to follow the portfolio
 
 
 class PauseIn(BaseModel):
@@ -865,7 +874,18 @@ def create_app(
 
     @app.get("/api/watchlist", dependencies=[Depends(require_login)])
     async def api_watchlist():
-        return {"rows": await watchlist.rows()}
+        return {"rows": await watchlist.rows(), "views": await preferences.symbol_views()}
+
+    @app.post("/api/watchlist/view", dependencies=[Depends(require_login)])
+    async def api_watchlist_view(body: SymbolViewIn):
+        symbol = _check_symbol(body.symbol)
+        try:
+            views = await preferences.set_symbol_view(
+                symbol, None if body.view == "auto" else body.view
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"views": views}
 
     @app.get("/api/trade/{symbol:path}/expirations", dependencies=[Depends(require_login)])
     async def api_expirations(symbol: str):
@@ -1278,7 +1298,8 @@ def create_app(
     async def api_order_place(body: OrderIn):
         order = await place_order(body)
         if body.automanage and body.intent == "open":
-            await automations[body.account].watch_entry(order)
+            view = body.view if body.view in ("neutral", "bullish", "bearish") else None
+            await automations[body.account].watch_entry(order, view)
         return order
 
     async def auto_submit(raw: dict, place: bool) -> dict:
@@ -1367,7 +1388,13 @@ def create_app(
 
     @app.post("/api/automation/trade", dependencies=[Depends(require_login)])
     async def api_automation_trade(body: AutoTradeIn, account: Acct = "sim"):
-        await automations[account].set_trade(body.trade_id, body.enabled)
+        kwargs = {}
+        if body.view is not None:
+            kwargs["view"] = None if body.view == "portfolio" else body.view
+        try:
+            await automations[account].set_trade(body.trade_id, body.enabled, **kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         return await automations[account].view()
 
     @app.post("/api/automation/pause", dependencies=[Depends(require_login)])

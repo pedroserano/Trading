@@ -599,3 +599,9 @@ td .earn { margin-left: 0; }
 /* Home-screen app: iOS dims a band below the status bar too, so the header's first row sits
    below it; the header's own background fills the band. */
 html.standalone header.top { padding-top: calc(44px + env(safe-area-inset-top)); }
+
+/* A trade's or an underlying's view: a small inline select. */
+.view-select { background: var(--row); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; font-size: 12px; padding: 2px 4px; margin-left: 6px; }
+.view-select.set { border-color: var(--accent); }
+td > .view-select { margin-left: 0; }

@@ -252,11 +252,16 @@ def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral") -> 
                 (
                     "Outside the portfolio delta band: the side that brings delta back is sold "
                     f"closer, at {s['tilt_delta']:.2f}Δ."
+                    + " Then your view on the underlying (Watchlist), if you set one."
                     + (
-                        f" Your bias is {bias}: inside the band too, new trades lean "
+                        f" Your bias is {bias}: inside the band, new trades lean "
                         f"{bias} (the {'put' if bias == 'bullish' else 'call'} sold closer) "
-                        "until portfolio delta reaches the middle of the band."
-                        if bias != "neutral"
+                        "until portfolio delta reaches the middle of the band, after any price "
+                        "extreme."
+                        if bias in ("bullish", "bearish")
+                        else " Your bias is contrarian: after the band and your views, price "
+                        "extremes decide, against the move."
+                        if bias == "contrarian"
                         else " Your bias is neutral (tastylive's default): inside the band, "
                         "trades are symmetric."
                     )
@@ -268,7 +273,7 @@ def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral") -> 
                     f"low, a {s['move_days']}-session move of {s['move_sigma']:g}σ or more, or "
                     f"a day's move of {s['day_ratio']:g}× the average): the side against the "
                     f"move is sold closer, at {s['tilt_delta']:.2f}Δ."
-                    if s["extreme_tilt"]
+                    if s["extreme_tilt"] or bias == "contrarian"
                     else "Price-extreme lean: off."
                 ),
             ],
@@ -601,7 +606,13 @@ class Scanner:
             rules = await self.preferences.rules()
             bands = snap.get("bands") or {}
             full = _theta_full(bands)
-            band_tilt = targets.lean(bands)
+            bias = bands.get("bias") or getattr(rules, "delta_bias", "neutral")
+            # Outside the band: back toward it, first of all. Inside: a bullish or bearish
+            # bias leans until the middle of the band.
+            band_out = targets.lean({**bands, "bias": "neutral"}) if bands else None
+            bias_in = None if band_out else targets.lean(bands)
+            views_of = getattr(self.preferences, "symbol_views", None)
+            symbol_views = await views_of() if views_of else {}
             candidates, skipped = [], []
             symbols = await self.symbols(account)
             try:
@@ -637,11 +648,26 @@ class Scanner:
                 # rank, gets defined risk only.
                 strangle = ivr >= s["undefined_ivr"] and not vol["rich_only"] and not defined_only
                 ext = await self._extreme(sym, quotes, s)
-                tilt = (ext or {}).get("direction") if s["extreme_tilt"] else None
-                # Outside the delta band the portfolio comes first: lean back toward it.
-                leaned = bool(band_tilt) and s.get("band_lean", True)
-                if leaned:
-                    tilt = band_tilt
+                ext_dir = (
+                    (ext or {}).get("direction")
+                    if s["extreme_tilt"] or bias == "contrarian"
+                    else None
+                )
+                view = symbol_views.get(sym)
+                lean_on = s.get("band_lean", True)
+                # Which way to lean, first match wins: the book outside its band, your view on
+                # this underlying, a price extreme (against the move), your bias in the band.
+                if band_out and lean_on:
+                    tilt, source = band_out, "band"
+                elif view in targets.VIEWS:
+                    tilt, source = targets.VIEW_TILT[view], "view"
+                elif ext_dir:
+                    tilt, source = ext_dir, "extreme"
+                elif bias_in and lean_on:
+                    tilt, source = bias_in, "bias"
+                else:
+                    tilt, source = None, None
+                leaned = source in ("band", "bias")
                 legs, label = build_trade(rows, strangle, s, tilt)
                 if legs is None:
                     skipped.append({"symbol": sym, "reason": label})
@@ -708,6 +734,9 @@ class Scanner:
                         "body": body,
                         "extreme": ext,
                         "tilt": tilt,
+                        "lean_source": source,
+                        # The view the trade is managed with once open (its rolls lean this way).
+                        "view": targets.TILT_VIEW[tilt],
                         "band_lean": leaned,
                         "delta_push": push,
                         "iv30": vol["iv30"],
@@ -742,9 +771,13 @@ class Scanner:
                     lean = "bullish" if tilt == "down" else "bearish"
                     if leaned:
                         why_lean = targets.lean_reason(bands)
+                    elif source == "view":
+                        why_lean = f"your view on {sym}"
                     else:
-                        why_lean = "; ".join(ext["reasons"])
+                        why_lean = "against the move: " + "; ".join(ext["reasons"])
                     candidates[-1]["label"] = f"{label}, tilted {lean}: {why_lean}"
+                elif source == "view":
+                    candidates[-1]["label"] = f"{label}, symmetric: your neutral view on {sym}"
                 if push:
                     candidates[-1]["label"] += f". Warning: {push}"
                 div = dividends.info(quotes.get(sym), now.date(), sym)
@@ -945,6 +978,7 @@ class Scanner:
                         "created_at": time.time(),
                         "due_at": None,
                         "automanage": s["automanage_new"],
+                        "view": c.get("view"),
                     }
                 )
                 auto._log(None, "scan", f"Proposed: {title}: {reason}")
@@ -965,6 +999,7 @@ class Scanner:
                 await auto.settings(),
                 done,
                 automanage=s["automanage_new"],
+                view=c.get("view"),
             )
             if wide == "wide":
                 st["acted"].pop(key, None)  # the next scan may try again

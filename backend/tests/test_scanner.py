@@ -220,7 +220,8 @@ async def test_scan_proposes_a_strangle_and_says_why_others_were_skipped():
     order = broker.state["orders"][0]
     assert order["intent"] == "open" and order["status"] == "FILLED"
     await auto.tick()
-    assert auto.state["trades"][str(order["trade_id"])] == {"enabled": True}
+    # Switched on, and managed with the view the scanner leaned with (symmetric: neutral).
+    assert auto.state["trades"][str(order["trade_id"])] == {"enabled": True, "view": "neutral"}
 
 
 @pytest.mark.anyio
@@ -431,3 +432,48 @@ async def test_a_bullish_bias_leans_new_trades_inside_the_band():
     snap["bands"]["delta"] = {"value": 0.02, "min": -0.05, "max": 0.05, "state": "inside"}
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["tilt"] is None
+
+
+def _extreme_drop(scanner):
+    async def ext(sym, quotes, s):
+        return {"direction": "down", "reasons": ["5-session move -2.6σ"]}
+
+    scanner._extreme = ext
+
+
+@pytest.mark.anyio
+async def test_contrarian_bias_sells_against_price_extremes():
+    scanner, _, _ = harness({"extreme_tilt": False})
+    _extreme_drop(scanner)
+    snap = scanner.portfolios["sim"].snapshot
+    inside = {"value": 0.0, "min": -0.05, "max": 0.05, "state": "inside"}
+    snap["bands"] = {"bias": "neutral", "delta": inside, "theta": {}}
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] is None  # neutral, extreme lean off: symmetric
+    snap["bands"]["bias"] = "contrarian"
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] == "down" and c["view"] == "bullish"
+    assert "tilted bullish: against the move" in c["label"]
+    # Outside the band, the book comes first.
+    snap["bands"]["delta"] = {"value": 0.09, "min": -0.05, "max": 0.05, "state": "above"}
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] == "up" and c["lean_source"] == "band"
+
+
+@pytest.mark.anyio
+async def test_a_view_on_the_underlying_beats_extremes_and_the_bias():
+    scanner, _, _ = harness()
+    _extreme_drop(scanner)
+
+    async def views():
+        return {"SPY": "bearish"}
+
+    scanner.preferences.symbol_views = views
+    snap = scanner.portfolios["sim"].snapshot
+    snap["bands"] = {
+        "bias": "bullish",
+        "delta": {"value": 0.02, "min": 0.0, "max": 0.15, "state": "inside"},
+        "theta": {},
+    }
+    (c,) = (await scanner.scan("sim", act=False))["candidates"]
+    assert c["tilt"] == "up" and c["view"] == "bearish" and "your view on SPY" in c["label"]
