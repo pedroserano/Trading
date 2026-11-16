@@ -95,7 +95,7 @@ from .schwab_service import (
 )
 from .sim import SimBroker, SimDataSource, stats
 from .store import PgStore
-from .strategies import Rules, not_tasty
+from .strategies import Rules, free_cover, not_tasty
 from .streaming import StreamService
 from .token_store import TokenStore
 from .watchlist import WatchlistService
@@ -1207,7 +1207,14 @@ def create_app(
         bp, defined, a = None, True, None
         if spot and t.intent in ("open", "adjust") and all(x.mark is not None for x in t.legs):
             tl = [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs]
-            a = analyze(tl, spot, today)
+            # Short calls covered by shares or a call ZEBRA already held are not naked.
+            calls = [x for x in t.legs if x.put_call == "C" and x.quantity < 0]
+            cover = 0.0
+            if calls and hasattr(pf, "strategies_for"):
+                cover = free_cover(
+                    pf.strategies_for(t.underlying), max(x.expiration for x in calls)
+                )
+            a = analyze(tl, spot, today, held_shares=cover)
             bp, defined = a["bp_estimate"], not a["unlimited_loss"]
         # Conditions at the time, kept with the trade for the dashboard's analysis.
         market = (portfolio.snapshot or {}).get("market") or {}

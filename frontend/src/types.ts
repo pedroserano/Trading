@@ -38,6 +38,14 @@ export interface StrategyNumbers {
   short_strikes: number[];
   /** ZEBRAs: the shares the position moves like (negative for a put ZEBRA). */
   shares_like?: number | null;
+  /** A covered call written against shares or a call ZEBRA held separately. */
+  covered_by?: "shares" | "ZEBRA" | null;
+}
+
+/** What a new covered call on one underlying can be written against. */
+export interface Cover {
+  shares: number;
+  zebras: { expiration: string; shares: number }[];
 }
 
 export interface StrategyView {

@@ -1008,10 +1008,11 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
         ),
         (
             "Covered call",
-            f"{pct(rules.profit_target)} of the call's credit (closes the call)",
+            f"{pct(rules.profit_target)} of the call's credit (closes the call; on shares or a "
+            "call ZEBRA)",
             "Roll the call out, same strike",
             "Notify",
-            itm("Call up and out; shares stay"),
+            itm("Call up and out; the shares or ZEBRA stay"),
             "—",
         ),
         (

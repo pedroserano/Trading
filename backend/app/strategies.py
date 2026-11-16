@@ -163,7 +163,10 @@ def group(legs: list[Leg]) -> list[Strategy]:
         for pc in ("P", "C"):
             while True:
                 found = None
-                for s in pool.options(pc, True, exp):
+                # The short nearest the longs first: a call written further out of the money
+                # against the ZEBRA is not its own short.
+                shorts = sorted(pool.options(pc, True, exp), key=lambda x: x.strike)
+                for s in shorts if pc == "C" else reversed(shorts):
                     deeper = [
                         lg
                         for lg in pool.options(pc, False, exp)
@@ -245,7 +248,79 @@ def group(legs: list[Leg]) -> list[Strategy]:
         else:
             add("Short stock" if short else "Stock", taken, False)
 
+    cover_calls(out)
     return out
+
+
+def _cover(strategies: list[Strategy]) -> tuple[dict[int, str], float, list[list]]:
+    """Shares and call ZEBRAs (100 shares a unit) on one underlying, allotted to its lone
+    short calls, soonest expiration first: shares first, then the ZEBRA expiring soonest that
+    still outlives the call. A call is covered only in full.
+
+    Returns {id(strategy): "shares" or "ZEBRA"} for the calls covered, the shares left, and
+    [expiration, shares left] for each ZEBRA.
+    """
+    shares = float(
+        sum(
+            x.quantity for st in strategies if st.name == "Stock" for x in st.legs if x.quantity > 0
+        )
+    )
+    zebras = sorted(
+        (
+            [min(x.expiration for x in st.legs), _shares_like(st.name, st.legs) or 0]
+            for st in strategies
+            if st.name == "Call ZEBRA"
+        ),
+        key=lambda z: z[0],
+    )
+    calls = sorted(
+        (
+            st
+            for st in strategies
+            if (st.name == "Short call" or st.meta.get("covered_by"))
+            and len(st.legs) == 1
+            and st.legs[0].is_option
+            and st.legs[0].put_call == "C"
+            and st.legs[0].short
+        ),
+        key=lambda st: st.legs[0].expiration,
+    )
+    covered: dict[int, str] = {}
+    for st in calls:
+        leg = st.legs[0]
+        need = abs(leg.quantity) * 100
+        from_shares = min(shares, need)
+        usable = [z for z in zebras if z[0] >= leg.expiration]
+        if from_shares + sum(z[1] for z in usable) < need - 1e-9:
+            continue
+        shares -= from_shares
+        rest = need - from_shares
+        for z in usable:
+            take = min(z[1], rest)
+            z[1] -= take
+            rest -= take
+        covered[id(st)] = "ZEBRA" if from_shares < need else "shares"
+    return covered, shares, zebras
+
+
+def cover_calls(strategies: list[Strategy]) -> None:
+    """Names a lone short call a covered call when shares or a call ZEBRA on the same
+    underlying back it, also when they were opened in separate orders (a separate trade).
+    Recomputed from scratch, so it can run again on the same list."""
+    covered, _, _ = _cover(strategies)
+    for st in strategies:
+        if st.meta.get("covered_by") and id(st) not in covered:
+            st.name = "Short call"
+            st.meta.pop("covered_by")
+        elif id(st) in covered:
+            st.name = "Covered call"
+            st.meta["covered_by"] = covered[id(st)]
+
+
+def free_cover(strategies: list[Strategy], expiration: date) -> float:
+    """Shares-equivalent cover still free on one underlying for a new call expiring then."""
+    _, shares, zebras = _cover(strategies)
+    return shares + sum(z[1] for z in zebras if z[0] >= expiration)
 
 
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
@@ -382,6 +457,8 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "option_open_value": None if option_open is None else round(option_open, 2),
         # A ZEBRA unit moves like 100 shares: long for calls, short for puts.
         "shares_like": _shares_like(name, opts),
+        # A covered call written against shares or a call ZEBRA held separately.
+        "covered_by": st.meta.get("covered_by"),
     }
 
     flags = []

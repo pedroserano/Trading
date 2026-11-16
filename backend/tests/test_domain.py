@@ -428,3 +428,63 @@ def test_zebras_are_recognised_and_left_to_run():
     # Extra longs beyond two per short stay as long calls.
     extra = group([opt("C", 570, 3, 22.0), opt("C", 590, -1, 9.0)])
     assert names(extra) == [("Call ZEBRA", 1), ("Long call", 1)]
+
+
+def test_calls_written_against_a_zebra_are_covered_calls():
+    from app.strategies import cover_calls, free_cover
+
+    # One order: the call further out of the money is written against the ZEBRA.
+    legs = [opt("C", 570, 2, 22.0), opt("C", 590, -1, 9.0), opt("C", 600, -1, 4.0)]
+    got = {st.name: st for st in group(legs)}
+    assert set(got) == {"Call ZEBRA", "Covered call"}
+    assert sorted(x.strike for x in got["Call ZEBRA"].legs) == [570, 590]
+    assert got["Covered call"].meta["covered_by"] == "ZEBRA"
+
+    # Separate orders (separate trades): grouped apart, then covered across them.
+    zebra = group([opt("C", 570, 2, 22.0), opt("C", 590, -1, 9.0)])
+    near = group([opt("C", 600, -1, 2.0, exp=NEAR)])
+    assert near[0].name == "Short call"
+    both = zebra + near
+    cover_calls(both)
+    assert near[0].name == "Covered call" and near[0].meta["covered_by"] == "ZEBRA"
+    cover_calls(both)  # again: unchanged
+    assert near[0].name == "Covered call"
+    evaluate(near[0], TODAY, 591.0, Rules())
+    assert near[0].numbers["covered_by"] == "ZEBRA"
+    assert near[0].numbers["option_open_value"] == 200
+    assert free_cover(both, NEAR) == 0
+    assert free_cover(zebra, NEAR) == 100
+
+    # A call expiring after the ZEBRA is not covered by it.
+    later = group([opt("C", 600, -1, 2.0, exp=date(2027, 1, 15))])
+    lst = zebra + later
+    cover_calls(lst)
+    assert later[0].name == "Short call"
+    assert free_cover(zebra, date(2027, 1, 15)) == 0
+
+    # A put ZEBRA covers no calls; one ZEBRA unit does not cover two calls.
+    pz = group([opt("P", 610, 2, 20.0), opt("P", 590, -1, 8.0)])
+    lone = group([opt("C", 600, -1, 2.0, exp=NEAR)])
+    cover_calls(pz + lone)
+    assert lone[0].name == "Short call"
+    two = group([opt("C", 600, -2, 2.0, exp=NEAR)])
+    cover_calls(zebra + two)
+    assert two[0].name == "Short call"
+
+    # Selling the ZEBRA leaves the call naked again.
+    cover_calls(near)
+    assert near[0].name == "Short call" and "covered_by" not in near[0].meta
+
+
+def test_calls_written_later_against_shares_are_covered_calls():
+    from app.strategies import cover_calls
+
+    shares = group([stock(100, 180.0, 185.0)])
+    call = group([opt("C", 200, -1, 2.0, under="AAPL")])
+    lst = shares + call
+    cover_calls(lst)
+    assert call[0].name == "Covered call" and call[0].meta["covered_by"] == "shares"
+    few = group([stock(50, 180.0, 185.0)])
+    call2 = group([opt("C", 200, -1, 2.0, under="AAPL")])
+    cover_calls(few + call2)
+    assert call2[0].name == "Short call"

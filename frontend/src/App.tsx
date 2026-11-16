@@ -11,7 +11,7 @@ import Portfolio from "./Portfolio";
 import Settings from "./Settings";
 import OrderTicket, { actionsFor, closeSpec, closeStockSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
-import type { EarningsInfo, Snapshot, StrategyView, UnderlyingView } from "./types";
+import type { Cover, EarningsInfo, Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
 import Trade from "./Trade";
 import Watchlist from "./Watchlist";
@@ -147,7 +147,7 @@ export default function App() {
         {route.page === "activity" ? <Activity /> : null}
         {route.page === "dashboard" ? <Dashboard /> : null}
         {route.page === "settings" ? <Settings section={route.section} /> : null}
-        {route.page === "trade" ? <Trade symbol={route.symbol} shares={sharesHeld(snapshot, route.symbol)} /> : null}
+        {route.page === "trade" ? <Trade symbol={route.symbol} cover={coverHeld(snapshot, route.symbol)} /> : null}
         {route.page === "positions" ? (
           <>
         <MarketStrip />
@@ -187,13 +187,42 @@ export default function App() {
 }
 
 /** Shares of a symbol the account holds, from the Positions snapshot. */
-function sharesHeld(s: Snapshot, symbol: string): number {
+/** What a new covered call can be written against: long shares not already under a call,
+ * and call ZEBRAs (100 shares a unit, for calls expiring no later than the ZEBRA). */
+function coverHeld(s: Snapshot, symbol: string): Cover {
   const u = s.underlyings.find((x) => x.symbol === symbol);
-  if (!u) return 0;
-  return u.strategies
+  const cover: Cover = { shares: 0, zebras: [] };
+  if (!u) return cover;
+  const stockOwned = u.strategies
+    .filter((st) => st.name === "Stock")
     .flatMap((st) => st.legs)
-    .filter((l) => l.kind === "EQUITY")
-    .reduce((a, l) => a + l.quantity, 0);
+    .reduce((a, l) => a + Math.max(l.quantity, 0), 0);
+  for (const st of u.strategies) {
+    if (st.name === "Call ZEBRA" && st.numbers.shares_like && st.numbers.expiration) {
+      cover.zebras.push({ expiration: st.numbers.expiration, shares: st.numbers.shares_like });
+    }
+  }
+  cover.zebras.sort((a, b) => a.expiration.localeCompare(b.expiration));
+  let shares = stockOwned;
+  // Calls already written against them use them up, soonest first, shares before ZEBRAs.
+  const written = u.strategies
+    .filter((st) => st.name === "Covered call" && st.numbers.covered_by)
+    .sort((a, b) => (a.numbers.expiration ?? "").localeCompare(b.numbers.expiration ?? ""));
+  for (const st of written) {
+    let need = st.legs.reduce((a, l) => a + Math.abs(l.quantity), 0) * 100;
+    const fromShares = Math.min(shares, need);
+    shares -= fromShares;
+    need -= fromShares;
+    for (const z of cover.zebras) {
+      if (need <= 0) break;
+      if (st.numbers.expiration && z.expiration < st.numbers.expiration) continue;
+      const take = Math.min(z.shares, need);
+      z.shares -= take;
+      need -= take;
+    }
+  }
+  cover.shares = shares;
+  return cover;
 }
 
 function DataLight({ s, link }: { s: Snapshot; link: Link }) {
@@ -661,6 +690,11 @@ function StrategyRows(props: {
           <span className="caret">{expanded ? "▾" : "▸"}</span>
           {props.under ? <span className="sym-inline">{props.under}</span> : null}
           {st.name}
+          {n.covered_by === "ZEBRA" ? (
+            <span className="sub" title="Written against a call ZEBRA held on this underlying">
+              {" "}on ZEBRA
+            </span>
+          ) : null}
           {n.shares_like ? (
             <span className="sub" title="A ZEBRA moves like stock: 100 shares per unit">
               {" "}≈{n.shares_like < 0 ? "−" : ""}
@@ -675,7 +709,7 @@ function StrategyRows(props: {
               {shortDate(n.expiration)}
             </span>
           ) : null}
-          {!st.defined_risk && st.legs.some((l) => l.quantity < 0) ? (
+          {!st.defined_risk && n.covered_by !== "ZEBRA" && st.legs.some((l) => l.quantity < 0) ? (
             <span className="undef" title="Undefined risk">
               U
             </span>
@@ -710,7 +744,7 @@ function StrategyRows(props: {
                 .map((d) => (d === null ? "–" : Math.abs(d).toFixed(2)))
                 .join(" / ") || "–"}
             </td>
-            <td>{n.max_loss === null ? (st.defined_risk ? "–" : "∞") : money(n.max_loss)}</td>
+            <td>{n.max_loss === null ? (st.defined_risk || n.covered_by === "ZEBRA" ? "–" : "∞") : money(n.max_loss)}</td>
           </>
         )}
         {compact ? null : (

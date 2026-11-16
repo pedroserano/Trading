@@ -19,7 +19,7 @@ from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
 from .schwab_service import SchwabAuthError, SchwabError, SchwabNotConnected
-from .strategies import Rules, Strategy, evaluate, group, group_all
+from .strategies import Rules, Strategy, cover_calls, evaluate, group, group_all
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -400,6 +400,11 @@ class PortfolioService:
                 out.append(leg.with_quantity(left))
         return out
 
+    def strategies_for(self, underlying: str) -> list[Strategy]:
+        """The strategies held on one underlying, grouped as on the Positions page."""
+        groups = self._group_by_trade() if self.trade_info else group_all(self.legs)
+        return groups.get(underlying, [])
+
     def _group_by_trade(self) -> dict:
         """Positions grouped exactly, by the trade chain each leg belongs to.
 
@@ -431,6 +436,9 @@ class PortfolioService:
             out.setdefault(legs[0].underlying, []).append(st)
         for under, strategies in group_all(loose).items():
             out.setdefault(under, []).extend(strategies)
+        for strategies in out.values():
+            # A call sold in its own order against shares or a call ZEBRA held separately.
+            cover_calls(strategies)
         return dict(sorted(out.items()))
 
     def _build_and_publish(self, extras: dict | None = None) -> None:
