@@ -641,7 +641,7 @@ async def test_sim_account_reports_what_was_held_overnight():
     (pos,) = b.account(QUOTES)["securitiesAccount"]["positions"]
     assert pos["shortQuantity"] == 1 and pos["previousSessionShortQuantity"] == 0
     for e in b.state["trades"][0]["events"]:
-        e["at"] -= 3 * 86400  # filled days ago: held overnight now
+        e["at"] = b.clock().timestamp() - 3 * 86400  # filled days ago: held overnight now
     (pos,) = b.account(QUOTES)["securitiesAccount"]["positions"]
     assert pos["previousSessionShortQuantity"] == 1
 

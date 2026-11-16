@@ -320,6 +320,103 @@ async def test_sign_in_returns_to_the_address_it_was_started_at(tmp_path):
     assert "redirect_uri=https%3A%2F%2F127.0.0.1%3A8182" in svc.authorization_url()
 
 
+class _Resp:
+    def __init__(self, status, body=b"{}"):
+        self.status_code = status
+        self.content = body
+        self.text = body.decode()
+        self.headers = {}
+
+    def json(self):
+        return {"ok": True}
+
+
+class _FakeSchwab:
+    """A signed-in schwab-py client whose get_accounts answers from a script."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.session = type("S", (), {"token": {"expires_at": 10**12}})()
+        self.renewals = 0
+
+    def token_age(self):
+        return 3600
+
+    async def get_accounts(self):
+        if self.session.token["expires_at"] == 0:
+            self.renewals += 1
+            self.session.token["expires_at"] = 10**12
+        step = self.script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return _Resp(step)
+
+
+def _signed_in(tmp_path, script):
+    svc = SchwabService("k", "s", "https://127.0.0.1:8182", TokenStore(tmp_path / "t", SECRET))
+    svc._client = _FakeSchwab(script)
+    return svc
+
+
+@pytest.mark.anyio
+async def test_a_stray_401_renews_and_retries(tmp_path):
+    svc = _signed_in(tmp_path, [401, 200])
+    assert await svc.call("get_accounts") == {"ok": True}
+    assert svc._client.renewals == 1
+    assert svc.status().connected
+
+
+@pytest.mark.anyio
+async def test_repeated_401s_disconnect_only_after_three_and_then_recover(tmp_path):
+    from app.schwab_service import SchwabAuthError
+
+    svc = _signed_in(tmp_path, [401, 401, 401, 401, 401, 401, 200])
+    for _ in range(2):
+        with pytest.raises(SchwabError) as e:
+            await svc.call("get_accounts")
+        assert not isinstance(e.value, SchwabAuthError)
+        assert svc.status().connected
+    with pytest.raises(SchwabAuthError):
+        await svc.call("get_accounts")
+    assert not svc.status().connected
+    # Still tried: the next good answer reconnects by itself.
+    assert await svc.call("get_accounts") == {"ok": True}
+    assert svc.status().connected and svc._soft_401s == 0
+
+
+@pytest.mark.anyio
+async def test_a_good_answer_resets_the_401_count(tmp_path):
+    svc = _signed_in(tmp_path, [401, 401, 200, 401, 401, 401, 401])
+    with pytest.raises(SchwabError):
+        await svc.call("get_accounts")
+    await svc.call("get_accounts")
+    assert svc._soft_401s == 0
+    for _ in range(2):
+        with pytest.raises(SchwabError):
+            await svc.call("get_accounts")
+    assert svc.status().connected
+
+
+@pytest.mark.anyio
+async def test_refresh_refusals_are_sorted(tmp_path):
+    from authlib.integrations.httpx_client import OAuthError
+
+    from app.schwab_service import SchwabAuthError, SchwabNotConnected
+
+    svc = _signed_in(tmp_path, [OAuthError(error="server_error")])
+    with pytest.raises(SchwabError) as e:
+        await svc.call("get_accounts")
+    assert not isinstance(e.value, SchwabAuthError)
+    assert svc.status().connected
+
+    svc = _signed_in(tmp_path, [OAuthError(error="invalid_grant"), 200])
+    with pytest.raises(SchwabAuthError, match="invalid_grant"):
+        await svc.call("get_accounts")
+    assert not svc.status().connected
+    with pytest.raises(SchwabNotConnected):
+        await svc.call("get_accounts")
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

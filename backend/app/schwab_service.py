@@ -17,6 +17,10 @@ from .token_store import TokenStore, TokenStoreError
 log = logging.getLogger(__name__)
 
 REFRESH_TOKEN_LIFETIME_S = 7 * 24 * 3600
+# 401s in a row, each surviving a forced token renewal, before the sign-in counts as lost.
+SOFT_401_LIMIT = 3
+# Token-endpoint answers that mean the refresh token itself is dead.
+PERMANENT_OAUTH_ERRORS = {"invalid_grant", "invalid_client", "unauthorized_client"}
 
 
 class SchwabNotConnected(Exception):
@@ -106,7 +110,12 @@ class SchwabService:
         self._client = None
         self._auth_context = None
         self._load_error: str | None = None
+        # Why Schwab is treated as signed out. Permanent when Schwab refused the refresh
+        # token itself (only a new sign-in helps); otherwise it clears on the next good call.
         self._auth_failure: str | None = None
+        self._auth_permanent = False
+        # 401s in a row that a forced token renewal did not cure.
+        self._soft_401s = 0
 
     def load(self) -> None:
         """Build a client from the stored token, if there is one."""
@@ -180,7 +189,7 @@ class SchwabService:
         old, self._client = self._client, client
         self._auth_context = None
         self._load_error = None
-        self._auth_failure = None
+        self._clear_auth_failure()
         if old is not None:
             await old.close_async_session()
         log.info("Schwab sign-in completed")
@@ -191,23 +200,76 @@ class SchwabService:
         self._client = None
         self._store.delete()
 
-    async def _request(self, method: str, *args, **kwargs):
-        """Calls a schwab-py client method and returns the checked HTTP response."""
-        if not self.status().connected:
-            raise SchwabNotConnected()
+    def _clear_auth_failure(self) -> None:
+        self._auth_failure = None
+        self._auth_permanent = False
+        self._soft_401s = 0
+
+    def _fail_auth(self, reason: str, permanent: bool) -> SchwabAuthError:
+        stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+        self._auth_failure = f"{reason} ({stamp}). Sign in to Schwab again."
+        self._auth_permanent = permanent
+        log.warning("Schwab sign-in marked as failed: %s", reason)
+        return SchwabAuthError(self._auth_failure)
+
+    def _usable(self) -> bool:
+        """Whether calls may be tried. A failure caused by 401s does not block calls, so
+        the next good answer can clear it; a refused refresh token does."""
+        if self._client is None or self._auth_permanent:
+            return False
+        return self._client.token_age() < REFRESH_TOKEN_LIFETIME_S
+
+    def _force_renewal(self) -> None:
+        """Mark the access token expired, so the next call renews it first."""
+        try:
+            self._client.session.token["expires_at"] = 0
+        except (AttributeError, TypeError, KeyError):
+            pass
+
+    async def _send(self, method: str, *args, **kwargs):
         started = time.monotonic()
         try:
             resp = await getattr(self._client, method)(*args, **kwargs)
         except OAuthError as e:
-            # Raised when the access token refresh is refused, e.g. after a password change.
-            self._auth_failure = f"Schwab refused to renew the sign-in ({e}). Sign in again."
-            raise SchwabAuthError(self._auth_failure) from e
+            code = getattr(e, "error", None) or "oauth_error"
+            log.warning("Schwab refused the token renewal on %s: %s %s", method, code, e)
+            if code in PERMANENT_OAUTH_ERRORS:
+                raise self._fail_auth(f"Schwab refused to renew the sign-in ({code})", True) from e
+            raise SchwabError(f"Schwab token renewal failed ({code}). Retrying shortly.") from e
         except Exception as e:
             raise SchwabError(f"Schwab request failed: {type(e).__name__}: {e}") from e
         log.debug("%s -> %s in %.2fs", method, resp.status_code, time.monotonic() - started)
+        return resp
+
+    async def _request(self, method: str, *args, **kwargs):
+        """Calls a schwab-py client method and returns the checked HTTP response."""
+        if not self._usable():
+            raise SchwabNotConnected()
+        resp = await self._send(method, *args, **kwargs)
         if resp.status_code == 401:
-            self._auth_failure = "Schwab rejected the token (401). Sign in to Schwab again."
-            raise SchwabAuthError(self._auth_failure)
+            # Schwab sometimes answers 401 while the sign-in is still good (around a token
+            # renewal, or for one endpoint). Renew the access token and try once more.
+            log.warning(
+                "Schwab 401 on %s: %s. Renewing the token and retrying.",
+                method,
+                (resp.text or "")[:200],
+            )
+            self._force_renewal()
+            resp = await self._send(method, *args, **kwargs)
+            if resp.status_code == 401:
+                self._soft_401s += 1
+                log.warning(
+                    "Schwab 401 again on %s after renewal (%d in a row): %s",
+                    method,
+                    self._soft_401s,
+                    (resp.text or "")[:200],
+                )
+                if self._soft_401s >= SOFT_401_LIMIT:
+                    raise self._fail_auth("Schwab keeps rejecting the token (401)", False)
+                raise SchwabError("Schwab rejected the request (401). Retrying shortly.")
+        if resp.status_code < 300 and (self._soft_401s or self._auth_failure):
+            log.info("Schwab answered normally again; clearing the earlier sign-in failure")
+            self._clear_auth_failure()
         if resp.status_code == 429:
             raise SchwabError("Schwab rate limit reached (429). Retrying shortly.")
         if resp.status_code >= 300:
