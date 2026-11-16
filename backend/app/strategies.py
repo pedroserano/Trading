@@ -520,10 +520,12 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
             if name == "Covered put"
             else "max"
         )
+        # The flag stays short; the detail says what the share is of.
+        short = "debit" if name in CALENDARS else "credit" if name in COVERED_KINDS else "max"
         flags.append(
             {
                 "kind": "profit",
-                "label": f"{round(pct * 100)}% {basis}",
+                "label": f"{round(pct * 100)}% {short}",
                 "detail": f"Profit target {round(target * 100)}% {basis} reached",
             }
         )

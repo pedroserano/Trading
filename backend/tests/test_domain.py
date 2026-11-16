@@ -393,11 +393,13 @@ def test_lizard_covered_call_and_calendar_profit_bases():
     cc = group([stock(100, 200.0, 180.0, "SPY"), opt("C", 210, -1, 2.0, mark=0.9)])[0]
     evaluate(cc, TODAY, 180, Rules())
     assert cc.name == "Covered call" and cc.numbers["option_open_value"] == 200
-    assert any(f["kind"] == "profit" for f in cc.flags)  # the call is 55% done
+    profit = next(f for f in cc.flags if f["kind"] == "profit")  # the call is 55% done
+    assert profit["label"] == "55% credit" and "of the call's credit" in profit["detail"]
     # Calendar: on the debit paid, 10% by default.
     cal = group([opt("P", 580, -1, 3.0, mark=2.5, exp=NEAR), opt("P", 580, 1, 5.0, mark=4.75)])[0]
     evaluate(cal, TODAY, 590, Rules())
     assert cal.name == "Calendar" and any(f["kind"] == "profit" for f in cal.flags)  # 25 of 200
+    assert next(f for f in cal.flags if f["kind"] == "profit")["label"].endswith("% debit")
     # Debit verticals and long options are never flagged for profit.
     dv = group([opt("P", 580, 1, 3.0, mark=4.5), opt("P", 575, -1, 1.0, mark=1.5)])[0]
     evaluate(dv, TODAY, 570, Rules())
