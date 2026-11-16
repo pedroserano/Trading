@@ -458,7 +458,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               <div key={w} className="msg warn">{w}</div>
             ))}
             {sp ? (
-              <div className={`msg ${sp.error || !sp.ok ? "warn" : "ok"}`}>
+              <div className={`msg ${sp.error || !sp.ok ? (live ? "bad" : "warn") : "ok"}`}>
                 {sp.simulated
                   ? "Demo mode: Schwab preview skipped."
                   : sp.error
@@ -475,7 +475,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
             ) : null}
             {live
               ? liveBlocks.map((b) => (
-                  <div key={b} className="msg warn">
+                  <div key={b} className="msg bad">
                     Live: {b}
                   </div>
                 ))
