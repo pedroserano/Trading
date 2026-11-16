@@ -521,3 +521,29 @@ def test_puts_written_against_a_put_zebra_are_covered_puts():
     cover_calls(pz + hurt)
     evaluate(hurt[0], TODAY, 585.0, Rules())
     assert hurt[0].name == "Covered put" and "loss" not in {f["kind"] for f in hurt[0].flags}
+
+
+def test_a_manual_roll_past_the_zebra_is_warned_about():
+    from app.strategies import cover_calls, past_cover
+
+    jan = date(2027, 1, 15)
+    zebra = group([opt("C", 570, 2, 22.0), opt("C", 590, -1, 9.0)])
+    call = group([opt("C", 600, -1, 2.0, exp=NEAR)])
+    lst = zebra + call
+    cover_calls(lst)
+    sym = call[0].legs[0].symbol
+    warn = past_cover(lst, {sym}, [("C", jan, -1)])
+    assert warn and "covered call" in warn and EXP.isoformat() in warn
+    assert past_cover(lst, {sym}, [("C", EXP, -1)]) is None
+    # A covered put the same way.
+    pz = group([opt("P", 610, 2, 20.0), opt("P", 590, -1, 8.0)])
+    put = group([opt("P", 580, -1, 2.0, exp=NEAR)])
+    plist = pz + put
+    cover_calls(plist)
+    assert "covered put" in past_cover(plist, {put[0].legs[0].symbol}, [("P", jan, -1)])
+    # Covered by shares: shares do not expire, so no warning.
+    shares = group([stock(100, 180.0, 185.0)])
+    aapl = group([opt("C", 200, -1, 2.0, under="AAPL", exp=NEAR)])
+    alist = shares + aapl
+    cover_calls(alist)
+    assert past_cover(alist, {aapl[0].legs[0].symbol}, [("C", jan, -1)]) is None

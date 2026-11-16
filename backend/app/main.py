@@ -95,7 +95,7 @@ from .schwab_service import (
 )
 from .sim import SimBroker, SimDataSource, stats
 from .store import PgStore
-from .strategies import Rules, free_cover, not_tasty
+from .strategies import Rules, free_cover, not_tasty, past_cover
 from .streaming import StreamService
 from .token_store import TokenStore
 from .watchlist import WatchlistService
@@ -1342,6 +1342,18 @@ def create_app(
                     f"Replaces working order #{o['id']} ({o['intent']} at {price}, "
                     f"{o['duration']}); it will be cancelled when this one is placed"
                 )
+        if t.intent == "roll" and hasattr(pf, "strategies_for"):
+            past = past_cover(
+                pf.strategies_for(t.underlying),
+                {x.symbol for x in t.legs if x.effect == "close"},
+                [
+                    (x.put_call, x.expiration, x.quantity)
+                    for x in t.legs
+                    if x.effect == "open" and not x.equity
+                ],
+            )
+            if past:
+                warnings.append(past)
         if t.stock and t.legs[0].quantity < 0:
             left = held.get(t.underlying, 0) + t.legs[0].quantity
             short_calls = -sum(

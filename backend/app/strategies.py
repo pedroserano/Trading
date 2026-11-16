@@ -344,6 +344,29 @@ def free_cover(strategies: list[Strategy], expiration: date, put_call: str = "C"
     return shares + sum(z[1] for z in zebras if z[0] >= expiration)
 
 
+def past_cover(
+    strategies: list[Strategy], closing: set[str], opening: list[tuple[str, date, float]]
+) -> str | None:
+    """A warning when a roll takes a covered call or put on a ZEBRA past the ZEBRA's
+    expiration, after which it would be naked. closing: the symbols the roll closes;
+    opening: (put_call, expiration, quantity) of the legs it opens."""
+    for st in strategies:
+        until = st.meta.get("cover_until")
+        if st.meta.get("covered_by") != "ZEBRA" or not until:
+            continue
+        if not any(x.symbol in closing for x in st.legs):
+            continue
+        pc = st.legs[0].put_call
+        if any(p == pc and q < 0 and exp > until for p, exp, q in opening):
+            kind = "call" if pc == "C" else "put"
+            return (
+                f"Rolls the covered {kind} past its ZEBRA's expiration ({until.isoformat()}): "
+                f"after that date the {kind} is no longer covered (naked). Automanage never "
+                "rolls past it"
+            )
+    return None
+
+
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
 COVERED_KINDS = ("Covered call", "Covered put")
 CALENDARS = ("Calendar", "Diagonal")

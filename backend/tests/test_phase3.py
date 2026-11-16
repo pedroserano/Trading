@@ -864,3 +864,55 @@ def test_each_schwab_account_has_its_own_levels_scanner_level_and_limits(client)
     client.post("/live/settings", data={"account": "live-5678", "symbols": "QQQ IWM"})
     page = client.get("/connect").text
     assert "Individual: IWM, QQQ" in page and "Joint: SPY" in page
+
+
+def test_preview_warns_when_a_roll_goes_past_the_zebra(client):
+    exps = client.get("/api/trade/SPY/expirations").json()["expirations"]
+    dates = [e["date"] for e in exps]
+    zebra_exp = exps[len(exps) // 2]["date"]
+    near_exp = dates[dates.index(zebra_exp) - 1]
+    later_exp = dates[dates.index(zebra_exp) + 1]
+
+    def chain(exp):
+        return client.get(f"/api/trade/SPY/chain?expiration={exp}").json()
+
+    def at(rows, k):
+        return min(rows, key=lambda r: abs(r["strike"] - k))
+
+    def place(legs):
+        body = {"account": "sim", "intent": "open", "legs": legs}
+        pv = client.post("/api/orders/preview", json=body).json()
+        r = client.post("/api/orders", json={**body, "limit_net": pv["limit_net"]})
+        assert r.status_code == 200, r.text
+
+    z = chain(zebra_exp)
+    spot = z["underlying_price"]
+    place(
+        [
+            {"symbol": at(z["rows"], spot - 25)["call"]["symbol"], "quantity": 2, "effect": "open"},
+            {"symbol": at(z["rows"], spot)["call"]["symbol"], "quantity": -1, "effect": "open"},
+        ]
+    )
+    call = at(chain(near_exp)["rows"], spot + 10)["call"]["symbol"]
+    place([{"symbol": call, "quantity": -1, "effect": "open"}])
+    call_trade = client.get("/api/activity?account=sim").json()["trades"][0]["id"]
+    # Background tasks are off here: refresh the simulated positions by hand.
+    client.portal.call(client.app.state.accounts["portfolios"]["sim"].tick)
+
+    def roll_to(exp):
+        new = at(chain(exp)["rows"], spot + 10)["call"]["symbol"]
+        body = {
+            "account": "sim",
+            "intent": "roll",
+            "trade_id": call_trade,
+            "legs": [
+                {"symbol": call, "quantity": 1, "effect": "close"},
+                {"symbol": new, "quantity": -1, "effect": "open"},
+            ],
+        }
+        r = client.post("/api/orders/preview", json=body).json()
+        assert "warnings" in r, r
+        return r["warnings"]
+
+    assert any("past its ZEBRA's expiration" in w for w in roll_to(later_exp))
+    assert not any("ZEBRA" in w for w in roll_to(zebra_exp))
