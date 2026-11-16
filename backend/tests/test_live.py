@@ -123,6 +123,11 @@ async def test_the_env_the_allowlist_and_limits_gate_live_orders():
     assert any("Demo mode" in r for r in await demo.gate(t, 2000, 100_000))
     with pytest.raises(ValueError, match="between 1 and 50"):
         await b.set_config({"max_contracts": "0"})
+    # An empty list is allowed: no underlying may be traded live.
+    assert (await b.set_config({"symbols": "  "}))["symbols"] == []
+    assert any("No underlyings are allowed live" in r for r in await b.gate(t, 2000, 100_000))
+    with pytest.raises(ValueError, match="Live underlyings"):
+        await b.set_config({"symbols": "SPY @@"})
 
 
 @pytest.mark.anyio

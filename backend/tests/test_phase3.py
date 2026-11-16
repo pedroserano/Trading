@@ -916,3 +916,12 @@ def test_preview_warns_when_a_roll_goes_past_the_zebra(client):
 
     assert any("past its ZEBRA's expiration" in w for w in roll_to(later_exp))
     assert not any("ZEBRA" in w for w in roll_to(zebra_exp))
+
+
+def test_the_simulated_account_can_be_hidden_from_the_picker(client):
+    assert client.get("/api/accounts/in-use").json()["hide_sim"] is False
+    r = client.post("/accounts/hide-sim", data={"hide_sim": "on"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert client.get("/api/accounts/in-use").json()["hide_sim"] is True
+    client.post("/accounts/hide-sim", data={}, follow_redirects=False)
+    assert client.get("/api/accounts/in-use").json()["hide_sim"] is False

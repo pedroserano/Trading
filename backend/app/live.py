@@ -196,7 +196,7 @@ class LiveBroker:
         c["all_symbols"] = form.get("all_symbols") in ("on", "true", "1", True)
         if "symbols" in form:
             symbols = [s.strip().upper() for s in str(form["symbols"]).replace(",", " ").split()]
-            if not symbols or any(
+            if any(
                 not s.replace("$", "").replace(".", "").replace("/", "").isalnum() for s in symbols
             ):
                 raise ValueError("Live underlyings: list symbols separated by spaces or commas")
@@ -246,7 +246,12 @@ class LiveBroker:
             out.append("Demo mode: there is no real Schwab account to send orders to")
         elif not self.server_allowed:
             out.append("Live trading is not allowed on this server: set LIVE_TRADING=true in .env")
-        if not c.get("all_symbols") and t.underlying not in c["symbols"]:
+        if not c.get("all_symbols") and not c["symbols"]:
+            out.append(
+                f"No underlyings are allowed live; trade {t.underlying} on the simulated "
+                "account or add it in Settings"
+            )
+        elif not c.get("all_symbols") and t.underlying not in c["symbols"]:
             out.append(
                 f"{t.underlying} is not on the live list ({', '.join(c['symbols'])}); "
                 "trade it on the simulated account or add it in Settings"

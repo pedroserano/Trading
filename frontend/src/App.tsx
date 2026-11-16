@@ -89,15 +89,16 @@ function useNow(ms: number) {
   return now;
 }
 
-/** The Schwab accounts the app runs, by their Schwab names; read again every few minutes. */
-function useSchwabAccounts(): SchwabAccount[] | null {
-  const [accounts, setAccounts] = useState<SchwabAccount[] | null>(null);
+/** The Schwab accounts the app runs, by their Schwab names, and whether the simulated
+ * account is hidden (Settings); read again every few minutes. */
+function useSchwabAccounts(): { accounts: SchwabAccount[]; hide_sim: boolean } | null {
+  const [accounts, setAccounts] = useState<{ accounts: SchwabAccount[]; hide_sim: boolean } | null>(null);
   useEffect(() => {
     let live = true;
     const read = async () => {
       try {
-        const r = await getJson<{ accounts: SchwabAccount[] }>("/api/accounts/in-use");
-        if (live) setAccounts(r.accounts);
+        const r = await getJson<{ accounts: SchwabAccount[]; hide_sim?: boolean }>("/api/accounts/in-use");
+        if (live) setAccounts({ accounts: r.accounts, hide_sim: !!r.hide_sim });
       } catch {
         /* kept as it was; the next read tries again */
       }
@@ -114,10 +115,13 @@ function useSchwabAccounts(): SchwabAccount[] | null {
 
 export default function App() {
   const [stored, setAccount] = usePersisted<Account>("account", "live");
-  const accounts = useSchwabAccounts();
-  // A remembered account no longer in use falls back to the first Schwab account.
+  const read = useSchwabAccounts();
+  const accounts = read?.accounts ?? null;
+  const hideSim = read?.hide_sim ?? false;
+  // A remembered account no longer in use (or the simulated one, hidden in Settings)
+  // falls back to the first Schwab account.
   const account =
-    stored === "sim" || accounts === null || accounts.some((a) => a.key === stored)
+    (stored === "sim" && !hideSim) || accounts === null || accounts.some((a) => a.key === stored)
       ? stored
       : (accounts[0]?.key ?? "live");
   const { snapshot, link } = useSnapshot(account);
@@ -139,7 +143,7 @@ export default function App() {
       <AccountContext.Provider value={account}>
       <AccountsContext.Provider value={accounts ?? []}>
       <AutomationContext.Provider value={automation}>
-      <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} accounts={accounts ?? []} />
+      <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} accounts={accounts ?? []} hideSim={hideSim} />
       <main>
         <Banner s={snapshot} />
         {route.page === "watchlist" ? <Watchlist /> : null}
@@ -355,6 +359,7 @@ function Header(props: {
   account: Account;
   setAccount: (a: Account) => void;
   accounts: SchwabAccount[];
+  hideSim: boolean;
 }) {
   const { s, link, route } = props;
   const stacked = useStackedStats();
@@ -399,9 +404,11 @@ function Header(props: {
               {x.name}
             </button>
           ))}
-          <button aria-pressed={props.account === "sim"} onClick={() => props.setAccount("sim")}>
-            Simulated
-          </button>
+          {props.hideSim ? null : (
+            <button aria-pressed={props.account === "sim"} onClick={() => props.setAccount("sim")}>
+              Simulated
+            </button>
+          )}
         </div>
         <PauseSwitch />
         <DataLight s={s} link={link} />

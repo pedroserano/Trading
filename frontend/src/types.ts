@@ -423,6 +423,7 @@ export interface AutomationView {
 
 export interface LiveStatus {
   symbols: string[];
+  all_symbols: boolean;
   max_contracts: number;
   max_bp_share: number;
   server_allowed: boolean;

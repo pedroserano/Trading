@@ -399,6 +399,12 @@
   {% elif not error %}
   <p class="dim">Schwab returned no accounts.</p>
   {% endif %}
+  <form method="post" action="/accounts/hide-sim" class="small">
+    <label><input type="checkbox" name="hide_sim" {% if hide_sim %}checked{% endif %}
+      onchange="this.form.submit()"> Hide the simulated account</label>
+    <span class="dim">: it leaves the account picker; its positions and history are kept,
+      and its automation and scanner run as set.</span>
+  </form>
   <p class="dim small">Every account ticked on Schwab's consent screen at sign-in is used, by the
      name it has in Schwab. To add or drop one, sign in again and tick or untick it.</p>
   <form method="post" action="/history/import" enctype="multipart/form-data" class="small">

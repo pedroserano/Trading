@@ -109,6 +109,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 SESSION_MAX_AGE_S = 12 * 3600
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCKOUT_S = 60
+# Settings key: whether the header's account picker leaves out the simulated account.
+HIDE_SIM_KEY = "accounts.hide_sim"
 
 
 class LegIn(BaseModel):
@@ -638,6 +640,7 @@ def create_app(
                 "status": status,
                 "accounts": accounts,
                 "sheet_labels": registry.sheet_labels,
+                "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
                 "error": error,
                 "notice": notice,
                 "db_error": await store.ping(),
@@ -761,6 +764,16 @@ def create_app(
             )
         except ValueError as e:
             request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("account"), status_code=303)
+
+    @app.post("/accounts/hide-sim", dependencies=[Depends(require_login)])
+    async def account_hide_sim(request: Request, hide_sim: str = Form("")):
+        """Whether the header's account picker leaves out the simulated account."""
+        hide = hide_sim in ("on", "true", "1")
+        await store.set_setting(HIDE_SIM_KEY, hide)
+        request.session["notice"] = (
+            "The simulated account is hidden." if hide else "The simulated account is shown."
+        )
         return RedirectResponse(settings_url("account"), status_code=303)
 
     @app.post("/history/import", dependencies=[Depends(require_login)])
@@ -1851,7 +1864,10 @@ def create_app(
     @app.get("/api/accounts/in-use", dependencies=[Depends(require_login)])
     async def api_accounts_in_use():
         """The Schwab accounts the app runs, by their Schwab name, for the header picker."""
-        return {"accounts": [a for a in registry.in_use() if a["key"] in portfolios]}
+        return {
+            "accounts": [a for a in registry.in_use() if a["key"] in portfolios],
+            "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
+        }
 
     @app.post("/api/orders/{order_id}/cancel", dependencies=[Depends(require_login)])
     async def api_order_cancel(order_id: str, account: Acct = "sim"):

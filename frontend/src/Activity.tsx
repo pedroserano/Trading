@@ -106,7 +106,7 @@ export default function Activity() {
         <div className={`msg ${data.live.on ? "warn" : ""}`}>
           Live trading is <b>{data.live.on ? "on" : "off"}</b>
           {data.live.on
-            ? `: ${data.live.symbols.join(", ")}, up to ${data.live.max_contracts} contract${data.live.max_contracts > 1 ? "s" : ""} per leg.`
+            ? `: ${data.live.all_symbols ? "any underlying" : data.live.symbols.length ? data.live.symbols.join(", ") : "no underlyings allowed"}, up to ${data.live.max_contracts} contract${data.live.max_contracts > 1 ? "s" : ""} per leg.`
             : data.live.demo
               ? " (demo mode)."
               : ": LIVE_TRADING=true is not set in the server's .env file."}{" "}
