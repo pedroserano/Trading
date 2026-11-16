@@ -11,7 +11,7 @@ import Portfolio from "./Portfolio";
 import Settings from "./Settings";
 import OrderTicket, { actionsFor, closeSpec, closeStockSpec, rollSpec, type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
-import type { Cover, EarningsInfo, Snapshot, StrategyView, UnderlyingView } from "./types";
+import type { Cover, EarningsInfo, SideCover, Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
 import Trade from "./Trade";
 import Watchlist from "./Watchlist";
@@ -186,43 +186,47 @@ export default function App() {
   );
 }
 
-/** Shares of a symbol the account holds, from the Positions snapshot. */
-/** What a new covered call can be written against: long shares not already under a call,
- * and call ZEBRAs (100 shares a unit, for calls expiring no later than the ZEBRA). */
+/** What a new covered call or put can be written against: shares (long for calls, short
+ * for puts) not already under an option, and ZEBRAs of that type (100 shares a unit, for
+ * options expiring no later than the ZEBRA). Mirrors the server's cover_calls. */
 function coverHeld(s: Snapshot, symbol: string): Cover {
   const u = s.underlyings.find((x) => x.symbol === symbol);
-  const cover: Cover = { shares: 0, zebras: [] };
-  if (!u) return cover;
-  const stockOwned = u.strategies
-    .filter((st) => st.name === "Stock")
-    .flatMap((st) => st.legs)
-    .reduce((a, l) => a + Math.max(l.quantity, 0), 0);
-  for (const st of u.strategies) {
-    if (st.name === "Call ZEBRA" && st.numbers.shares_like && st.numbers.expiration) {
-      cover.zebras.push({ expiration: st.numbers.expiration, shares: st.numbers.shares_like });
+  const side = (pc: "C" | "P"): SideCover => {
+    const [stockName, zebraName, coveredName] =
+      pc === "C" ? ["Stock", "Call ZEBRA", "Covered call"] : ["Short stock", "Put ZEBRA", "Covered put"];
+    const cover: SideCover = { shares: 0, zebras: [] };
+    if (!u) return cover;
+    let shares = u.strategies
+      .filter((st) => st.name === stockName)
+      .flatMap((st) => st.legs)
+      .reduce((a, l) => a + Math.abs(l.quantity), 0);
+    for (const st of u.strategies) {
+      if (st.name === zebraName && st.numbers.shares_like && st.numbers.expiration) {
+        cover.zebras.push({ expiration: st.numbers.expiration, shares: Math.abs(st.numbers.shares_like) });
+      }
     }
-  }
-  cover.zebras.sort((a, b) => a.expiration.localeCompare(b.expiration));
-  let shares = stockOwned;
-  // Calls already written against them use them up, soonest first, shares before ZEBRAs.
-  const written = u.strategies
-    .filter((st) => st.name === "Covered call" && st.numbers.covered_by)
-    .sort((a, b) => (a.numbers.expiration ?? "").localeCompare(b.numbers.expiration ?? ""));
-  for (const st of written) {
-    let need = st.legs.reduce((a, l) => a + Math.abs(l.quantity), 0) * 100;
-    const fromShares = Math.min(shares, need);
-    shares -= fromShares;
-    need -= fromShares;
-    for (const z of cover.zebras) {
-      if (need <= 0) break;
-      if (st.numbers.expiration && z.expiration < st.numbers.expiration) continue;
-      const take = Math.min(z.shares, need);
-      z.shares -= take;
-      need -= take;
+    cover.zebras.sort((a, b) => a.expiration.localeCompare(b.expiration));
+    // Options already written against them use them up, soonest first, shares before ZEBRAs.
+    const written = u.strategies
+      .filter((st) => st.name === coveredName && st.numbers.covered_by)
+      .sort((a, b) => (a.numbers.expiration ?? "").localeCompare(b.numbers.expiration ?? ""));
+    for (const st of written) {
+      let need = st.legs.reduce((a, l) => a + Math.abs(l.quantity), 0) * 100;
+      const fromShares = Math.min(shares, need);
+      shares -= fromShares;
+      need -= fromShares;
+      for (const z of cover.zebras) {
+        if (need <= 0) break;
+        if (st.numbers.expiration && z.expiration < st.numbers.expiration) continue;
+        const take = Math.min(z.shares, need);
+        z.shares -= take;
+        need -= take;
+      }
     }
-  }
-  cover.shares = shares;
-  return cover;
+    cover.shares = shares;
+    return cover;
+  };
+  return { C: side("C"), P: side("P") };
 }
 
 function DataLight({ s, link }: { s: Snapshot; link: Link }) {
@@ -691,7 +695,10 @@ function StrategyRows(props: {
           {props.under ? <span className="sym-inline">{props.under}</span> : null}
           {st.name}
           {n.covered_by === "ZEBRA" ? (
-            <span className="sub" title="Written against a call ZEBRA held on this underlying">
+            <span
+              className="sub"
+              title={`Written against a ZEBRA held on this underlying, expiring ${n.cover_until ?? "–"}: automanage never rolls it past that date`}
+            >
               {" "}on ZEBRA
             </span>
           ) : null}

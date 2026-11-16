@@ -659,7 +659,16 @@ def decide(
                     "tested",
                     "roll_calls",
                     "The covered call is in the money: roll the call up and out for a credit; "
-                    "the shares stay",
+                    "the shares or ZEBRA stay",
+                )
+            )
+        elif name == "Covered put" and itm and settings.get("roll_single_itm"):
+            out.append(
+                Action(
+                    "tested",
+                    "roll_puts",
+                    "The covered put is in the money: roll the put down and out for a credit; "
+                    "the ZEBRA or short shares stay",
                 )
             )
         elif (
@@ -684,7 +693,25 @@ def decide(
             out.append(Action("profit", "target", "Profit target order resting at the broker"))
         elif "profit" in flags:
             out.append(Action("profit", "close", "Profit target reached"))
-    return out
+    return [_within_cover(st, a) for a in out]
+
+
+ROLLS = ("roll", "roll_calls", "roll_puts")
+
+
+def _within_cover(st: dict, a: Action) -> Action:
+    """A covered call or put on a ZEBRA is never rolled past the ZEBRA's expiration (unlike
+    shares, it expires): with no later expiration left before it, the roll becomes a close."""
+    until = st["numbers"].get("cover_until")
+    current = st["numbers"].get("expiration")
+    if a.kind in ROLLS and until and current and until <= current:
+        return Action(
+            a.rule,
+            "close",
+            f"{a.reason.split(':')[0]}: close instead of rolling, as no expiration is left "
+            f"before the ZEBRA's ({until})",
+        )
+    return a
 
 
 def guts_near(st: dict, spot, put, call, settings: dict) -> float | None:
@@ -1010,9 +1037,18 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "Covered call",
             f"{pct(rules.profit_target)} of the call's credit (closes the call; on shares or a "
             "call ZEBRA)",
-            "Roll the call out, same strike",
+            "Roll the call out, same strike; on a ZEBRA never past its expiration",
             "Notify",
             itm("Call up and out; the shares or ZEBRA stay"),
+            "—",
+        ),
+        (
+            "Covered put",
+            f"{pct(rules.profit_target)} of the put's credit (closes the put; on a put ZEBRA "
+            "or short shares)",
+            "Roll the put out, same strike; never past the ZEBRA's expiration",
+            "Notify",
+            itm("Put down and out; the ZEBRA stays"),
             "—",
         ),
         (
@@ -1165,9 +1201,9 @@ def profit_basis(st: dict) -> tuple[float, float] | None:
     name, opened = st["name"], n["open_value"]
     if not_tasty(name, opened):
         return None
-    if name == "Covered call":
-        call = n.get("option_open_value")
-        return (call, call) if call and call > 0 else None
+    if name in ("Covered call", "Covered put"):
+        opt = n.get("option_open_value")
+        return (opt, opt) if opt and opt > 0 else None
     if name in CALENDARS:
         return (-opened, opened) if opened < 0 else None
     mp = n.get("max_profit")
@@ -2041,6 +2077,10 @@ class AutomationService:
             exps = chain_mod.expirations(
                 await self.source.expirations(u["symbol"]), self.clock().date()
             )
+            until = s["numbers"].get("cover_until")
+            if until:
+                # On a ZEBRA: never past the ZEBRA's expiration.
+                exps = [e for e in exps if e["date"] <= until]
             target = target_expiration(
                 exps, s["numbers"]["expiration"], settings["roll_target_dte"]
             )

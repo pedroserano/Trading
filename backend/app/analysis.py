@@ -62,6 +62,7 @@ def analyze(
     vol: float | None = None,
     points: int = 121,
     held_shares: float = 0,
+    held_short: float = 0,
 ) -> dict:
     """Numbers for the trade as a whole. vol is the ATM IV in percent for probabilities."""
     if not legs or spot <= 0:
@@ -165,7 +166,7 @@ def analyze(
         "delta": total("delta"),
         "theta": total("theta"),
         "vega": total("vega"),
-        "bp_estimate": round(bp_estimate(legs, spot, max_loss, held_shares), 2),
+        "bp_estimate": round(bp_estimate(legs, spot, max_loss, held_shares, held_short), 2),
         "bp_exact": not math.isinf(max_loss) and all(leg.put_call for leg in legs),
         "curve": {"x": [round(x, 2) for x in xs], "expiry": expiry, "today": today_curve},
     }
@@ -180,7 +181,11 @@ def _naked(leg: TradeLeg, spot: float, contracts: float) -> float:
 
 
 def bp_estimate(
-    legs: list[TradeLeg], spot: float, max_loss: float, held_shares: float = 0
+    legs: list[TradeLeg],
+    spot: float,
+    max_loss: float,
+    held_shares: float = 0,
+    held_short: float = 0,
 ) -> float:
     """Buying power effect. Exact for defined-risk option trades (the max loss); otherwise the
     Reg T estimate: each short covered by a long of its type is a spread (its width at risk),
@@ -191,17 +196,20 @@ def bp_estimate(
     longs_paid = sum(leg.price * 100 * leg.quantity for leg in opts if leg.quantity > 0)
     uncovered: dict[str, list[tuple[TradeLeg, float]]] = {"P": [], "C": []}
     spreads = 0.0
+    held_used = False
     for pc in ("P", "C"):
         shorts = sorted(
             (x for x in opts if x.put_call == pc and x.quantity < 0),
             key=lambda x: -_naked(x, spot, 1),
         )
         longs = [[x, x.quantity] for x in opts if x.put_call == pc and x.quantity > 0]
-        cover = held_shares / 100 if pc == "C" else 0.0
+        # Shares held cover short calls; short shares (or a put ZEBRA) cover short puts.
+        cover = (held_shares if pc == "C" else held_short) / 100
         for leg in shorts:
             need = abs(leg.quantity)
             used = min(need, cover)
             need, cover = need - used, cover - used
+            held_used = held_used or used > 0
             for lg in longs:
                 if need <= 0:
                     break
@@ -214,7 +222,14 @@ def bp_estimate(
                 spreads += max(width, 0) * 100 * take
             if need > 0:
                 uncovered[pc].append((leg, need))
-    if not uncovered["P"] and not uncovered["C"] and not math.isinf(max_loss) and not stock:
+    # Defined risk: the max loss, unless shares (or a ZEBRA) already held cover a short.
+    if (
+        not uncovered["P"]
+        and not uncovered["C"]
+        and not math.isinf(max_loss)
+        and not stock
+        and not held_used
+    ):
         return max(-max_loss, 0.0)
     puts = sum(_naked(x, spot, n) for x, n in uncovered["P"])
     calls = sum(_naked(x, spot, n) for x, n in uncovered["C"])

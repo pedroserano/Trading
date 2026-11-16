@@ -252,41 +252,51 @@ def group(legs: list[Leg]) -> list[Strategy]:
     return out
 
 
-def _cover(strategies: list[Strategy]) -> tuple[dict[int, str], float, list[list]]:
-    """Shares and call ZEBRAs (100 shares a unit) on one underlying, allotted to its lone
-    short calls, soonest expiration first: shares first, then the ZEBRA expiring soonest that
-    still outlives the call. A call is covered only in full.
+# A lone short option backed by shares or a ZEBRA: (name, stock strategy name, ZEBRA name,
+# the lone short's name).
+COVERED = {
+    "C": ("Covered call", "Stock", "Call ZEBRA", "Short call"),
+    "P": ("Covered put", "Short stock", "Put ZEBRA", "Short put"),
+}
 
-    Returns {id(strategy): "shares" or "ZEBRA"} for the calls covered, the shares left, and
-    [expiration, shares left] for each ZEBRA.
+
+def _cover(strategies: list[Strategy], pc: str) -> tuple[dict[int, tuple], float, list[list]]:
+    """Shares (long for calls, short for puts) and ZEBRAs of that type (100 shares a unit) on
+    one underlying, allotted to its lone short options of that type, soonest expiration
+    first: shares first, then the ZEBRA expiring soonest that still outlives the option. An
+    option is covered only in full.
+
+    Returns {id(strategy): (covered by "shares" or "ZEBRA", the expiration of the soonest ZEBRA
+    used or None)} for the options covered, the shares left, and [expiration, shares left]
+    for each ZEBRA.
     """
+    covered_name, stock_name, zebra_name, lone_name = COVERED[pc]
     shares = float(
-        sum(
-            x.quantity for st in strategies if st.name == "Stock" for x in st.legs if x.quantity > 0
-        )
+        sum(abs(x.quantity) for st in strategies if st.name == stock_name for x in st.legs)
     )
     zebras = sorted(
         (
-            [min(x.expiration for x in st.legs), _shares_like(st.name, st.legs) or 0]
+            [min(x.expiration for x in st.legs), abs(_shares_like(st.name, st.legs) or 0)]
             for st in strategies
-            if st.name == "Call ZEBRA"
+            if st.name == zebra_name
         ),
         key=lambda z: z[0],
     )
-    calls = sorted(
+    shorts = sorted(
         (
             st
             for st in strategies
-            if (st.name == "Short call" or st.meta.get("covered_by"))
+            if st.name in (lone_name, covered_name)
+            and (st.name == lone_name or st.meta.get("covered_by"))
             and len(st.legs) == 1
             and st.legs[0].is_option
-            and st.legs[0].put_call == "C"
+            and st.legs[0].put_call == pc
             and st.legs[0].short
         ),
         key=lambda st: st.legs[0].expiration,
     )
-    covered: dict[int, str] = {}
-    for st in calls:
+    covered: dict[int, tuple] = {}
+    for st in shorts:
         leg = st.legs[0]
         need = abs(leg.quantity) * 100
         from_shares = min(shares, need)
@@ -295,35 +305,47 @@ def _cover(strategies: list[Strategy]) -> tuple[dict[int, str], float, list[list
             continue
         shares -= from_shares
         rest = need - from_shares
+        until = None
         for z in usable:
+            if rest <= 1e-9:
+                break
             take = min(z[1], rest)
+            if take > 0 and until is None:
+                until = z[0]
             z[1] -= take
             rest -= take
-        covered[id(st)] = "ZEBRA" if from_shares < need else "shares"
+        covered[id(st)] = ("ZEBRA", until) if from_shares < need else ("shares", None)
     return covered, shares, zebras
 
 
 def cover_calls(strategies: list[Strategy]) -> None:
-    """Names a lone short call a covered call when shares or a call ZEBRA on the same
-    underlying back it, also when they were opened in separate orders (a separate trade).
+    """Names a lone short call a covered call, and a lone short put a covered put, when
+    shares (long for calls, short for puts) or a ZEBRA of its type on the same underlying
+    back it, also when they were opened in separate orders (separate trades). A covered
+    option on a ZEBRA carries the ZEBRA's expiration: it is never rolled past it.
     Recomputed from scratch, so it can run again on the same list."""
-    covered, _, _ = _cover(strategies)
-    for st in strategies:
-        if st.meta.get("covered_by") and id(st) not in covered:
-            st.name = "Short call"
-            st.meta.pop("covered_by")
-        elif id(st) in covered:
-            st.name = "Covered call"
-            st.meta["covered_by"] = covered[id(st)]
+    for pc, (covered_name, _, _, lone_name) in COVERED.items():
+        covered, _, _ = _cover(strategies, pc)
+        for st in strategies:
+            if id(st) in covered:
+                st.name = covered_name
+                st.meta["covered_by"], until = covered[id(st)]
+                st.meta["cover_until"] = until
+            elif st.name == covered_name and st.meta.get("covered_by"):
+                st.name = lone_name
+                st.meta.pop("covered_by")
+                st.meta.pop("cover_until", None)
 
 
-def free_cover(strategies: list[Strategy], expiration: date) -> float:
-    """Shares-equivalent cover still free on one underlying for a new call expiring then."""
-    _, shares, zebras = _cover(strategies)
+def free_cover(strategies: list[Strategy], expiration: date, put_call: str = "C") -> float:
+    """Shares-equivalent cover still free on one underlying for a new short option of that
+    type expiring then."""
+    _, shares, zebras = _cover(strategies, put_call)
     return shares + sum(z[1] for z in zebras if z[0] >= expiration)
 
 
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
+COVERED_KINDS = ("Covered call", "Covered put")
 CALENDARS = ("Calendar", "Diagonal")
 # Zero extrinsic back ratios (Liz and Jenny, tastylive): stock replacements, held like
 # shares. Automanage leaves them alone, as it does stock, until expiration day.
@@ -413,7 +435,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         q = sum(x.quantity for x in longs)
         width = abs(longs[0].strike - shorts_[0].strike) * 100 * q if longs and shorts_ else 0
         max_profit = width + open_value
-    elif open_value > 0 and opts and name not in ("Covered call",):
+    elif open_value > 0 and opts and name not in COVERED_KINDS:
         # Jade lizards and other credit trades: at most the credit.
         max_profit = open_value
 
@@ -422,8 +444,8 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     pct = pl / max_profit if (pl is not None and max_profit and max_profit > 0) else None
     upside_risk = None
     option_open = None
-    if name == "Covered call":
-        # Managed on the call alone: the shares stay.
+    if name in COVERED_KINDS:
+        # Managed on the option alone: the shares or the ZEBRA stay.
         option_open = -sum(x.quantity * x.avg_price * x.multiplier for x in opts)
         if option_open > 0 and all(x.mark is not None for x in opts):
             opt_pl = sum(x.quantity * x.mark * x.multiplier for x in opts) + option_open
@@ -457,8 +479,10 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "option_open_value": None if option_open is None else round(option_open, 2),
         # A ZEBRA unit moves like 100 shares: long for calls, short for puts.
         "shares_like": _shares_like(name, opts),
-        # A covered call written against shares or a call ZEBRA held separately.
+        # A covered call or put written against shares or a ZEBRA held separately, and the
+        # ZEBRA's expiration: the option is never rolled past it.
         "covered_by": st.meta.get("covered_by"),
+        "cover_until": (st.meta["cover_until"].isoformat() if st.meta.get("cover_until") else None),
     }
 
     flags = []
@@ -469,6 +493,8 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
             if name in CALENDARS
             else "of the call's credit"
             if name == "Covered call"
+            else "of the put's credit"
+            if name == "Covered put"
             else "max"
         )
         flags.append(
@@ -510,7 +536,15 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         )
     # A ratio opens for a small credit, so its loss is measured against what it can make.
     loss_basis = max_profit if name in RATIOS else open_value
-    if not st.defined_risk and shorts and pl is not None and loss_basis and loss_basis > 0:
+    # A covered option's loss is offset by the shares or the ZEBRA behind it: no loss rule.
+    if (
+        name not in COVERED_KINDS
+        and not st.defined_risk
+        and shorts
+        and pl is not None
+        and loss_basis
+        and loss_basis > 0
+    ):
         if pl <= -rules.loss_multiple * loss_basis:
             what = "the most it can make" if name in RATIOS else "the credit received"
             flags.append(

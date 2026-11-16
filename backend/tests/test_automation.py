@@ -966,3 +966,40 @@ def test_a_zebra_is_not_rolled_at_21_dte_but_still_closed_on_expiration_day():
     assert kinds(decide({**z, "numbers": {**z["numbers"], "dte": 20}}, 600, r, s, ALL)) == []
     expiring = {**z, "numbers": {**z["numbers"], "dte": 0}}
     assert kinds(decide(expiring, 600, r, s, ALL)) == [("expiry", "close")]
+
+
+def test_a_call_or_put_on_a_zebra_is_never_rolled_past_the_zebra():
+    from app.automation import ROLLS, profit_basis
+
+    s = {**merged_settings({}), "roll_single_itm": True}
+    r = Rules()
+
+    def covered(name, pc, exp, until, flags=()):
+        st = strat(name=name, legs=[leg(pc, 600 if pc == "C" else 580, -1, 0.6)], flags=flags)
+        st["numbers"] = {
+            **st["numbers"],
+            "dte": 20,
+            "expiration": exp,
+            "cover_until": until,
+            "option_open_value": 200.0,
+            "open_value": 200.0,
+        }
+        return st
+
+    # The ZEBRA expires later: the 21-DTE roll stays a roll.
+    cc = covered("Covered call", "C", "2026-12-04", "2026-12-18")
+    assert ("dte", "roll") in kinds(decide(cc, 590, r, s, ALL))
+    assert profit_basis(cc) == (200.0, 200.0)
+    # Same expiration as the ZEBRA: nothing left to roll to, so it closes.
+    last = covered("Covered call", "C", "2026-12-18", "2026-12-18")
+    acts = decide(last, 590, r, s, ALL)
+    assert ("dte", "close") in kinds(acts) and not any(a.kind in ROLLS for a in acts)
+    assert "ZEBRA" in next(a.reason for a in acts if a.rule == "dte")
+    # In the money: a covered put rolls down and out, but also not past the ZEBRA.
+    cp = covered("Covered put", "P", "2026-12-04", "2026-12-18", flags=["tested"])
+    assert ("tested", "roll_puts") in kinds(decide(cp, 570, r, s, ALL))
+    cp_last = covered("Covered put", "P", "2026-12-18", "2026-12-18", flags=["tested"])
+    assert ("tested", "close") in kinds(decide(cp_last, 570, r, s, ALL))
+    # Covered by shares (no ZEBRA): rolls as before.
+    shares = covered("Covered call", "C", "2026-12-18", None)
+    assert ("dte", "roll") in kinds(decide(shares, 590, r, s, ALL))

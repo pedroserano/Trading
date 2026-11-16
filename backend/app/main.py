@@ -223,6 +223,8 @@ class AnalyzeIn(BaseModel):
     legs: list[LegIn] = Field(min_length=1, max_length=8)
     # Shares already held that short calls are written against (a covered call).
     held_shares: int = Field(0, ge=0, le=1_000_000)
+    # Short shares (or a put ZEBRA's) a covered put is written against.
+    held_short_shares: int = Field(0, ge=0, le=1_000_000)
     # The account whose "portfolio after" figures to show ("sim" or a Schwab account key).
     account: str = "live"
 
@@ -1117,7 +1119,14 @@ def create_app(
             if leg.expiration and leg.expiration > today + timedelta(days=1200):
                 raise HTTPException(status_code=400, detail="Expiration too far out")
         try:
-            result = analyze(legs, body.spot, today, body.vol, held_shares=body.held_shares)
+            result = analyze(
+                legs,
+                body.spot,
+                today,
+                body.vol,
+                held_shares=body.held_shares,
+                held_short=body.held_short_shares,
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         snap = (portfolios.get(body.account) or portfolio).snapshot or {}
@@ -1207,14 +1216,14 @@ def create_app(
         bp, defined, a = None, True, None
         if spot and t.intent in ("open", "adjust") and all(x.mark is not None for x in t.legs):
             tl = [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs]
-            # Short calls covered by shares or a call ZEBRA already held are not naked.
-            calls = [x for x in t.legs if x.put_call == "C" and x.quantity < 0]
-            cover = 0.0
-            if calls and hasattr(pf, "strategies_for"):
-                cover = free_cover(
-                    pf.strategies_for(t.underlying), max(x.expiration for x in calls)
-                )
-            a = analyze(tl, spot, today, held_shares=cover)
+            # Short options covered by shares or a ZEBRA already held are not naked.
+            cover = {"C": 0.0, "P": 0.0}
+            held_st = pf.strategies_for(t.underlying) if hasattr(pf, "strategies_for") else []
+            for pc in cover:
+                mine = [x for x in t.legs if x.put_call == pc and x.quantity < 0]
+                if mine and held_st:
+                    cover[pc] = free_cover(held_st, max(x.expiration for x in mine), pc)
+            a = analyze(tl, spot, today, held_shares=cover["C"], held_short=cover["P"])
             bp, defined = a["bp_estimate"], not a["unlimited_loss"]
         # Conditions at the time, kept with the trade for the dashboard's analysis.
         market = (portfolio.snapshot or {}).get("market") or {}

@@ -38,15 +38,20 @@ export interface StrategyNumbers {
   short_strikes: number[];
   /** ZEBRAs: the shares the position moves like (negative for a put ZEBRA). */
   shares_like?: number | null;
-  /** A covered call written against shares or a call ZEBRA held separately. */
+  /** A covered call or put written against shares or a ZEBRA held separately. */
   covered_by?: "shares" | "ZEBRA" | null;
+  /** A covered option on a ZEBRA: the ZEBRA's expiration, never rolled past. */
+  cover_until?: string | null;
 }
 
-/** What a new covered call on one underlying can be written against. */
-export interface Cover {
+/** What a new covered call (C) or covered put (P) on one underlying can be written against:
+ * shares (long for calls, short for puts) and ZEBRAs of that type, 100 shares a unit. */
+export interface SideCover {
   shares: number;
   zebras: { expiration: string; shares: number }[];
 }
+
+export type Cover = Record<"C" | "P", SideCover>;
 
 export interface StrategyView {
   trade_id: number | string | null;

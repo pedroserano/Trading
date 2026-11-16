@@ -336,6 +336,10 @@ def test_bp_for_ratios_and_covered_calls():
     call = [TradeLeg("C", 240, exp, -1, 3.15)]
     assert bp_estimate(call, 230, float("-inf"), held_shares=100) == 0
     assert bp_estimate(call, 230, float("-inf")) == pytest.approx((46 - 10 + 3.15) * 100)
+    # A short put covered by short shares or a put ZEBRA: nothing more; calls are not covered.
+    put = [TradeLeg("P", 220, exp, -1, 2.50)]
+    assert bp_estimate(put, 230, -21_750, held_short=100) == 0
+    assert bp_estimate(put, 230, -21_750, held_shares=100) > 0
     condor = [
         TradeLeg("P", 550, exp, 1, 1.0),
         TradeLeg("P", 555, exp, -1, 1.5),
@@ -488,3 +492,32 @@ def test_calls_written_later_against_shares_are_covered_calls():
     call2 = group([opt("C", 200, -1, 2.0, under="AAPL")])
     cover_calls(few + call2)
     assert call2[0].name == "Short call"
+
+
+def test_puts_written_against_a_put_zebra_are_covered_puts():
+    from app.strategies import cover_calls, free_cover
+
+    pz = group([opt("P", 610, 2, 20.0), opt("P", 590, -1, 8.0)])
+    put = group([opt("P", 580, -1, 2.0, exp=NEAR)])
+    assert put[0].name == "Short put"
+    lst = pz + put
+    cover_calls(lst)
+    assert put[0].name == "Covered put" and put[0].meta["covered_by"] == "ZEBRA"
+    assert put[0].meta["cover_until"] == EXP
+    evaluate(put[0], TODAY, 589.0, Rules())
+    n = put[0].numbers
+    assert n["cover_until"] == EXP.isoformat() and n["option_open_value"] == 200
+    assert free_cover(lst, NEAR, "P") == 0 and free_cover(pz, NEAR, "P") == 100
+    # A call ZEBRA covers no puts, and a put past the ZEBRA's expiration is not covered.
+    cz = group([opt("C", 570, 2, 22.0), opt("C", 590, -1, 9.0)])
+    lone = group([opt("P", 580, -1, 2.0, exp=NEAR)])
+    cover_calls(cz + lone)
+    assert lone[0].name == "Short put"
+    late = group([opt("P", 580, -1, 2.0, exp=date(2027, 1, 15))])
+    cover_calls(pz + late)
+    assert late[0].name == "Short put"
+    # A covered option is not closed by the loss rule: what backs it offsets the loss.
+    hurt = group([opt("P", 600, -1, 2.0, mark=12.0, delta=-0.7, exp=NEAR)])
+    cover_calls(pz + hurt)
+    evaluate(hurt[0], TODAY, 585.0, Rules())
+    assert hurt[0].name == "Covered put" and "loss" not in {f["kind"] for f in hurt[0].flags}

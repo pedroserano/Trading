@@ -5,7 +5,7 @@ import { MAX_LEGS } from "./OrderTicket";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, signed, strike, tone } from "./format";
 import PayoffChart from "./PayoffChart";
-import type { Analysis, BuildLeg, Chain, ChainRow, Contract, Cover, Expiration } from "./types";
+import type { Analysis, BuildLeg, Chain, ChainRow, Contract, Cover, Expiration, SideCover } from "./types";
 
 // The chart library is large: load it only when the Trade screen opens.
 const PriceChart = lazy(() => import("./PriceChart"));
@@ -78,7 +78,8 @@ interface Params {
 type Builder = {
   name: string;
   title?: string;
-  build: (rows: ChainRow[], exp: string, p: Params, spot: number, shares: number) => BuildLeg[] | null;
+  /** cover: shares-equivalent free for this builder's covered side (calls or puts). */
+  build: (rows: ChainRow[], exp: string, p: Params, spot: number, cover: number) => BuildLeg[] | null;
 };
 
 const BUILDERS: Builder[] = [
@@ -110,11 +111,21 @@ const BUILDERS: Builder[] = [
   {
     name: "Covered call",
     title: "Sells one call at the short delta for every 100 shares, or call ZEBRA expiring no sooner, this account holds",
-    build: (rows, exp, p, _spot, shares) => {
-      const n = Math.floor(shares / 100);
+    build: (rows, exp, p, _spot, cover) => {
+      const n = Math.floor(cover / 100);
       const sc = byDelta(rows, "call", p.vertical);
       if (n < 1 || !sc) return null;
       return [legFrom(sc.call!, sc, "call", exp, -n)];
+    },
+  },
+  {
+    name: "Covered put",
+    title: "Sells one put at the short delta for every put ZEBRA (expiring no sooner), or 100 shares short, this account holds",
+    build: (rows, exp, p, _spot, cover) => {
+      const n = Math.floor(cover / 100);
+      const sp = byDelta(rows, "put", p.vertical);
+      if (n < 1 || !sp) return null;
+      return [legFrom(sp.put!, sp, "put", exp, -n)];
     },
   },
   {
@@ -198,11 +209,11 @@ const BUILDERS: Builder[] = [
   },
 ];
 
-const NO_COVER: Cover = { shares: 0, zebras: [] };
+const NO_COVER: Cover = { C: { shares: 0, zebras: [] }, P: { shares: 0, zebras: [] } };
 
-/** Shares-equivalent cover for a call expiring on exp: free shares, then call ZEBRAs that
+/** Shares-equivalent cover for an option expiring on exp: free shares, then ZEBRAs that
  * expire no sooner. */
-function coverFor(cover: Cover, exp: string): { total: number; zebra: number } {
+function coverFor(cover: SideCover, exp: string): { total: number; zebra: number } {
   const zebra = cover.zebras.filter((z) => z.expiration >= exp).reduce((a, z) => a + z.shares, 0);
   return { total: cover.shares + zebra, zebra };
 }
@@ -214,9 +225,10 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
   const [chain, setChain] = useState<Chain | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [legs, setLegs] = useState<BuildLeg[]>([]);
-  // Shares already held that a covered call is written against: in the payoff, not the order.
+  // Shares already held that a covered call (positive) or covered put (negative, short
+  // shares) is written against: in the payoff, not the order.
   const [covered, setCovered] = useState(0);
-  // Whether that cover is a call ZEBRA (counted as shares in the payoff).
+  // Whether that cover is a ZEBRA (counted as shares in the payoff).
   const [coveredByZebra, setCoveredByZebra] = useState(false);
   const coveredNow = legs.length ? covered : 0;
   useEffect(() => {
@@ -311,7 +323,8 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
           spot: chain.underlying_price,
           vol: chain.atm_iv,
           legs: legs.map(({ symbol: _s, ...l }) => l),
-          held_shares: coveredNow,
+          held_shares: Math.max(coveredNow, 0),
+          held_short_shares: Math.max(-coveredNow, 0),
           account,
         };
         let a = await postJson<Analysis>("/api/analyze", body);
@@ -507,17 +520,21 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
                 disabled={!chain || !exp || spot === null}
                 onClick={() => {
                   if (!chain || !exp || spot === null) return;
-                  const free = coverFor(cover, exp);
+                  const pc = b.name === "Covered put" ? "P" : "C";
+                  const isCovered = b.name === "Covered call" || b.name === "Covered put";
+                  const free = coverFor(cover[pc], exp);
                   const built = b.build(chain.rows, exp, params, spot, free.total);
                   if (built) {
                     setLegs(built);
-                    const n = b.name === "Covered call" ? Math.abs(built[0].quantity) * 100 : 0;
-                    setCovered(n);
-                    setCoveredByZebra(n > cover.shares);
+                    const n = isCovered ? Math.abs(built[0].quantity) * 100 : 0;
+                    setCovered(pc === "P" ? -n : n);
+                    setCoveredByZebra(n > cover[pc].shares);
                     setAnaError(null);
-                  } else if (b.name === "Covered call") {
+                  } else if (isCovered) {
                     setAnaError(
-                      `A covered call needs 100 shares of ${symbol}, or a call ZEBRA expiring on or after this date, per contract; free now: ${free.total}.`,
+                      pc === "C"
+                        ? `A covered call needs 100 shares of ${symbol}, or a call ZEBRA expiring on or after this date, per contract; free now: ${free.total}.`
+                        : `A covered put needs a put ZEBRA on ${symbol} expiring on or after this date (or 100 shares short) per contract; free now: ${free.total}.`,
                     );
                   } else setAnaError(`Not enough strikes in this chain for a ${b.name.toLowerCase()}.`);
                 }}
@@ -572,10 +589,14 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
                 {coveredNow ? (
                   <tr>
                     <td className="qty">
-                      <span className={tone(coveredNow)}>+{coveredNow}</span>
+                      <span className={tone(coveredNow)}>{signed(coveredNow)}</span>
                     </td>
                     <td className="l" colSpan={4}>
-                      {coveredByZebra ? "call ZEBRA, counted as shares" : "shares held"}{" "}
+                      {coveredByZebra
+                        ? `${coveredNow > 0 ? "call" : "put"} ZEBRA, counted as ${coveredNow > 0 ? "" : "short "}shares`
+                        : coveredNow > 0
+                          ? "shares held"
+                          : "shares short"}{" "}
                       <span className="sub">(in the payoff, not in the order)</span>
                     </td>
                   </tr>
