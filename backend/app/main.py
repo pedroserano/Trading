@@ -1370,8 +1370,8 @@ def create_app(
                 and (body.limit_net if body.limit_net is not None else p.get("mid") or 0) < 0
             ):
                 warnings.append(
-                    "Not a tastylive trade: debit verticals and long options are not managed "
-                    "by automanage"
+                    "Not a tastylive trade: debit verticals, ZEBRAs and long options are not "
+                    "managed by automanage"
                 )
             if kind == "Jade lizard":
                 calls = sorted(x.strike for x in t.legs if x.put_call == "C")

@@ -398,3 +398,29 @@ def test_lizard_covered_call_and_calendar_profit_bases():
     dv = group([opt("P", 580, 1, 3.0, mark=4.5), opt("P", 575, -1, 1.0, mark=1.5)])[0]
     evaluate(dv, TODAY, 570, Rules())
     assert not any(f["kind"] == "profit" for f in dv.flags)
+
+
+def test_zebras_are_recognised_and_left_to_run():
+    # Two long calls deeper in the money than one short at the money: a call ZEBRA.
+    z = group(
+        [
+            opt("C", 570, 2, 22.0, mark=23.0, delta=0.75),
+            opt("C", 590, -1, 9.0, mark=9.5, delta=-0.5),
+        ]
+    )
+    assert [x.name for x in z] == ["Call ZEBRA"] and z[0].defined_risk
+    evaluate(z[0], TODAY, 591.0, Rules())
+    n = z[0].numbers
+    assert n["open_value"] == -3500.0 and n["max_loss"] == 3500.0 and n["max_profit"] is None
+    # The short is at the money by design: never "tested", no loss or profit flag.
+    assert {f["kind"] for f in z[0].flags} == set()
+    pz = group([opt("P", 610, 4, 20.0), opt("P", 590, -2, 8.0)])
+    assert [(x.name, sorted(abs(leg.quantity) for leg in x.legs)) for x in pz] == [
+        ("Put ZEBRA", [2, 4])
+    ]
+    # Not a ZEBRA: longs further out of the money (a back ratio), or one-for-one (a vertical).
+    assert group([opt("C", 600, 2, 3.0), opt("C", 590, -1, 8.0)])[0].name == "Call vertical"
+    assert group([opt("C", 570, 1, 22.0), opt("C", 590, -1, 9.0)])[0].name == "Call vertical"
+    # Extra longs beyond two per short stay as long calls.
+    extra = group([opt("C", 570, 3, 22.0), opt("C", 590, -1, 9.0)])
+    assert names(extra) == [("Call ZEBRA", 1), ("Long call", 1)]

@@ -952,3 +952,17 @@ def test_each_account_runs_its_own_levels_and_old_settings_carry_over():
         ]
         == "auto"
     )
+
+
+def test_a_zebra_is_not_rolled_at_21_dte_but_still_closed_on_expiration_day():
+    s = merged_settings({})
+    r = Rules()
+    z = strat(
+        name="Call ZEBRA",
+        defined=True,
+        open_value=-3500.0,
+        legs=[leg("C", 570, 2, 0.75), leg("C", 590, -1, -0.5)],
+    )
+    assert kinds(decide({**z, "numbers": {**z["numbers"], "dte": 20}}, 600, r, s, ALL)) == []
+    expiring = {**z, "numbers": {**z["numbers"], "dte": 0}}
+    assert kinds(decide(expiring, 600, r, s, ALL)) == [("expiry", "close")]

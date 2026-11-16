@@ -158,6 +158,29 @@ def group(legs: list[Leg]) -> list[Strategy]:
                 kind = "Put" if pc == "P" else "Call"
                 add(f"{kind} ratio 1×2", sorted(taken, key=lambda x: x.strike), False)
 
+        # ZEBRAs (zero extrinsic back ratio): two longs deeper in the money than one short,
+        # same type and expiration. A stock replacement: about 100 deltas per unit.
+        for pc in ("P", "C"):
+            while True:
+                found = None
+                for s in pool.options(pc, True, exp):
+                    deeper = [
+                        lg
+                        for lg in pool.options(pc, False, exp)
+                        if (lg.strike > s.strike if pc == "P" else lg.strike < s.strike)
+                        and abs(lg.quantity) >= 2 * abs(s.quantity)
+                    ]
+                    if deeper:
+                        found = (s, min(deeper, key=lambda x: abs(x.strike - s.strike)))
+                        break
+                if not found:
+                    break
+                s, lg = found
+                q = abs(s.quantity)
+                taken = [pool.take(lg, 2 * q), pool.take(s, q)]
+                kind = "Put" if pc == "P" else "Call"
+                add(f"{kind} ZEBRA", sorted(taken, key=lambda x: x.strike), True)
+
         # Verticals: pair each short with the nearest long of the same type and expiration.
         for pc in ("P", "C"):
             while True:
@@ -227,11 +250,12 @@ def group(legs: list[Leg]) -> list[Strategy]:
 
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
 CALENDARS = ("Calendar", "Diagonal")
+ZEBRAS = ("Put ZEBRA", "Call ZEBRA")
 
 
 def not_tasty(name: str, open_value: float) -> bool:
-    """Debit verticals and long options: not tastylive trades, so never managed."""
-    if name in ("Long put", "Long call"):
+    """Debit verticals, ZEBRAs and long options: not tastylive trades, so never managed."""
+    if name in ("Long put", "Long call") or name in ZEBRAS:
         return True
     return name in ("Put vertical", "Call vertical") and open_value < 0
 
@@ -303,7 +327,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         max_profit, max_loss = open_value, width - open_value
     elif name in ("Strangle", "Straddle", "Short put", "Short call"):
         max_profit = open_value
-    elif name in ("Long put", "Long call", "Calendar", "Diagonal"):
+    elif name in ("Long put", "Long call", "Calendar", "Diagonal") or name in ZEBRAS:
         max_loss = -open_value
     elif name in RATIOS:
         # Most at the short strike at expiration: the width plus the credit.
@@ -382,11 +406,15 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
                 "detail": f"At or inside {rules.manage_dte} DTE: close or roll",
             }
         )
+    # A ZEBRA's short sits at the money by design and is covered by the longs.
     tested = [
         x
         for x in shorts
-        if (x.delta is not None and abs(x.delta) >= rules.tested_delta)
-        or x.is_itm(underlying_price)
+        if name not in ZEBRAS
+        and (
+            (x.delta is not None and abs(x.delta) >= rules.tested_delta)
+            or x.is_itm(underlying_price)
+        )
     ]
     if tested:
         itm = any(x.is_itm(underlying_price) for x in tested)

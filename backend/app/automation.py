@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import plain
-from .strategies import CALENDARS, RATIOS, not_tasty, target_for
+from .strategies import CALENDARS, RATIOS, ZEBRAS, not_tasty, target_for
 from .targets import VIEWS
 
 UNSET = object()
@@ -564,7 +564,13 @@ def decide(
         )
     if levels.get("loss", "off") != "off" and "loss" in flags:
         out.append(Action("loss", "close", f"Loss reached {rules.loss_multiple:g}x the credit"))
-    if levels.get("dte", "off") != "off" and dte is not None and 0 < dte <= rules.manage_dte:
+    # A ZEBRA is a stock replacement: no 21-DTE roll (its short is never "tested").
+    if (
+        levels.get("dte", "off") != "off"
+        and dte is not None
+        and 0 < dte <= rules.manage_dte
+        and st["name"] not in ZEBRAS
+    ):
         if st["name"] in CALENDARS:
             out.append(
                 Action(
@@ -1016,7 +1022,14 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "Notify",
             "— (defined risk)",
         ),
-        ("Debit vertical, long option", "Not managed: not tastylive trades", "—", "—", "—", "—"),
+        (
+            "Debit vertical, ZEBRA, long option",
+            "Not managed: not tastylive trades",
+            "—",
+            "—",
+            "—",
+            "—",
+        ),
     ]
     margin = settings.get("expiry_pin_margin") or 0
     sessions = settings.get("earnings_close_sessions", 1)
