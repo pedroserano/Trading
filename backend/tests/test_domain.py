@@ -6,7 +6,7 @@ from app import analytics
 from app.notify import ET, due_reminders
 from app.options import Leg, bs, leg_from_schwab_position, option_symbol, parse_option_symbol
 from app.schwab_service import ConnectionStatus
-from app.strategies import Rules, evaluate, group
+from app.strategies import Rules, evaluate, group, not_tasty
 
 TODAY = date(2026, 11, 11)
 EXP = date(2026, 12, 18)  # 37 DTE
@@ -412,12 +412,16 @@ def test_zebras_are_recognised_and_left_to_run():
     evaluate(z[0], TODAY, 591.0, Rules())
     n = z[0].numbers
     assert n["open_value"] == -3500.0 and n["max_loss"] == 3500.0 and n["max_profit"] is None
+    # A stock replacement (tastylive's Liz and Jenny): like 100 shares, not a non-tasty trade.
+    assert n["shares_like"] == 100 and not not_tasty("Call ZEBRA", -3500.0)
     # The short is at the money by design: never "tested", no loss or profit flag.
     assert {f["kind"] for f in z[0].flags} == set()
     pz = group([opt("P", 610, 4, 20.0), opt("P", 590, -2, 8.0)])
     assert [(x.name, sorted(abs(leg.quantity) for leg in x.legs)) for x in pz] == [
         ("Put ZEBRA", [2, 4])
     ]
+    evaluate(pz[0], TODAY, 589.0, Rules())
+    assert pz[0].numbers["shares_like"] == -200
     # Not a ZEBRA: longs further out of the money (a back ratio), or one-for-one (a vertical).
     assert group([opt("C", 600, 2, 3.0), opt("C", 590, -1, 8.0)])[0].name == "Call vertical"
     assert group([opt("C", 570, 1, 22.0), opt("C", 590, -1, 9.0)])[0].name == "Call vertical"

@@ -45,6 +45,29 @@ function wing(rows: ChainRow[], from: ChainRow, side: Side, width: number): Chai
   return pool.reduce((a, b) => (Math.abs(b.strike - want) < Math.abs(a.strike - want) ? b : a));
 }
 
+function mid(c: Contract | null | undefined): number | null {
+  if (!c) return null;
+  if (c.mark !== null && c.mark !== undefined) return c.mark;
+  if (c.bid === null || c.bid === undefined || c.ask === null || c.ask === undefined) return null;
+  return (c.bid + c.ask) / 2;
+}
+
+/** A ZEBRA (zero extrinsic back ratio, Liz and Jenny at tastylive): sells one option at the
+ * money and buys two deeper in the money, at the strike where the two longs carry about the
+ * short's extrinsic value, so the position moves like 100 shares with almost no time decay. */
+function zebra(rows: ChainRow[], exp: string, side: Side, spot: number): BuildLeg[] | null {
+  const priced = rows.filter((r) => mid(r[side]) !== null);
+  if (!priced.length) return null;
+  const atm = priced.reduce((a, b) => (Math.abs(b.strike - spot) < Math.abs(a.strike - spot) ? b : a));
+  const intrinsic = (k: number) => Math.max(side === "call" ? spot - k : k - spot, 0);
+  const extrinsic = (r: ChainRow) => Math.max(mid(r[side])! - intrinsic(r.strike), 0);
+  const deeper = priced.filter((r) => (side === "call" ? r.strike < atm.strike : r.strike > atm.strike));
+  if (!deeper.length) return null;
+  const want = extrinsic(atm);
+  const long = deeper.reduce((a, b) => (Math.abs(2 * extrinsic(b) - want) < Math.abs(2 * extrinsic(a) - want) ? b : a));
+  return [legFrom(long[side]!, long, side, exp, 2), legFrom(atm[side]!, atm, side, exp, -1)];
+}
+
 interface Params {
   strangle: number;
   vertical: number;
@@ -147,6 +170,17 @@ const BUILDERS: Builder[] = [
       if (!lc || !sc || sc.strike <= lc.strike) return null;
       return [legFrom(lc.call!, lc, "call", exp, 1), legFrom(sc.call!, sc, "call", exp, -2)];
     },
+  },
+  {
+    name: "Call ZEBRA",
+    title:
+      "Stock replacement (Liz and Jenny, tastylive): sells one call at the money and buys two in the money, where the two carry about the short's extrinsic value. Moves like 100 shares, for the debit",
+    build: (rows, exp, _p, spot) => zebra(rows, exp, "call", spot),
+  },
+  {
+    name: "Put ZEBRA",
+    title: "The bearish ZEBRA: sells one put at the money and buys two in the money. Moves like 100 shares short, for the debit",
+    build: (rows, exp, _p, spot) => zebra(rows, exp, "put", spot),
   },
   {
     name: "Jade lizard",

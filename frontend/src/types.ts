@@ -36,6 +36,8 @@ export interface StrategyNumbers {
   vega: number | null;
   short_deltas: (number | null)[];
   short_strikes: number[];
+  /** ZEBRAs: the shares the position moves like (negative for a put ZEBRA). */
+  shares_like?: number | null;
 }
 
 export interface StrategyView {

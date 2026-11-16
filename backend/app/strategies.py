@@ -250,12 +250,14 @@ def group(legs: list[Leg]) -> list[Strategy]:
 
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
 CALENDARS = ("Calendar", "Diagonal")
+# Zero extrinsic back ratios (Liz and Jenny, tastylive): stock replacements, held like
+# shares. Automanage leaves them alone, as it does stock, until expiration day.
 ZEBRAS = ("Put ZEBRA", "Call ZEBRA")
 
 
 def not_tasty(name: str, open_value: float) -> bool:
-    """Debit verticals, ZEBRAs and long options: not tastylive trades, so never managed."""
-    if name in ("Long put", "Long call") or name in ZEBRAS:
+    """Debit verticals and long options: not tastylive trades, so never managed."""
+    if name in ("Long put", "Long call"):
         return True
     return name in ("Put vertical", "Call vertical") and open_value < 0
 
@@ -378,6 +380,8 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         # spread's width.
         "upside_risk": None if upside_risk is None else round(max(upside_risk, 0), 2),
         "option_open_value": None if option_open is None else round(option_open, 2),
+        # A ZEBRA unit moves like 100 shares: long for calls, short for puts.
+        "shares_like": _shares_like(name, opts),
     }
 
     flags = []
@@ -442,6 +446,13 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     if any(leg.mark is None or (leg.is_option and leg.delta is None) for leg in legs):
         flags.append({"kind": "data", "label": "No quote", "detail": "Missing live quote"})
     st.flags = flags
+
+
+def _shares_like(name: str, opts: list[Leg]) -> int | None:
+    if name not in ZEBRAS:
+        return None
+    units = sum(abs(x.quantity) for x in opts if x.short)
+    return int(units * 100 * (1 if name == "Call ZEBRA" else -1))
 
 
 def _day_pl(legs: list[Leg]) -> float | None:

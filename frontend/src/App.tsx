@@ -661,6 +661,12 @@ function StrategyRows(props: {
           <span className="caret">{expanded ? "▾" : "▸"}</span>
           {props.under ? <span className="sym-inline">{props.under}</span> : null}
           {st.name}
+          {n.shares_like ? (
+            <span className="sub" title="A ZEBRA moves like stock: 100 shares per unit">
+              {" "}≈{n.shares_like < 0 ? "−" : ""}
+              {Math.abs(n.shares_like)} sh
+            </span>
+          ) : null}
           {props.under && !compact ? <EarningsFlag e={props.earnings} /> : null}
           {compact ? (
             <span className="sub">

@@ -346,10 +346,10 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             f"(Tony Battista, tastylive: at least 10%); calendars and diagonals at "
             f"{pct(rules.profit_target_calendar)} of the debit; a covered call at "
             f"{pct(rules.profit_target)} of the call's credit, closing the call and keeping the "
-            "shares. All set on the Rules tab. Debit verticals and long options are not "
-            "tastylive trades and are left alone. Does: closes the trade. At Auto a GTC closing "
-            "order rests at that price from the start; at Propose or Notify you hear once it "
-            "is reached."
+            "shares. All set on the Rules tab. ZEBRAs are held like shares, with no target; "
+            "debit verticals and long options are not tastylive trades and are left alone. "
+            "Does: closes the trade. At Auto a GTC closing order rests at that price from the "
+            "start; at Propose or Notify you hear once it is reached."
         ),
         "dte": (
             f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
@@ -1023,13 +1023,14 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "— (defined risk)",
         ),
         (
-            "Debit vertical, ZEBRA, long option",
-            "Not managed: not tastylive trades",
+            "ZEBRA",
+            "None: held like 100 shares a unit",
+            "Not rolled",
+            "— (the short sits at the money by design)",
             "—",
-            "—",
-            "—",
-            "—",
+            "— (defined risk)",
         ),
+        ("Debit vertical, long option", "Not managed: not tastylive trades", "—", "—", "—", "—"),
     ]
     margin = settings.get("expiry_pin_margin") or 0
     sessions = settings.get("earnings_close_sessions", 1)
