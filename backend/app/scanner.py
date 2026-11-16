@@ -284,7 +284,18 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
         live_line = f"Schwab account: {allowed(one)} (⟦link:Schwab limits|live⟧)."
     return [
         (
-            "1. Which stocks it looks at",
+            "1. Which accounts, and what it does with a trade",
+            [
+                "⟦levels:scan⟧. Notify sends a message, Propose waits for your tap, Auto "
+                "places the order (a Schwab account only with LIVE_AUTO=true in .env).",
+                "⟦?automanage_new⟧ Switch automanage on for each new trade once it fills, "
+                "managed with the view it was opened with.",
+                "Each run's trades, and what was skipped and why, show on the Watchlist page "
+                "under Scanner.",
+            ],
+        ),
+        (
+            "2. Which stocks it looks at",
             [
                 "Once a day at ⟦scan_time⟧ ET, then again every ⟦scan_every⟧ minutes until "
                 "the close (0: once a day), and whenever you tap Scan now.",
@@ -294,7 +305,7 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             ],
         ),
         (
-            "2. Is the premium worth selling?",
+            "3. Is the premium worth selling?",
             [
                 "Options must be expensive for that stock: IV rank of ⟦min_ivr⟧ or more, "
                 "against its own past year. Stocks are never compared by raw IV30, because "
@@ -311,7 +322,7 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             ],
         ),
         (
-            "3. Is now a bad time?",
+            "4. Is now a bad time?",
             [
                 "Single stocks need a known earnings date more than ⟦earnings_days⟧ sessions "
                 "away (⟦link:earnings dates|earnings⟧). ETFs have no earnings.",
@@ -326,7 +337,7 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             ],
         ),
         (
-            "4. Which way it leans (the first that applies)",
+            "5. Which way it leans (the first that applies)",
             [
                 "⟦?band_lean⟧ If the whole portfolio is outside its ⟦link:delta band|portfolio⟧, "
                 "lean back toward it (and lean with your bias, below).",
@@ -342,7 +353,7 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             ],
         ),
         (
-            "5. What it sells",
+            "6. What it sells",
             [
                 "In the expiration nearest ⟦target_dte⟧ days, between ⟦min_dte⟧ and "
                 "⟦max_dte⟧ days; ⟦?monthly_only⟧ monthly expirations only.",
@@ -361,7 +372,7 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             ],
         ),
         (
-            "6. How big",
+            "7. How big",
             [
                 "⟦contracts⟧ contracts a trade, at most ⟦max_bp_share⟧% of net liq in buying "
                 "power each, and at most ⟦max_per_underlying⟧ open trades in one stock.",
@@ -374,17 +385,6 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "At most ⟦max_new_per_day⟧ new trades a day, adding at most ⟦max_bp_day⟧% of "
                 "net liq in buying power, and never past the buying-power ceiling for today's "
                 "VIX (⟦link:the ceiling|rules⟧).",
-            ],
-        ),
-        (
-            "7. What happens next",
-            [
-                "⟦levels:scan⟧. Notify sends a message, Propose waits for your tap, Auto "
-                "places the order (a Schwab account only with LIVE_AUTO=true in .env).",
-                "⟦?automanage_new⟧ Switch automanage on for each new trade once it fills, "
-                "managed with the view it was opened with.",
-                "Each run's trades, and what was skipped and why, show on the Watchlist page "
-                "under Scanner.",
             ],
         ),
     ]

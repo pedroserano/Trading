@@ -238,7 +238,7 @@
   <form method="post" action="/scanner/settings" class="plain-form">
     <input type="hidden" name="_form" value="scanner">
     {% call group("How the scanner picks trades") %}
-      <p class="dim small">In order, as it runs. Change any number, choice or box right in the
+      <p class="dim small">First the accounts it runs on and at what level, then its steps in order, as it runs. Change any number, choice or box right in the
         text; underlined values are set on another tab and open it.</p>
       {% for title, lines in scan_steps_html %}
       <p class="small step-title"><b>{{ title }}</b></p>
