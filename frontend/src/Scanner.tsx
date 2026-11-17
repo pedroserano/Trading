@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
 import { AccountContext, AccountsContext } from "./context";
-import { clock, money, pct } from "./format";
+import { clock, money, pct, shortDate } from "./format";
 
 type Candidate = {
   symbol: string;
@@ -117,7 +117,7 @@ export default function Scanner() {
                   </td>
                   <td>{Math.round(c.ivr)}</td>
                   <td>
-                    {c.expiration.slice(5)} <span className="sub">{c.dte}d</span>
+                    {shortDate(c.expiration)} <span className="sub">{c.dte}d</span>
                   </td>
                   <td>{c.mid === null ? "–" : Math.abs(c.mid).toFixed(2)}</td>
                   <td>{pct(c.pop)}</td>

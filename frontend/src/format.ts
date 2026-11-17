@@ -33,8 +33,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 export function shortDate(iso: string | null): string {
   if (!iso) return DASH;
-  const [, m, d] = iso.split("-").map(Number);
-  return `${MONTHS[m - 1]} ${d}`;
+  const [y, m, d] = iso.split("-").map(Number);
+  // Another year's date carries its last two digits, so Jan 2027 can't pass for Jan 2026.
+  const year = y !== new Date().getFullYear() ? ` '${String(y).slice(-2)}` : "";
+  return `${MONTHS[m - 1]} ${d}${year}`;
 }
 
 export function strike(v: number | null): string {
