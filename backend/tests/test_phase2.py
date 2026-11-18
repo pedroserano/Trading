@@ -345,20 +345,24 @@ def test_trade_endpoints(client):
 
 def test_watchlist_import_and_remove(client):
     r = client.post(
-        "/watchlist/import",
+        "/api/watchlist/upload",
         files={"file": ("wl.csv", TOS_EXPORT, "text/csv")},
         data={"mode": "replace"},
     )
-    assert r.status_code == 303
-    page = client.get("/connect").text
-    assert "Watchlist now has 4 symbols" in page and "Skipped" in page and "/ES" in page
-    client.post("/watchlist/import", data={"text": "GLD tlt", "mode": "add"})
-    client.post("/watchlist/remove", data={"symbol": "QQQ"})
-    page = client.get("/connect").text
+    assert r.status_code == 200
+    m = r.json()["message"]
+    assert "Watchlist now has 4 symbols" in m and "Skipped" in m and "/ES" in m
+    r = client.post("/api/watchlist/add", json={"text": "GLD tlt"}).json()
+    assert r["message"] == "Added GLD, TLT."
+    assert client.post("/api/watchlist/add", json={"text": "GLD"}).json()["message"] == (
+        "Already on the watchlist."
+    )
+    assert "No symbols" in client.post("/api/watchlist/add", json={"text": "  "}).json()["message"]
+    r = client.post("/api/watchlist/remove", json={"symbol": "QQQ"}).json()
+    assert r["message"] == "Removed QQQ."
     for sym in ("SPY", "GLD", "TLT", "BRK/B"):
-        assert f'value="{sym}"' in page
-    assert 'value="QQQ"' not in page
-    assert client.get("/api/watchlist").status_code == 200
+        assert sym in r["watchlist"]
+    assert "QQQ" not in r["watchlist"]
 
 
 def test_rules_form(client):
@@ -419,10 +423,10 @@ async def test_flag_notifications_once_each_and_respect_switch():
 
 def test_import_shows_on_watchlist_screen_immediately(client):
     before = [r["symbol"] for r in client.get("/api/watchlist").json()["rows"]]
-    client.post("/watchlist/import", data={"text": "GLD XLE", "mode": "add"})
+    client.post("/api/watchlist/add", json={"text": "GLD XLE"})
     after = [r["symbol"] for r in client.get("/api/watchlist").json()["rows"]]
     assert after == before + ["GLD", "XLE"]
-    client.post("/watchlist/remove", data={"symbol": "GLD"})
+    client.post("/api/watchlist/remove", json={"symbol": "GLD"})
     assert "GLD" not in [r["symbol"] for r in client.get("/api/watchlist").json()["rows"]]
 
 

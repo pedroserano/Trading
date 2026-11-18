@@ -550,3 +550,7 @@ entered in Settings.
 - Tasty mechanics: [tastylive trade entry and exit](https://www.tastylive.com/shows/best-practices/episodes/trade-entry-and-exit-07-08-2019), [managing 21 days early](https://www.tastylive.com/shows/best-practices/episodes/managing-21-days-early-02-25-2020), [capital allocation and volatility](https://www.tastylive.com/news-insights/How-Capital-Allocation-Impacts-Volatility), [VIX-based buying power (third party)](https://help.optionsautotrader.com/en/articles/82-how-the-vix-based-buying-power-works), [tastytrade custom grouping](https://tastyworks.freshdesk.com/support/solutions/articles/43000704699-custom-grouping)
 - TrueNAS: [Install Custom App screens, 25.04](https://www.truenas.com/docs/scale/25.04/scaleuireference/apps/installcustomappscreens/), [Docker on TrueNAS with compose includes](https://technotim.live/posts/truenas-docker-pro)
 - Projects reviewed: linked in section 3.
+
+### Watchlist edited in place
+- The Watchlist screen has a ticker box with Add and Import (thinkorswim export) on top and a × on each row; JSON routes `/api/watchlist/add|upload|remove` (session only, refused to API keys). The Settings Watchlist section is gone; that tab is now "Earnings", and old `#/settings/watchlist` links open the Watchlist.
+- Liquidity column moved after Skew so IV30, IVR, IVP and Skew sit together.

@@ -257,29 +257,8 @@
 </div>
 
 {# ------------------------------------------------------------------------------------ #}
-<div class="tab-panel" data-tab="watchlist" data-label="Watchlist">
-<section id="watchlist">
-  <h2>Watchlist {{ tip("IV is recorded every trading day for these symbols, and they appear on the Watchlist screen. Symbols you hold are always recorded too.") }}</h2>
-  <p class="chips">
-    {% for sym in watchlist %}
-    <form class="inline chip" method="post" action="/watchlist/remove">
-      <input type="hidden" name="symbol" value="{{ sym }}">{{ sym }}
-      <button class="link" title="Remove {{ sym }}" aria-label="Remove {{ sym }}">×</button>
-    </form>
-    {% else %}<span class="dim">Empty.</span>{% endfor %}
-  </p>
-  <form method="post" action="/watchlist/import" enctype="multipart/form-data">
-    <p><textarea name="text" rows="2" placeholder="Type or paste symbols: SPY, QQQ, IWM"></textarea></p>
-    <p class="dim small">Or a thinkorswim export (the watchlist's menu, Export, To file):
-       <input type="file" name="file" accept=".csv,.txt,text/csv,text/plain"></p>
-    <p>
-      <label><input type="radio" name="mode" value="add" checked> Add</label>
-      &nbsp;&nbsp;
-      <label><input type="radio" name="mode" value="replace"> Replace the list</label>
-      &nbsp;&nbsp;<button class="primary" type="submit">Import</button>
-    </p>
-  </form>
-</section>
+<div class="tab-panel" data-tab="earnings" data-label="Earnings">
+<p class="dim small">The watchlist is edited on the <a href="/#/watchlist">Watchlist screen</a>.</p>
 
 <section id="earnings">
   <h2>Earnings dates {{ tip("Used by the scanner's earnings buffer, the automanage earnings rule, and the earnings flags. Refreshed every six hours.") }}</h2>

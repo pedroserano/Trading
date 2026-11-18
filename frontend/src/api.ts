@@ -36,3 +36,7 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
     }),
   );
 }
+
+export async function postForm<T>(url: string, body: FormData): Promise<T> {
+  return handle<T>(await fetch(url, { method: "POST", body }));
+}

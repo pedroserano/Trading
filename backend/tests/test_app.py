@@ -443,9 +443,7 @@ def test_settings_live_inside_the_app_when_it_is_built(settings, tmp_path):
         r = c.get("/connect")
         assert r.status_code == 303 and r.headers["location"] == "/#/settings"
         frag = c.get("/connect?fragment=1")
-        assert frag.status_code == 200 and "<html" not in frag.text and "Watchlist" in frag.text
-        r = c.post("/watchlist/remove", data={"symbol": "SPY"})
-        assert r.headers["location"] == "/#/settings/watchlist"
+        assert frag.status_code == 200 and "<html" not in frag.text and "Earnings" in frag.text
         r = c.post("/rules", data={"manage_dte": "999"})
         assert r.headers["location"] == "/#/settings/rules"
         assert "must be between" in c.get("/connect?fragment=1").text
@@ -596,7 +594,7 @@ def test_settings_tabs_show_every_setting_with_its_default(settings):
         login(c)
         page = c.get("/connect").text
         tabs = re.findall(r'class="tab-panel" data-tab="([a-z]+)"', page)
-        assert tabs == ["rules", "portfolio", "automation", "scanner", "watchlist", "connection"]
+        assert tabs == ["rules", "portfolio", "automation", "scanner", "earnings", "connection"]
         keys = (
             [("r", f[0]) for f in RULE_FIELDS + BAND_FIELDS]
             + [("a", f[0]) for f in SETTING_FIELDS]

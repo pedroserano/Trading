@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Stars, { liquidityTitle } from "./Stars";
-import { getJson, postJson } from "./api";
+import { getJson, postForm, postJson } from "./api";
 import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
@@ -41,27 +41,111 @@ export default function Watchlist() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "symbol", desc: false });
 
+  const load = useCallback(async () => {
+    try {
+      const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string> }>("/api/watchlist");
+      setRows(r.rows);
+      setViews(r.views ?? {});
+      setError(null);
+    } catch (e) {
+      setError(String((e as Error).message));
+    }
+  }, []);
+
   useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string> }>("/api/watchlist");
-        if (!stop) {
-          setRows(r.rows);
-          setViews(r.views ?? {});
-          setError(null);
-        }
-      } catch (e) {
-        if (!stop) setError(String((e as Error).message));
-      }
-    };
     load();
     const t = window.setInterval(load, 10000);
-    return () => {
-      stop = true;
-      window.clearInterval(t);
-    };
-  }, []);
+    return () => window.clearInterval(t);
+  }, [load]);
+
+  // Editing: a ticker box and Import on top, a × on each row.
+  const [ticker, setTicker] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<Set<string>>(new Set());
+  const [note, setNote] = useState<{ text: string; warn: boolean } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const edit = async (call: () => Promise<{ message: string }>) => {
+    setBusy(true);
+    try {
+      const out = await call();
+      setNote(out.message ? { text: out.message, warn: /Skipped|Not recognised|No symbols/.test(out.message) } : null);
+      await load();
+    } catch (e) {
+      setNote({ text: String((e as Error).message), warn: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const add = () => {
+    if (!ticker.trim()) return;
+    edit(async () => {
+      const out = await postJson<{ message: string }>("/api/watchlist/add", { text: ticker, mode: "add" });
+      setTicker("");
+      return out;
+    });
+  };
+  const importFile = (f: File) => {
+    const fd = new FormData();
+    fd.append("file", f);
+    fd.append("mode", "add");
+    edit(() => postForm<{ message: string }>("/api/watchlist/upload", fd));
+  };
+  const remove = async (symbol: string) => {
+    setRemoving((s) => new Set(s).add(symbol));
+    await edit(() => postJson<{ message: string }>("/api/watchlist/remove", { symbol }));
+    setRemoving((s) => {
+      const n = new Set(s);
+      n.delete(symbol);
+      return n;
+    });
+  };
+
+  const editor = (
+    <div className="watch-edit">
+      <form
+        className="watch-add"
+        onSubmit={(e) => {
+          e.preventDefault();
+          add();
+        }}
+      >
+        <input
+          type="text"
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value.toUpperCase())}
+          placeholder="Add ticker"
+          aria-label="Ticker to add"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        <button className="primary" type="submit" disabled={busy || !ticker.trim()}>
+          Add
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          title="Add the symbols from a thinkorswim watchlist export (the watchlist's menu, Export, To file)"
+          onClick={() => fileRef.current?.click()}
+        >
+          Import
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept=".csv,.txt,text/csv,text/plain"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) importFile(f);
+            e.target.value = "";
+          }}
+        />
+      </form>
+      {note ? <div className={`watch-note ${note.warn ? "warn-text" : "ok-text"}`}>{note.text}</div> : null}
+    </div>
+  );
 
   const sorted = useMemo(() => {
     if (!rows) return [];
@@ -90,21 +174,20 @@ export default function Watchlist() {
   if (!rows) return <div className="empty">Loading…</div>;
   if (!rows.length) {
     return (
-      <div className="empty">
-        The watchlist is empty. <a href="#/settings/watchlist">Import from thinkorswim or add symbols</a>
-      </div>
+      <>
+        {editor}
+        <div className="empty">Add a ticker to start.</div>
+      </>
     );
   }
   return (
     <>
       <Scanner />
+      {editor}
       <div className="toolbar">
         <span className="dim-text">
           IV and liquidity refresh every 15 minutes. Click a row to open it on the Trade screen.
         </span>
-        <a href="#/settings/watchlist" className="toolbar-link">
-          Edit watchlist
-        </a>
       </div>
       <div className="table-wrap">
         <table className="positions watch">
@@ -123,11 +206,11 @@ export default function Watchlist() {
               {th("move", "Move", "The last few sessions' move against the move implied volatility expected, in standard deviations")}
               {th("iv30", "IV30", "30-day at-the-money implied volatility")}
               {th("ivr", "IVR", "IV rank over up to a year of recorded history")}
-              {th("liq", "Liquidity", "1 to 5 stars from the at-the-money bid/ask and open interest, after tastylive")}
               <th title="IV percentile">IVP</th>
               <th title="Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. High after a drop means puts are especially expensive, part of the scanner's drop signal.">
                 Skew
               </th>
+              {th("liq", "Liquidity", "1 to 5 stars from the at-the-money bid/ask and open interest, after tastylive")}
               {th("em", "Exp. move", "One standard deviation move to the expiration shown")}
               <th>Exp</th>
               <th title="At-the-money bid-ask spread as a share of the mark">Spread</th>
@@ -136,13 +219,14 @@ export default function Watchlist() {
                 Earnings
               </th>
               <th title="Your position delta and theta in this underlying">Position</th>
+              <th className="rm-col" aria-label="Remove" />
             </tr>
           </thead>
           <tbody>
             {sorted.map((r) => (
               <tr
                 key={r.symbol}
-                className="strat"
+                className={`strat ${removing.has(r.symbol) ? "removing" : ""}`}
                 tabIndex={0}
                 onClick={() => (window.location.hash = `#/trade/${encodeURIComponent(r.symbol)}`)}
                 onKeyDown={(e) => {
@@ -229,6 +313,8 @@ export default function Watchlist() {
                     <span className="sub"> ({r.ivr.days}d)</span>
                   ) : null}
                 </td>
+                <td>{r.ivr?.percentile !== null && r.ivr?.percentile !== undefined ? Math.round(r.ivr.percentile) : "–"}</td>
+                <td>{r.skew === null || r.skew === undefined ? "–" : num(r.skew, 1)}</td>
                 <td>
                   <Stars
                     n={r.liquidity ?? null}
@@ -238,8 +324,6 @@ export default function Watchlist() {
                     )}
                   />
                 </td>
-                <td>{r.ivr?.percentile !== null && r.ivr?.percentile !== undefined ? Math.round(r.ivr.percentile) : "–"}</td>
-                <td>{r.skew === null || r.skew === undefined ? "–" : num(r.skew, 1)}</td>
                 <td>
                   {r.expected_move === null ? "–" : `±${num(r.expected_move, 2)}`}
                   {r.expected_move && r.price ? (
@@ -263,6 +347,17 @@ export default function Watchlist() {
                   ) : (
                     ""
                   )}
+                </td>
+                <td className="rm-col" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <button
+                    className="link rm"
+                    title={`Remove ${r.symbol} from the watchlist`}
+                    aria-label={`Remove ${r.symbol}`}
+                    disabled={busy}
+                    onClick={() => remove(r.symbol)}
+                  >
+                    ×
+                  </button>
                 </td>
               </tr>
             ))}

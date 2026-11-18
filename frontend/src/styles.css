@@ -795,3 +795,23 @@ td > .view-select { margin-left: 0; }
 /* Liquidity stars: filled in gold, the rest dim. */
 .stars { color: #e3b341; letter-spacing: 1px; white-space: nowrap; cursor: help; }
 .stars .stars-off { color: var(--line); }
+
+/* Watchlist editing: a ticker box with Add and Import on top, a × on each row. */
+.watch-edit { margin: 4px 0 10px; }
+.watch-add { display: flex; gap: 8px; align-items: center; max-width: 480px; }
+.watch-add input[type=text] { flex: 1; min-width: 0; background: var(--row); border: 1px solid var(--line);
+  border-radius: 6px; color: var(--text); padding: 6px 10px; font: inherit; text-transform: uppercase; }
+.watch-add input[type=text]::placeholder { text-transform: none; color: var(--dim); }
+.watch-add input[type=text]:focus { outline: none; border-color: var(--accent); }
+.watch-add button { flex: none; white-space: nowrap; }
+.watch-add button:not(.primary) { background: #21262d; border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 14px; cursor: pointer; }
+.watch-add button:not(.primary):hover:not(:disabled) { border-color: var(--accent); }
+.watch-add button:disabled { opacity: .5; cursor: default; }
+.watch-note { font-size: 13px; margin-top: 6px; }
+.ok-text { color: var(--ok); }
+table.watch td.rm-col, table.watch th.rm-col { width: 28px; padding-left: 2px; padding-right: 6px; text-align: center; }
+table.watch button.rm { background: none; border: 0; color: var(--dim); cursor: pointer; font-size: 17px;
+  line-height: 1; padding: 2px 6px; border-radius: 4px; }
+table.watch button.rm:hover:not(:disabled) { color: var(--bad); background: #f851491a; }
+table.watch tr.removing { opacity: .35; }

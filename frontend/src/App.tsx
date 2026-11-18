@@ -31,7 +31,10 @@ type Route =
 
 function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/");
-  if (parts[0] === "watchlist") return { page: "watchlist" };
+  // The watchlist used to be edited in Settings; old links land on the Watchlist screen.
+  if (parts[0] === "watchlist" || (parts[0] === "settings" && parts[1] === "watchlist")) {
+    return { page: "watchlist" };
+  }
   if (parts[0] === "portfolio") return { page: "portfolio" };
   if (parts[0] === "activity") return { page: "activity" };
   if (parts[0] === "dashboard") return { page: "dashboard" };

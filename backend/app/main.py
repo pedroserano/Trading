@@ -178,6 +178,15 @@ class AutoTradeIn(BaseModel):
     view: str | None = None
 
 
+class WatchlistAddIn(BaseModel):
+    text: str
+    mode: Literal["add", "replace"] = "add"
+
+
+class WatchlistRemoveIn(BaseModel):
+    symbol: str
+
+
 class SymbolViewIn(BaseModel):
     symbol: str
     view: str  # neutral, bullish, bearish, or "auto" to follow the portfolio
@@ -971,21 +980,15 @@ def create_app(
             request.session["flash"] = f"Test notification failed: {e}"
         return RedirectResponse(settings_url("connection"), status_code=303)
 
-    @app.post("/watchlist/import", dependencies=[Depends(require_login)])
-    async def watchlist_import(
-        request: Request,
-        text: str = Form(""),
-        file: UploadFile | None = File(None),
-        mode: str = Form("replace"),
-    ):
-        content = text
-        if file is not None and file.filename:
-            data = await file.read(512 * 1024)
-            content = data.decode("utf-8-sig", errors="replace")
+    async def update_watchlist(content: str, mode: str = "add") -> str:
+        """Add symbols from typed text or a thinkorswim export (or replace the list with them)."""
         symbols, skipped = parse_symbols(content)
         if not symbols:
-            request.session["flash"] = "No symbols found in that file or text."
-            return RedirectResponse(settings_url("watchlist"), status_code=303)
+            return "No symbols found." + (
+                f" Skipped (not stocks, ETFs or indexes): {', '.join(skipped[:12])}."
+                if skipped
+                else ""
+            )
         unknown = []
         try:
             quotes = await source.quotes(symbols)
@@ -1000,21 +1003,39 @@ def create_app(
         await preferences.set_watchlist(merged)
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
-        msg = f"Watchlist now has {len(merged)} symbols."
+        added = [s for s in symbols if s not in current]
+        if mode == "replace":
+            msg = f"Watchlist now has {len(merged)} symbols."
+        elif added:
+            msg = f"Added {', '.join(added[:12])}{'…' if len(added) > 12 else ''}."
+        elif symbols:
+            msg = "Already on the watchlist."
+        else:
+            msg = ""
         if skipped:
             msg += f" Skipped (not stocks, ETFs or indexes): {', '.join(skipped[:12])}."
         if unknown:
             msg += f" Not recognised by Schwab: {', '.join(unknown[:12])}."
-        request.session["notice"] = msg
-        return RedirectResponse(settings_url("watchlist"), status_code=303)
+        return msg.strip()
 
-    @app.post("/watchlist/remove", dependencies=[Depends(require_login)])
-    async def watchlist_remove(request: Request, symbol: str = Form()):
+    @app.post("/api/watchlist/add", dependencies=[Depends(require_login)])
+    async def api_watchlist_add(body: WatchlistAddIn):
+        message = await update_watchlist(body.text, body.mode)
+        return {"watchlist": await preferences.watchlist(), "message": message}
+
+    @app.post("/api/watchlist/upload", dependencies=[Depends(require_login)])
+    async def api_watchlist_upload(file: UploadFile = File(), mode: str = Form("add")):
+        data = await file.read(512 * 1024)
+        message = await update_watchlist(data.decode("utf-8-sig", errors="replace"), mode)
+        return {"watchlist": await preferences.watchlist(), "message": message}
+
+    @app.post("/api/watchlist/remove", dependencies=[Depends(require_login)])
+    async def api_watchlist_remove(body: WatchlistRemoveIn):
         current = await preferences.watchlist()
-        await preferences.set_watchlist([s for s in current if s != symbol])
+        await preferences.set_watchlist([s for s in current if s != body.symbol])
         portfolio.watchlist = await preferences.watchlist()
         portfolio.refresh_soon()
-        return RedirectResponse(settings_url("watchlist"), status_code=303)
+        return {"watchlist": portfolio.watchlist, "message": f"Removed {body.symbol}."}
 
     @app.post("/earnings/manual", dependencies=[Depends(require_login)])
     async def earnings_manual_save(request: Request, text: str = Form("")):
