@@ -78,8 +78,8 @@ export function AutoBar() {
       {view.blocked && !view.paused ? (
         <div className="banner warn">Automation is holding: {view.blocked}.</div>
       ) : null}
-      {view.proposals.map((p) => (
-        <div key={p.id} className="banner proposal">
+      {view.proposals.map((p, i) => (
+        <div key={p.id} id={i === 0 ? "proposals" : undefined} className="banner proposal">
           <div>
             <strong>
               {p.underlying} {p.strategy}

@@ -19,10 +19,31 @@ function priceText(i: Item): string {
   return i.price.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
-/** One line of the major futures: price and the day's move, like a tastylive market rundown. */
+/** Shown while the strip is folded: the market as a whole and its fear gauge. */
+const PINNED = ["S&P", "Nasdaq", "VIX"];
+
+function remembered(): boolean {
+  try {
+    return localStorage.getItem("markets.open") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** One line of the major futures: price and the day's move, like a tastylive market rundown.
+ * Folded to the S&P, Nasdaq and VIX until opened; the choice is remembered. */
 export default function MarketStrip() {
   const [items, setItems] = useState<Item[] | null>(null);
   const [at, setAt] = useState<number | null>(null);
+  const [open, setOpenState] = useState(remembered);
+  const setOpen = (v: boolean) => {
+    setOpenState(v);
+    try {
+      localStorage.setItem("markets.open", v ? "1" : "0");
+    } catch {
+      /* private mode: not remembered */
+    }
+  };
 
   useEffect(() => {
     let stop = false;
@@ -46,9 +67,11 @@ export default function MarketStrip() {
   }, []);
 
   if (!items || !items.length) return null;
+  const pinned = items.filter((i) => PINNED.includes(i.label));
+  const shown = open || !pinned.length ? items : pinned;
   return (
-    <div className="market-strip" aria-label="Markets">
-      {items.map((i) => {
+    <div className={`market-strip ${open ? "open" : "folded"}`} aria-label="Markets">
+      {shown.map((i) => {
         const tone = i.change_pct === null ? "" : i.change_pct > 0 ? "pos" : i.change_pct < 0 ? "neg" : "";
         const title =
           `${i.label}: ${i.fallback ? `${i.symbol} (standing in: the future could not be quoted)` : i.contract}` +
@@ -67,6 +90,17 @@ export default function MarketStrip() {
           </span>
         );
       })}
+      {pinned.length ? (
+        <button
+          type="button"
+          className="mkt mkt-more"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          title={open ? "Show only the S&P, Nasdaq and VIX" : "Show every market"}
+        >
+          {open ? "Fewer ▴" : `${items.length - pinned.length} more ▾`}
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { AccountContext, AccountsContext, TicketContext, type Account, type Schw
 import { getJson } from "./api";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
+import Attention from "./Attention";
 import MarketStrip from "./MarketStrip";
 import { AutoBadge, AutoBar, AutomationContext, AutoPanel, PauseSwitch, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
@@ -129,6 +130,8 @@ export default function App() {
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
   const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
+  // Simple: the columns that say how a trade is doing; Detail: every number.
+  const [cols, setCols] = usePersisted<"simple" | "detail">("positions.cols", "simple");
   const automation = useAutomation(account);
 
   if (!snapshot) {
@@ -154,6 +157,7 @@ export default function App() {
         {route.page === "trade" ? <Trade symbol={route.symbol} cover={coverHeld(snapshot, route.symbol)} /> : null}
         {route.page === "positions" ? (
           <>
+        <Attention s={snapshot} />
         <MarketStrip />
         <div className="toolbar">
           <div className="seg" role="group" aria-label="Group positions">
@@ -172,9 +176,17 @@ export default function App() {
             />
             Flagged only ({snapshot.totals.flags})
           </label>
+          <div className="seg cols-toggle" role="group" aria-label="Columns">
+            <button aria-pressed={cols === "simple"} onClick={() => setCols("simple")} title="How each trade is doing">
+              Simple
+            </button>
+            <button aria-pressed={cols === "detail"} onClick={() => setCols("detail")} title="Every number: prices, Greeks, short deltas, max loss">
+              Detail
+            </button>
+          </div>
         </div>
         <AutoBar />
-        <Positions s={snapshot} view={view} flaggedOnly={flaggedOnly === "1"} />
+        <Positions s={snapshot} view={view} flaggedOnly={flaggedOnly === "1"} detail={cols === "detail"} />
         <p className="footnote">
           Positions are grouped by their trade history, including trades placed in thinkorswim;
           credit includes every roll. Positions with no known history are grouped by their legs.
@@ -497,9 +509,26 @@ interface Row {
   st: StrategyView;
 }
 
-function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedOnly: boolean }) {
+function Positions(props: { s: Snapshot; view: View; flaggedOnly: boolean; detail: boolean }) {
+  const { s, view, flaggedOnly, detail } = props;
   const compact = useMediaQuery("(max-width: 700px)");
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // "Needs attention" asks for a position: open its row and bring it into view.
+  useEffect(() => {
+    const focus = (e: Event) => {
+      const want = (e as CustomEvent<string>).detail;
+      const rows = Array.from(document.querySelectorAll<HTMLElement>("tr[data-trade]"));
+      const row = rows.find((r) => r.dataset.trade === want) ?? rows.find((r) => r.dataset.trade?.startsWith(want));
+      if (!row) return;
+      const id = row.dataset.id as string;
+      setOpen((prev) => new Set(prev).add(id));
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      row.classList.add("flash");
+      window.setTimeout(() => row.classList.remove("flash"), 1600);
+    };
+    window.addEventListener("focus-trade", focus);
+    return () => window.removeEventListener("focus-trade", focus);
+  }, []);
   const toggle = (k: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -534,6 +563,16 @@ function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedO
               <th title="Today's P/L">Day</th>
               <th>% max</th>
             </tr>
+          ) : !detail ? (
+            <tr>
+              <th className="l">{showUnder ? "Underlying / strategy" : "Strategy"}</th>
+              <th>Exp</th>
+              <th>DTE</th>
+              <th>P/L</th>
+              <th title="Today's P/L: held overnight from yesterday's close, opened today from the fill">Day</th>
+              <th title="P/L as a share of max profit">% max</th>
+              <th className="l">Flags</th>
+            </tr>
           ) : (
             <tr>
               <th className="l">{showUnder ? "Underlying / strategy" : "Strategy"}</th>
@@ -566,6 +605,7 @@ function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedO
                     open={open}
                     toggle={toggle}
                     compact={compact}
+                    detail={detail}
                   />
                 );
               })
@@ -579,6 +619,7 @@ function Positions({ s, view, flaggedOnly }: { s: Snapshot; view: View; flaggedO
                   open={open}
                   toggle={toggle}
                   compact={compact}
+                  detail={detail}
                 />
               ))}
         </tbody>
@@ -593,12 +634,13 @@ function UnderGroup(props: {
   open: Set<string>;
   toggle: (k: string) => void;
   compact: boolean;
+  detail: boolean;
 }) {
-  const { u, compact } = props;
+  const { u, compact, detail } = props;
   return (
     <>
       <tr className="under">
-        <td className="l" colSpan={compact ? 2 : 6}>
+        <td className="l" colSpan={compact ? 2 : detail ? 6 : 3}>
           <a className="sym" href={`#/trade/${encodeURIComponent(u.symbol)}`} onClick={(e) => e.stopPropagation()}>
             {u.symbol}
           </a>
@@ -606,6 +648,8 @@ function UnderGroup(props: {
           <span className={`chg ${tone(u.change_pct)}`}>
             {u.change_pct === null ? "" : `${signed(u.change_pct, 2)}%`}
           </span>
+          {detail ? (
+          <>
           <span
             className="ivr"
             title={
@@ -620,12 +664,16 @@ function UnderGroup(props: {
             ) : null}
           </span>
           <span className="beta">β {u.beta === null ? "–" : u.beta.toFixed(2)}</span>
+          </>
+          ) : null}
           <EarningsFlag e={u.earnings} />
         </td>
         <td className={tone(u.pl)}>{signed(u.pl)}</td>
         <td className={tone(u.day_pl)}>{signed(u.day_pl)}</td>
         <td />
-        {compact ? null : (
+        {compact ? null : !detail ? (
+          <td />
+        ) : (
           <>
             <td className={tone(u.delta)} title={`β-weighted: ${signed(u.delta_bw, 0)}`}>
               {signed(u.delta, 0)}
@@ -643,6 +691,7 @@ function UnderGroup(props: {
           open={props.open}
           toggle={props.toggle}
           compact={compact}
+          detail={detail}
           underSymbol={u.symbol}
         />
       ))}
@@ -675,10 +724,12 @@ function StrategyRows(props: {
   open: Set<string>;
   toggle: (k: string) => void;
   compact: boolean;
+  detail: boolean;
   underSymbol?: string;
   earnings?: EarningsInfo | null;
 }) {
-  const { st, id, compact } = props;
+  const { st, id, compact, detail } = props;
+  const cols = compact ? 5 : detail ? 14 : 7;
   const n = st.numbers;
   const expanded = props.open.has(id);
   const openPx = perUnit(st, n.open_value);
@@ -696,6 +747,8 @@ function StrategyRows(props: {
           }
         }}
         aria-expanded={expanded}
+        data-id={id}
+        data-trade={`${props.under ?? props.underSymbol}|${st.name}|${n.expiration ?? ""}`}
       >
         <td className="l name">
           <span className="caret">{expanded ? "▾" : "▸"}</span>
@@ -733,6 +786,14 @@ function StrategyRows(props: {
         </td>
         {compact ? (
           <>
+            <td>{n.dte ?? "–"}</td>
+            <td className={tone(n.pl)}>{signed(n.pl)}</td>
+            <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
+            <td>{pct(n.pct_max_profit)}</td>
+          </>
+        ) : !detail ? (
+          <>
+            <td>{shortDate(n.expiration)}</td>
             <td>{n.dte ?? "–"}</td>
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
             <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
@@ -783,6 +844,16 @@ function StrategyRows(props: {
                   <td />
                   <td title="Per-share delta">{num(l.delta, 2)}</td>
                 </>
+              ) : !detail ? (
+                <>
+                  <td />
+                  <td>{l.dte ?? ""}</td>
+                  <td colSpan={3} className="sub">
+                    mark {num(l.mark, 2)} · Δ {num(l.delta, 2)}
+                    {l.iv === null ? "" : ` · IV ${l.iv.toFixed(1)}`}
+                  </td>
+                  <td />
+                </>
               ) : (
                 <>
                   <td />
@@ -801,7 +872,7 @@ function StrategyRows(props: {
             </tr>
           ))
         : null}
-      {expanded && st.legs.length ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={compact ? 5 : 14} /> : null}
+      {expanded && st.legs.length ? <ActionsRow st={st} under={props.under ?? props.underSymbol} cols={cols} /> : null}
     </>
   );
 }
