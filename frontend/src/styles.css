@@ -640,7 +640,7 @@ td > .view-select { margin-left: 0; }
 .settings-page input.inl[type="number"]::-webkit-inner-spin-button,
 .settings-page input.inl[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
-/* Positions: the folded market strip, the column toggle, and what needs attention. */
+/* Positions: the folded market strip and the column toggle. */
 .mkt-more { background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
 .market-strip.folded .mkt:last-child { grid-column: auto; }
 @media (max-width: 700px) {
@@ -651,23 +651,5 @@ td > .view-select { margin-left: 0; }
 }
 .cols-toggle { margin-left: auto; }
 @media (max-width: 700px) { .cols-toggle { display: none; } }
-.attention { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-.attention h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); font-weight: 600; }
-.attention ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.attention-item { display: grid; grid-template-columns: 150px minmax(0, 220px) minmax(0, 1fr); gap: 2px 12px; align-items: baseline;
-  width: 100%; text-align: left; padding: 6px 8px 6px 10px; border: 0; border-left: 3px solid var(--dim); border-radius: 4px;
-  background: #ffffff08; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
-.attention-item:hover { background: #ffffff12; }
-.attention-what { font-weight: 600; }
-.attention-detail { color: var(--dim); }
-.attention-item.bad { border-left-color: var(--bad); } .attention-item.bad .attention-what { color: var(--bad); }
-.attention-item.warn { border-left-color: var(--warn); } .attention-item.warn .attention-what { color: var(--warn); }
-.attention-item.info { border-left-color: var(--accent); } .attention-item.info .attention-what { color: var(--accent); }
-.attention-item.ok { border-left-color: var(--ok); } .attention-item.ok .attention-what { color: var(--ok); }
-.attention.calm { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--dim); font-size: 13px; }
-.attention-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
-@media (max-width: 700px) {
-  .attention-item { grid-template-columns: auto minmax(0, 1fr); }
-  .attention-detail { grid-column: 1 / -1; font-size: 12px; }
-}
-tr.strat.flash td { background: #58a6ff22; transition: background .3s; }
+.stat a.in-band { color: var(--dim); text-decoration: none; font-size: 14px; }
+.stat a.in-band::before { content: "✓ "; color: var(--ok); }

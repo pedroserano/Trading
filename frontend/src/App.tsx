@@ -3,7 +3,6 @@ import { AccountContext, AccountsContext, TicketContext, type Account, type Schw
 import { getJson } from "./api";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
-import Attention from "./Attention";
 import MarketStrip from "./MarketStrip";
 import { AutoBadge, AutoBar, AutomationContext, AutoPanel, PauseSwitch, useAutomation } from "./Automation";
 import ChainHistory from "./ChainHistory";
@@ -157,7 +156,6 @@ export default function App() {
         {route.page === "trade" ? <Trade symbol={route.symbol} cover={coverHeld(snapshot, route.symbol)} /> : null}
         {route.page === "positions" ? (
           <>
-        <Attention s={snapshot} />
         <MarketStrip />
         <div className="toolbar">
           <div className="seg" role="group" aria-label="Group positions">
@@ -456,16 +454,32 @@ function Header(props: {
           <span className="sub"> / {pct(ceiling)}</span>
           <Meter value={bp} max={ceiling} />
         </Stat>
-        <Stat label="β-Δ SPY" title={deltaTitle}>
-          <span className={out(db) || tone(s.totals.delta_bw)}>{signed(s.totals.delta_bw, 0)}</span>
-          {db && db.value !== null ? (
-            <span className={`sub ${out(db)}`}> {pct(db.value, 1)}</span>
-          ) : null}
-        </Stat>
-        <Stat label="Θ / day" title={thetaTitle}>
-          <span className={tone(s.totals.theta)}>{signed(s.totals.theta, 0)}</span>
-          <span className={`sub ${thetaTone}`}> {pct(thetaPct, 2)}</span>
-        </Stat>
+        {out(db) ? (
+          <Stat label="β-Δ SPY" title={deltaTitle}>
+            <span className="warn-text">{signed(s.totals.delta_bw, 0)}</span>
+            {db && db.value !== null ? <span className="sub warn-text"> {pct(db.value, 1)}</span> : null}
+          </Stat>
+        ) : null}
+        {thetaTone ? (
+          <Stat label="Θ / day" title={thetaTitle}>
+            <span className="warn-text">{signed(s.totals.theta, 0)}</span>
+            <span className="sub warn-text"> {pct(thetaPct, 2)}</span>
+          </Stat>
+        ) : null}
+        {!out(db) || !thetaTone ? (
+          <Stat
+            label="Greeks"
+            title={
+              `${!out(db) ? `β-Δ ${signed(s.totals.delta_bw, 0)} SPY shares (${pct(db?.value ?? null, 1)}), in its band. ` : ""}` +
+              `${!thetaTone ? `Θ ${signed(s.totals.theta, 0)} a day (${pct(thetaPct, 2)}), in its band. ` : ""}` +
+              "Shown here when outside its band; every figure is on Portfolio."
+            }
+          >
+            <a href="#/portfolio" className="in-band">
+              {!out(db) && !thetaTone ? "In band" : !out(db) ? "Δ in band" : "Θ in band"}
+            </a>
+          </Stat>
+        ) : null}
         <Stat label="P/L open">
           <span className={tone(s.totals.pl)}>{signed(s.totals.pl, 0)}</span>
         </Stat>
@@ -513,22 +527,6 @@ function Positions(props: { s: Snapshot; view: View; flaggedOnly: boolean; detai
   const { s, view, flaggedOnly, detail } = props;
   const compact = useMediaQuery("(max-width: 700px)");
   const [open, setOpen] = useState<Set<string>>(new Set());
-  // "Needs attention" asks for a position: open its row and bring it into view.
-  useEffect(() => {
-    const focus = (e: Event) => {
-      const want = (e as CustomEvent<string>).detail;
-      const rows = Array.from(document.querySelectorAll<HTMLElement>("tr[data-trade]"));
-      const row = rows.find((r) => r.dataset.trade === want) ?? rows.find((r) => r.dataset.trade?.startsWith(want));
-      if (!row) return;
-      const id = row.dataset.id as string;
-      setOpen((prev) => new Set(prev).add(id));
-      row.scrollIntoView({ behavior: "smooth", block: "center" });
-      row.classList.add("flash");
-      window.setTimeout(() => row.classList.remove("flash"), 1600);
-    };
-    window.addEventListener("focus-trade", focus);
-    return () => window.removeEventListener("focus-trade", focus);
-  }, []);
   const toggle = (k: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -645,10 +643,10 @@ function UnderGroup(props: {
             {u.symbol}
           </a>
           <span className="px">{num(u.price, 2)}</span>
-          <span className={`chg ${tone(u.change_pct)}`}>
+          <span className="chg">
             {u.change_pct === null ? "" : `${signed(u.change_pct, 2)}%`}
           </span>
-          {detail ? (
+          {detail && u.ivr && u.ivr.rank !== null ? (
           <>
           <span
             className="ivr"
@@ -663,9 +661,9 @@ function UnderGroup(props: {
               <span className="sub"> ({u.ivr.days}d)</span>
             ) : null}
           </span>
-          <span className="beta">β {u.beta === null ? "–" : u.beta.toFixed(2)}</span>
           </>
           ) : null}
+          {detail && u.beta !== null ? <span className="beta">β {u.beta.toFixed(2)}</span> : null}
           <EarningsFlag e={u.earnings} />
         </td>
         <td className={tone(u.pl)}>{signed(u.pl)}</td>
@@ -675,10 +673,10 @@ function UnderGroup(props: {
           <td />
         ) : (
           <>
-            <td className={tone(u.delta)} title={`β-weighted: ${signed(u.delta_bw, 0)}`}>
+            <td title={`β-weighted: ${signed(u.delta_bw, 0)}`}>
               {signed(u.delta, 0)}
             </td>
-            <td className={tone(u.theta)}>{signed(u.theta, 0)}</td>
+            <td>{signed(u.theta, 0)}</td>
             <td colSpan={3} />
           </>
         )}
@@ -747,8 +745,6 @@ function StrategyRows(props: {
           }
         }}
         aria-expanded={expanded}
-        data-id={id}
-        data-trade={`${props.under ?? props.underSymbol}|${st.name}|${n.expiration ?? ""}`}
       >
         <td className="l name">
           <span className="caret">{expanded ? "▾" : "▸"}</span>
@@ -812,8 +808,8 @@ function StrategyRows(props: {
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
             <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
             <td>{pct(n.pct_max_profit)}</td>
-            <td className={tone(n.delta)}>{signed(n.delta, 0)}</td>
-            <td className={tone(n.theta)}>{signed(n.theta, 0)}</td>
+            <td>{signed(n.delta, 0)}</td>
+            <td>{signed(n.theta, 0)}</td>
             <td>
               {n.short_deltas
                 .map((d) => (d === null ? "–" : Math.abs(d).toFixed(2)))

@@ -56,8 +56,11 @@ export function AutoBar() {
     }
   };
   const managed = Object.values(view.trades).filter((t) => t.enabled).length;
+  // Nothing managed and nothing sent today: the line would only describe an idle state.
+  const idle = managed === 0 && view.orders_today === 0;
   return (
     <>
+      {idle ? null : (
       <div className="toolbar auto-bar">
         <span className="dim-text">Automanage</span>
         <span className="dim-text">
@@ -74,12 +77,13 @@ export function AutoBar() {
           Automanage settings
         </a>
       </div>
+      )}
       {error ? <div className="banner warn">{error}</div> : null}
       {view.blocked && !view.paused ? (
         <div className="banner warn">Automation is holding: {view.blocked}.</div>
       ) : null}
-      {view.proposals.map((p, i) => (
-        <div key={p.id} id={i === 0 ? "proposals" : undefined} className="banner proposal">
+      {view.proposals.map((p) => (
+        <div key={p.id} className="banner proposal">
           <div>
             <strong>
               {p.underlying} {p.strategy}
