@@ -205,13 +205,7 @@ def liquidity(t: Ticket, atm_oi: float | None = None) -> list[str]:
                     f"over {MAX_LEG_WIDTH:.2f}: expect a fill away from mid"
                 )
         if leg.oi is not None and leg.oi < MIN_LEG_OI:
-            out.append(
-                f"{_leg_name(leg)} has open interest of {leg.oi:,}: few contracts are open "
-                "there, so fills and later adjustments can be costly"
-            )
+            out.append(f"{_leg_name(leg)} has low liquidity")
     if atm_oi is not None and atm_oi < MIN_ATM_OI:
-        out.append(
-            f"{t.underlying} has at-the-money open interest of {atm_oi:,.0f}, under the "
-            "thousands tastylive looks for in a liquid underlying"
-        )
+        out.append(f"{t.underlying} has low liquidity")
     return out

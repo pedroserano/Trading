@@ -980,9 +980,9 @@ def test_liquidity_warns_on_thin_open_interest_and_is_quiet_when_unknown():
     assert guards.liquidity(_quoted(1.00, 1.05, oi=None)) == []
     assert guards.liquidity(_quoted(1.00, 1.05, oi=100)) == []
     thin = guards.liquidity(_quoted(1.00, 1.05, oi=40))
-    assert len(thin) == 1 and "open interest of 40" in thin[0]
+    assert thin == ["SPY Dec 18 575 Put has low liquidity"]
     under = guards.liquidity(_quoted(1.00, 1.05), atm_oi=600)
-    assert len(under) == 1 and "at-the-money open interest of 600" in under[0]
+    assert under == ["SPY has low liquidity"]
     assert guards.liquidity(_quoted(1.00, 1.05), atm_oi=5000) == []
 
 
@@ -997,5 +997,5 @@ def test_liquidity_warnings_never_block_the_order(client):
         "legs": [{"symbol": row["put"]["symbol"], "quantity": -1, "effect": "open"}],
     }
     pv = client.post("/api/orders/preview", json=body).json()
-    assert any("open interest of" in w for w in pv["warnings"])
-    assert not any("open interest" in e for e in pv["errors"])
+    assert any(w.endswith("has low liquidity") for w in pv["warnings"])
+    assert not any("liquidity" in e for e in pv["errors"])
