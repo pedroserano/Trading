@@ -461,7 +461,14 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     title="The chance the trade is worth more than nothing at expiration, at this limit, from implied volatility"
                   >
                     <div className="lbl">Prob. of profit</div>
-                    <div className="val">{pct(preview.pop)}</div>
+                    <div className="val">
+                      {pct(preview.pop)}
+                      {preview.pop >= 0.8 ? (
+                        <span className="pop-high" title="80% or more" aria-label="80% or more">
+                          {" "}✓
+                        </span>
+                      ) : null}
+                    </div>
                     {preview.breakevens?.length ? (
                       <div className="sub">break-even {preview.breakevens.map((b) => num(b, 2)).join(" / ")}</div>
                     ) : null}

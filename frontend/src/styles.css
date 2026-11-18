@@ -785,3 +785,4 @@ td > .view-select { margin-left: 0; }
 
 /* Badges are never split across lines. */
 .auto-badge, .undef, .flag { display: inline-block; white-space: nowrap; overflow-wrap: normal; }
+.ticket-sum .pop-high { color: var(--ok); }
