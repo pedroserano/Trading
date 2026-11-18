@@ -925,3 +925,39 @@ def test_the_simulated_account_can_be_hidden_from_the_picker(client):
     assert client.get("/api/accounts/in-use").json()["hide_sim"] is True
     client.post("/accounts/hide-sim", data={}, follow_redirects=False)
     assert client.get("/api/accounts/in-use").json()["hide_sim"] is False
+
+
+def test_the_ticket_shows_probability_of_profit_at_its_limit(client):
+    put = first_put(client)
+    body = {
+        "account": "sim",
+        "intent": "open",
+        "legs": [{"symbol": put, "quantity": -1, "effect": "open"}],
+    }
+    mid = client.post("/api/orders/preview", json=body).json()
+    assert 0 < mid["pop"] < 1 and len(mid["breakevens"]) == 1
+    p = mid["prices"]
+    low = client.post("/api/orders/preview", json={**body, "limit_net": p["natural"]}).json()
+    high = client.post("/api/orders/preview", json={**body, "limit_net": p["far"]}).json()
+    # More credit moves the break-even further away: a better chance of profit.
+    assert high["pop"] > low["pop"]
+    assert high["breakevens"][0] < low["breakevens"][0]
+    # The break-even of a short put is the strike less the credit, at the limit.
+    strike = mid["legs"][0]["strike"]
+    assert abs(high["breakevens"][0] - (strike - p["far"])) < 0.02
+
+
+def test_a_closing_ticket_has_no_probability_of_profit(client):
+    put = first_put(client)
+    leg = {"symbol": put, "quantity": -1, "effect": "open"}
+    open_body = {"account": "sim", "intent": "open", "legs": [leg]}
+    pv = client.post("/api/orders/preview", json=open_body).json()
+    filled = client.post("/api/orders", json={**open_body, "limit_net": pv["limit_net"]}).json()
+    close = {
+        "account": "sim",
+        "intent": "close",
+        "trade_id": filled.get("trade_id"),
+        "legs": [{"symbol": put, "quantity": 1, "effect": "close"}],
+    }
+    r = client.post("/api/orders/preview", json=close).json()
+    assert r["pop"] is None and r["breakevens"] is None

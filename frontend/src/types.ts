@@ -280,6 +280,9 @@ export interface Preview {
     expiration: string | null;
   }[];
   bp_effect: number | null;
+  /** Probability of profit at expiration and break-evens, at the limit set; opening trades. */
+  pop?: number | null;
+  breakevens?: number[] | null;
   defined_risk: boolean;
   bp_used_after: number | null;
   commission: number;

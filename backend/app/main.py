@@ -6,7 +6,7 @@ import logging
 import secrets
 import time
 from contextlib import asynccontextmanager, suppress
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal
@@ -289,6 +289,23 @@ class LoginThrottle:
 
     def reset(self) -> None:
         self.failures = 0
+
+
+def price_at_limit(legs: list[TradeLeg], limit: float | None, units: int) -> list[TradeLeg]:
+    """The legs repriced so their net per unit is the ticket's limit (positive: credit),
+    for probabilities and break-evens at the price the order would fill. The difference
+    from mid is spread over the option legs, a short leg priced up and a long one down for
+    more credit. Mid when there is no limit."""
+    options = [x for x in legs if x.put_call]
+    if limit is None or not options or units <= 0:
+        return legs
+    mid = sum(-x.quantity * x.price for x in options)  # per share, all units
+    size = sum(abs(x.quantity) for x in options)
+    k = (limit * units - mid) / size
+    return [
+        replace(x, price=max(0.01, x.price + (k if x.quantity < 0 else -k))) if x.put_call else x
+        for x in legs
+    ]
 
 
 class McpPath:
@@ -1366,7 +1383,11 @@ def create_app(
                 break
         bp, defined, a = None, True, None
         if spot and t.intent in ("open", "adjust") and all(x.mark is not None for x in t.legs):
-            tl = [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs]
+            tl = price_at_limit(
+                [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs],
+                t.limit_net,
+                t.units,
+            )
             # Short options covered by shares or a ZEBRA already held are not naked.
             cover = {"C": 0.0, "P": 0.0}
             held_st = pf.strategies_for(t.underlying) if hasattr(pf, "strategies_for") else []
@@ -1622,6 +1643,9 @@ def create_app(
                 for x in t.legs
             ],
             "bp_effect": bp,
+            # Probability of profit and break-evens at the limit set (opening trades only).
+            "pop": a["pop"] if a else None,
+            "breakevens": a["breakevens"] if a else None,
             "entry": entry,
             "defined_risk": defined,
             "bp_used_after": after,

@@ -456,6 +456,17 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     <div className="val">{pct(preview.bp_used_after, 1)}</div>
                   </div>
                 ) : null}
+                {preview.pop !== null && preview.pop !== undefined ? (
+                  <div
+                    title="The chance the trade is worth more than nothing at expiration, at this limit, from implied volatility"
+                  >
+                    <div className="lbl">Prob. of profit</div>
+                    <div className="val">{pct(preview.pop)}</div>
+                    {preview.breakevens?.length ? (
+                      <div className="sub">break-even {preview.breakevens.map((b) => num(b, 2)).join(" / ")}</div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
