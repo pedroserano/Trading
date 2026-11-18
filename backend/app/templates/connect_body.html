@@ -417,6 +417,55 @@
 </section>
 {% endif %}
 
+<section id="ai">
+  <h2>AI access</h2>
+  <p class="small">A key lets an AI assistant (through MCP) or a script (through the
+     <code>/api</code> endpoints) use the app. Each key has a level. A key never changes settings,
+     views, keys or the Schwab sign-in, and live orders still pass the live list, the cash and
+     sweep check (never margin), Schwab's preview and the kill switch. You get a notification
+     for every order a key places.</p>
+  {% if new_key %}
+  <div class="msg ok small">
+    <p><b>New key "{{ new_key.name }}"</b>: copy it now, it is not shown again.</p>
+    <p><code style="word-break:break-all">{{ new_key.key }}</code></p>
+    <p>MCP server URL: <code>{{ here_base }}/mcp</code>, with the header
+       <code>Authorization: Bearer &lt;key&gt;</code>.</p>
+    <p>Script: <code style="word-break:break-all">curl -H "Authorization: Bearer &lt;key&gt;" {{ here_base }}/api/snapshot</code></p>
+  </div>
+  {% endif %}
+  {% if api_keys %}
+  <table class="small">
+    <tr><th style="text-align:left">Key</th><th style="text-align:left">Level</th>
+        <th style="text-align:left">Last used</th><th></th></tr>
+    {% for k in api_keys %}
+    <tr>
+      <td style="text-align:left"><b>{{ k.name }}</b> <span class="dim">…{{ k.last4 }}</span></td>
+      <td style="text-align:left">{{ api_level_names[k.level] }}</td>
+      <td style="text-align:left" class="dim">{{ k.last_used_text }}</td>
+      <td>
+        <form method="post" action="/api-keys/revoke" style="display:inline"
+              onsubmit="return confirm('Revoke the key {{ k.name }}? Anything using it stops working.')">
+          <input type="hidden" name="key_id" value="{{ k.id }}">
+          <button class="link">Revoke</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="dim small">No keys yet.</p>
+  {% endif %}
+  <form method="post" action="/api-keys/create" class="small">
+    <p><b>New key</b>
+      <input name="name" placeholder="Name, e.g. claude" required maxlength="40" aria-label="Key name">
+      <select name="level" aria-label="Key level">
+        {% for lv, label in api_level_names.items() %}<option value="{{ lv }}">{{ label }}</option>{% endfor %}
+      </select>
+      <button type="submit">Create</button></p>
+  </form>
+  <p class="dim small">Keep the app on your home network or VPN. Use a read-only or simulated key
+     anywhere less private, and revoke keys you no longer use.</p>
+</section>
 
 <section id="session">
   <h2>Session</h2>

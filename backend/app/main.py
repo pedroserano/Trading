@@ -3,6 +3,7 @@ import copy
 import hmac
 import json
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
@@ -25,10 +26,20 @@ from markupsafe import Markup
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import (
+    apikeys,
+    guards,
+    indexweights,
+    mcp_server,
+    plain,
+    portfolio_view,
+    sheet_import,
+    signals,
+    targets,
+)
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dashboard as dash
-from . import guards, indexweights, plain, portfolio_view, sheet_import, signals, targets
 from . import scanner as scan_mod
 from .accounts import AccountRegistry
 from .analysis import TradeLeg, analyze
@@ -274,6 +285,18 @@ class LoginThrottle:
 
     def reset(self) -> None:
         self.failures = 0
+
+
+class McpPath:
+    """Serves /mcp itself, not only /mcp/: MCP clients post to the URL as given."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/mcp":
+            scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
+        await self.app(scope, receive, send)
 
 
 def create_app(
@@ -523,7 +546,12 @@ def create_app(
             for key in list(brokers):
                 if key != "live":
                     start_account(key)
-        yield
+        mcp_run = mcp_srv.session_manager.run()
+        await mcp_run.__aenter__()
+        try:
+            yield
+        finally:
+            await mcp_run.__aexit__(None, None, None)
         running["on"] = False
         every_task = tasks + [t for ts in account_tasks.values() for t in ts]
         for t in every_task:
@@ -534,7 +562,13 @@ def create_app(
         await schwab.close()
         await store.close()
 
-    app = FastAPI(title="Trading", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="Trading",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,  # served at /api/openapi.json, to the signed in and to keys
+    )
     app.state.portfolio = portfolio
     app.state.chain_service = chain_service
     app.state.registry = registry
@@ -549,12 +583,55 @@ def create_app(
         https_only=settings.cookie_secure,
     )
     throttle = LoginThrottle()
+    key_throttle = LoginThrottle()
+    api_keys = apikeys.ApiKeys(store)
+    app.state.api_keys = api_keys
 
-    def require_login(request: Request) -> None:
-        if not request.session.get("auth"):
-            if request.url.path.startswith("/api/"):
+    async def key_for(request: Request) -> dict | None:
+        """The API key presented in the Authorization header, or None. 401 for a bad one."""
+        auth = request.headers.get("authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return None
+        if key_throttle.locked():
+            raise HTTPException(status_code=429, detail="Too many bad keys; wait a minute")
+        rec = await api_keys.check(auth[7:].strip())
+        if rec is None:
+            key_throttle.fail()
+            raise HTTPException(status_code=401, detail="Unknown API key")
+        return rec
+
+    app.state.check_key = key_for
+    mcp_srv, mcp_asgi = mcp_server.build(app)
+    app.mount("/mcp", mcp_asgi)
+
+    async def require_login(request: Request) -> None:
+        """A signed-in session, or for /api/* an API key whose level covers the call."""
+        if request.session.get("auth"):
+            return
+        path = request.url.path
+        if path.startswith("/api/"):
+            rec = await key_for(request)
+            if rec is None:
                 raise HTTPException(status_code=401, detail="Not signed in")
-            raise HTTPException(status_code=303, headers={"Location": "/login"})
+            kind = apikeys.route_kind(request.method, path)
+            account = request.query_params.get("account")
+            if account is None and kind == "trade":
+                try:
+                    body = await request.json()
+                except ValueError:
+                    body = None
+                account = body.get("account") if isinstance(body, dict) else None
+            account = account or "sim"
+            if not apikeys.allows(rec["level"], kind, account):
+                why = (
+                    "API keys can't change settings; use the app"
+                    if kind == "refused"
+                    else f"Key {rec['name']!r} ({rec['level']}) can't trade on {account!r}"
+                )
+                raise HTTPException(status_code=403, detail=why)
+            request.state.api_key = rec
+            return
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
 
     @app.get("/healthz")
     async def healthz():
@@ -632,6 +709,10 @@ def create_app(
         error = request.session.pop("flash", None)
         notice = request.session.pop("notice", None)
         accounts = [{**a, "sheet_label": registry.sheet_label(a["key"])} for a in registry.in_use()]
+        new_key = shown_keys.pop(request.session.pop("new_key", ""), None)
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+        here_base = f"{proto}://{request.headers.get('host') or request.url.netloc}"
+        keys_now = [{**k, "last_used_text": ago(k.get("last_used"))} for k in await api_keys.all()]
         return templates.TemplateResponse(
             request,
             "connect_body.html" if fragment else "connect.html",
@@ -641,6 +722,10 @@ def create_app(
                 "accounts": accounts,
                 "sheet_labels": registry.sheet_labels,
                 "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
+                "new_key": new_key,
+                "here_base": here_base,
+                "api_keys": keys_now,
+                "api_level_names": apikeys.LEVEL_NAMES,
                 "error": error,
                 "notice": notice,
                 "db_error": await store.ping(),
@@ -775,6 +860,42 @@ def create_app(
             "The simulated account is hidden." if hide else "The simulated account is shown."
         )
         return RedirectResponse(settings_url("account"), status_code=303)
+
+    # A new key waits here for the one Settings page view that shows it, not in the cookie.
+    shown_keys: dict[str, dict] = {}
+
+    def ago(ts: int | None) -> str:
+        if not ts:
+            return "Never"
+        s = max(0, int(time.time()) - ts)
+        if s < 120:
+            return "Just now"
+        if s < 7200:
+            return f"{s // 60} minutes ago"
+        if s < 172800:
+            return f"{s // 3600} hours ago"
+        return f"{s // 86400} days ago"
+
+    @app.post("/api-keys/create", dependencies=[Depends(require_login)])
+    async def api_key_create(request: Request, name: str = Form(), level: str = Form()):
+        try:
+            key, rec = await api_keys.create(name, level)
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        else:
+            token = secrets.token_hex(8)
+            shown_keys.clear()
+            shown_keys[token] = {"name": rec["name"], "key": key}
+            request.session["new_key"] = token
+        return RedirectResponse(settings_url("ai"), status_code=303)
+
+    @app.post("/api-keys/revoke", dependencies=[Depends(require_login)])
+    async def api_key_revoke(request: Request, key_id: str = Form()):
+        if await api_keys.revoke(key_id):
+            request.session["notice"] = "Key revoked."
+        else:
+            request.session["flash"] = "That key was already gone."
+        return RedirectResponse(settings_url("ai"), status_code=303)
 
     @app.post("/history/import", dependencies=[Depends(require_login)])
     async def history_import(request: Request, file: UploadFile = File(...)):
@@ -1500,6 +1621,18 @@ def create_app(
         t, p, quotes = await build_ticket(body)
         return await assess(body, t, p, quotes)
 
+    async def key_order_notice(key: dict, body: OrderIn) -> None:
+        """Tell the user an API key placed an order. Never raises: the order already went."""
+        where = "simulated account" if body.account == "sim" else registry.name(body.account)
+        legs = ", ".join(f"{leg.quantity:+d} {leg.symbol}" for leg in body.legs)
+        msg = f"API key {key['name']!r} placed a {body.intent} order on the {where}: {legs}"
+        log.info(msg)
+        if notifier.enabled:
+            try:
+                await notifier.send("Order placed by an API key", msg)
+            except Exception as e:  # noqa: BLE001
+                log.warning("API key order notification failed: %s", e)
+
     async def place_order(body: OrderIn) -> dict:
         if body.limit_net is None:
             raise HTTPException(status_code=400, detail="Set a limit price")
@@ -1530,8 +1663,11 @@ def create_app(
         return order
 
     @app.post("/api/orders", dependencies=[Depends(require_login)])
-    async def api_order_place(body: OrderIn):
+    async def api_order_place(body: OrderIn, request: Request):
         order = await place_order(body)
+        key = getattr(request.state, "api_key", None)
+        if key is not None:
+            await key_order_notice(key, body)
         if body.automanage and body.intent == "open":
             view = body.view if body.view in targets.VIEWS else None
             await automations[body.account].watch_entry(order, view)
@@ -2117,4 +2253,9 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/api/openapi.json", dependencies=[Depends(require_login)])
+    async def api_openapi():
+        return JSONResponse(app.openapi())
+
+    app.add_middleware(McpPath)
     return app
