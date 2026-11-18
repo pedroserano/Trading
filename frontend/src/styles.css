@@ -479,6 +479,19 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .scanner button.link { background: none; border: 0; color: var(--accent); padding: 0; cursor: pointer; font: inherit; }
 .scanner .skipped { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--dim); }
 .scanner .skipped li { padding: 2px 0; }
+/* What the scanner found: the trade on one line, its figures on the next, then why. */
+.finds { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; }
+.find { padding: 8px 10px; }
+.find + .find { border-top: 1px solid var(--line); }
+.find-head { display: flex; align-items: center; gap: 8px; }
+.find-title { flex: 1; min-width: 0; font-weight: 500; }
+.find-head button.small { flex: none; }
+.find-head button.rm { flex: none; background: none; border: 0; color: var(--dim); cursor: pointer; font-size: 18px;
+  line-height: 1; padding: 2px 6px; border-radius: 4px; }
+.find-head button.rm:hover { color: var(--bad); background: #f851491a; }
+.find-figs { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 13px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.find-status { color: var(--dim); }
+.find-detail { font-size: 12px; color: var(--dim); margin-top: 4px; line-height: 1.4; }
 
 /* Earnings flag */
 .earn { margin-left: 10px; font-size: 11px; color: var(--dim); white-space: nowrap; }

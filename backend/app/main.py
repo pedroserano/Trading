@@ -160,6 +160,8 @@ class OrderIn(BaseModel):
     automanage: bool = False
     # The new trade's view for automanage: neutral, bullish, bearish (None: the portfolio's).
     view: str | None = None
+    # Placed from a proposal's Review: that proposal is then done.
+    proposal_id: str | None = Field(None, max_length=64)
 
 
 class LinkIn(BaseModel):
@@ -1777,6 +1779,8 @@ def create_app(
         if body.automanage and body.intent == "open":
             view = body.view if body.view in targets.VIEWS else None
             await automations[body.account].watch_entry(order, view)
+        if body.proposal_id:
+            await automations[body.account].placed_from_ticket(body.proposal_id)
         return order
 
     async def auto_submit(raw: dict, place: bool) -> dict:
@@ -1822,6 +1826,7 @@ def create_app(
             name=lambda: registry.name("live"),
         ),
     }
+    app.state.accounts["automations"] = automations
     app.state.automation = automations["sim"]
     running = {"on": False}
     account_tasks: dict[str, list[asyncio.Task]] = {}
@@ -2095,6 +2100,12 @@ def create_app(
             await scanner.scan(account, act=act)
         except SchwabError as e:
             raise _schwab_errors(e) from e
+        return await scanner.view(account)
+
+    @app.post("/api/scanner/dismiss", dependencies=[Depends(require_login)])
+    async def api_scanner_dismiss(symbol: str, account: Acct = "sim"):
+        known(account)
+        await scanner.dismiss(account, _check_symbol(symbol))
         return await scanner.view(account)
 
     @app.get("/api/live", dependencies=[Depends(require_login)])

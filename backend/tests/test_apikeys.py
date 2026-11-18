@@ -245,3 +245,31 @@ def test_the_ai_guide_is_shown_in_the_app(env):
     # Settings links to it; signed out it goes to the login page, and a key can't open it.
     assert 'href="/guide/ai"' in c.get("/connect?fragment=1").text
     assert TestClient(app, follow_redirects=False).get("/guide/ai").status_code == 303
+
+
+def test_an_order_placed_from_a_proposals_ticket_settles_the_proposal(env):
+    c, app, _, _ = env
+    auto = app.state.accounts["automations"]["sim"]
+    body = order_body(c)
+    c.get("/api/automation?account=sim")  # loads its state
+    auto.state["proposals"].append(
+        {
+            "id": "p1",
+            "key": "scan:sim:SPY:2026-11-18",
+            "trade_id": "new:SPY",
+            "rule": "scan",
+            "kind": "open",
+            "underlying": "SPY",
+            "strategy": "Strangle",
+            "reason": "New trade",
+            "bodies": [body],
+            "status": "pending",
+            "created_at": 0,
+            "due_at": None,
+        }
+    )
+    pv = c.post("/api/orders/preview", json=body).json()
+    r = c.post("/api/orders", json={**body, "limit_net": pv["limit_net"], "proposal_id": "p1"})
+    assert r.status_code == 200
+    assert c.get("/api/automation?account=sim").json()["proposals"] == []
+    assert "scan:sim:SPY:2026-11-18" in auto.state["acted"]

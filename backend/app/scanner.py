@@ -605,9 +605,45 @@ class Scanner:
         return LEVELS[min(LEVELS.index(lv), LEVELS.index(cap))]
 
     async def view(self, account: str) -> dict:
+        """The last scan, less what has been dealt with: a proposal placed or dismissed (on
+        Positions or here), a trade placed by itself, or a find dismissed here."""
         s = await self.settings()
         st = await self._state()
-        return {"settings": s, "level": self.level(s, account), "last": st.get(account)}
+        last = st.get(account)
+        if last:
+            auto = self.automations.get(account)
+            props = {p["key"]: p for p in (await auto.load())["proposals"]} if auto else {}
+            gone = set(last.get("dismissed", []))
+            for a in last.get("acted", []):
+                if a.startswith("place "):
+                    gone.add(a.split(" ", 1)[1])
+            out = []
+            for c in last["candidates"]:
+                p = props.get(f"scan:{account}:{c['symbol']}:{last.get('day')}")
+                if c["symbol"] in gone or (p and p["status"] != "pending"):
+                    continue
+                c = {**c, "proposal_id": p["id"] if p else None, "detail": _detail(c)}
+                out.append(c)
+            last = {**last, "candidates": out}
+        return {"settings": s, "level": self.level(s, account), "last": last}
+
+    async def dismiss(self, account: str, symbol: str) -> None:
+        """Takes a find off the list, and dismisses its proposal if one is waiting."""
+        async with self.lock:
+            st = await self._state()
+            last = st.get(account)
+            if not last:
+                return
+            last.setdefault("dismissed", [])
+            if symbol not in last["dismissed"]:
+                last["dismissed"].append(symbol)
+            await self.store.set_setting(STATE_KEY, st)
+        auto = self.automations.get(account)
+        if auto:
+            key = f"scan:{account}:{symbol}:{last.get('day')}"
+            for p in (await auto.load())["proposals"]:
+                if p["key"] == key and p["status"] == "pending":
+                    await auto.dismiss(p["id"])
 
     async def symbols(self, account: str) -> list[str]:
         if account in self.brokers:
@@ -886,6 +922,7 @@ class Scanner:
                         "expiration": exp["date"],
                         "dte": exp["dte"],
                         "label": label,
+                        "title": label,
                         "strategy": label.split(" ")[0] + " " + label.split(" ")[1]
                         if label.startswith(
                             ("Short put", "Short call", "Put spread", "Call spread")
@@ -1021,6 +1058,9 @@ class Scanner:
                 "skipped": skipped,
                 "acted": acted,
             }
+            # Finds dismissed here stay off the list for the rest of the day.
+            if prev.get("day") == result["day"]:
+                result["dismissed"] = prev.get("dismissed", [])
             st[account] = result
             await self.store.set_setting(STATE_KEY, st)
             return result
@@ -1229,3 +1269,14 @@ class Scanner:
                 st["acted"].pop(key, None)  # the next scan may try again
             await auto._save()
             return f"place {c['symbol']}" if done else None
+
+
+def _detail(c: dict) -> str:
+    """A find's reasons, without the trade itself (shown on its own line): "tilted
+    bearish: ...", the drop signal, cautions and the volatility figures."""
+    label, title = c.get("label") or "", c.get("title")
+    if not title or title not in label:
+        return ""
+    pre, post = label.split(title, 1)
+    text = (pre + post.lstrip(",. ")).strip()
+    return text[:1].upper() + text[1:]

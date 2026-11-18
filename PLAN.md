@@ -572,3 +572,14 @@ entered in Settings.
 - `chains.covered_premium` nets the option legs of "Short call"/"Covered call" chains (puts for short shares) on the stock opened since the oldest shares still held were bought, less fees. Open calls count at their net so far, so a credit lowers the basis when sold and a buyback or debit roll raises it.
 - The snapshot's share rows carry `adjusted_basis`, `covered_premium`, `covered_count`, `covered_since` (memoised per chain list); `GET /api/covered` lists the calls. Positions' Cost basis shows the adjusted price ("adj") with the arithmetic in its tooltip; the shares' History shows average paid, covered-call net and adjusted basis, each call one tap from its own history.
 - Fix (AFRM): covered calls are found from the legs, not trade names. Shares assigned from a put stay in the put's chain, a carried-in position is one "Covered call" chain, and calls sold together are "Custom". So: any chain on the stock holding short calls that never bought a call to open, from when the shares came in (`chains.shares_arrived`), including calls inside the shares' own chain; the assigning put's premium is not counted. History shows the section whenever it is opened from a shares row.
+
+## Proposals open on the ticket; the scanner's finds can be reviewed and dismissed
+- A proposal on Positions with one order opens it on the order ticket (Review order), to see
+  the legs, price, risk and checks before sending. Placing it from the ticket settles the
+  proposal (`proposal_id` on `/api/orders`), so it is not proposed again. Proposals of several
+  orders keep Send at mid.
+- The Watchlist scanner lists each find as a card: the trade on one line, its figures on the
+  next, the reasons in small text. Review opens the ticket; × dismisses the find and its
+  proposal (`/api/scanner/dismiss`), for the rest of the day.
+- A find leaves the list once its proposal is placed or dismissed anywhere, or once it was
+  placed automatically.

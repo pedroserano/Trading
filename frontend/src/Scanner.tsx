@@ -1,7 +1,9 @@
 import { useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
-import { AccountContext, AccountsContext } from "./context";
+import { AccountContext, AccountsContext, TicketContext } from "./context";
 import { money, pct, shortDate } from "./format";
+import { proposalSpec } from "./OrderTicket";
+import type { ProposalBody } from "./types";
 
 type Candidate = {
   symbol: string;
@@ -15,6 +17,13 @@ type Candidate = {
   pop: number | null;
   score?: number;
   note?: string;
+  /** The trade alone ("Iron condor 660/665/765/770") and the reasons after it. */
+  title?: string;
+  detail?: string;
+  body?: ProposalBody;
+  /** The proposal waiting on Positions for this find, if one was made. */
+  proposal_id?: string | null;
+  view?: string | null;
 };
 
 type ScanView = {
@@ -50,6 +59,7 @@ export default function Scanner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const openTicket = useContext(TicketContext);
 
   useEffect(() => {
     setView(null);
@@ -57,6 +67,20 @@ export default function Scanner() {
       setError(String(e.message)),
     );
   }, [account]);
+
+  const dismiss = async (symbol: string) => {
+    setError(null);
+    try {
+      setView(
+        await postJson<ScanView>(
+          `/api/scanner/dismiss?account=${account}&symbol=${encodeURIComponent(symbol)}`,
+          {},
+        ),
+      );
+    } catch (e) {
+      setError(String((e as Error).message));
+    }
+  };
 
   const scan = async () => {
     setBusy(true);
@@ -148,46 +172,63 @@ export default function Scanner() {
       ) : null}
       {error ? <div className="msg warn">{error}</div> : null}
       {last && last.candidates.length ? (
-        <div className="table-wrap">
-          <table className="positions fit ph-h2 ph-h3 ph-h6 ph-h7">
-            <thead>
-              <tr>
-                <th className="l">Found</th>
-                <th>IVR</th>
-                <th>Exp</th>
-                <th>Credit</th>
-                <th title="Probability of profit at entry">POP</th>
-                <th>Buying power</th>
-                <th title="Ranking: IV rank, credit per dollar of buying power and probability of profit">
-                  Score
-                </th>
-                <th className="l" />
-              </tr>
-            </thead>
-            <tbody>
-              {last.candidates.map((c) => (
-                <tr key={c.symbol}>
-                  <td className="l">
+        <ul className="finds">
+          {last.candidates.map((c) => {
+            const status = c.note ?? done(last.acted, c.symbol);
+            return (
+              <li key={c.symbol} className="find">
+                <div className="find-head">
+                  <span className="find-title">
                     <span className="sym-inline">{c.symbol}</span>
-                    {c.label}
-                  </td>
-                  <td>{Math.round(c.ivr)}</td>
-                  <td>
-                    {shortDate(c.expiration)}{" "}
-                    <span className="sub">{c.dte}d</span>
-                  </td>
-                  <td>{c.mid === null ? "" : Math.abs(c.mid).toFixed(2)}</td>
-                  <td>{pct(c.pop)}</td>
-                  <td>{money(c.bp)}</td>
-                  <td>{c.score === undefined ? "–" : c.score.toFixed(2)}</td>
-                  <td className="l dim-text">
-                    {c.note ?? done(last.acted, c.symbol)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    {c.title ?? c.label}
+                  </span>
+                  {c.body ? (
+                    <button
+                      type="button"
+                      className="small primary"
+                      onClick={() =>
+                        openTicket(
+                          proposalSpec(
+                            {
+                              id: c.proposal_id,
+                              underlying: c.symbol,
+                              strategy: c.strategy,
+                              view: c.view,
+                            },
+                            c.body!,
+                            account,
+                          ),
+                        )
+                      }
+                    >
+                      Review
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="rm"
+                    title={c.proposal_id ? "Dismiss (and its proposal on Positions)" : "Dismiss"}
+                    aria-label={`Dismiss ${c.symbol}`}
+                    onClick={() => dismiss(c.symbol)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="find-figs">
+                  <span>
+                    {shortDate(c.expiration)} <span className="sub">{c.dte}d</span>
+                  </span>
+                  {c.mid === null ? null : <span>{Math.abs(c.mid).toFixed(2)} cr</span>}
+                  {c.pop === null ? null : <span title="Probability of profit at entry">POP {pct(c.pop)}</span>}
+                  {c.bp === null ? null : <span title="Buying power">BP {money(c.bp)}</span>}
+                  <span>IVR {Math.round(c.ivr)}</span>
+                  {status ? <span className="find-status">{status}</span> : null}
+                </div>
+                {c.title && c.detail ? <div className="find-detail">{c.detail}</div> : null}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
     </div>
   );

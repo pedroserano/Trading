@@ -555,3 +555,29 @@ async def test_would_own_sells_only_cash_secured_puts():
     snap["account"]["sweep"] = 60_000.0
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["strategy"] == "Short put" and c["view"] == "would_own"
+
+
+@pytest.mark.anyio
+async def test_a_proposed_find_leaves_the_list_once_placed_or_dismissed():
+    scanner, auto, _ = harness()
+    await scanner.scan("sim")
+    (c,) = (await scanner.view("sim"))["last"]["candidates"]
+    (p,) = (await auto.view())["proposals"]
+    # The find carries its proposal, the order to review, and its reasons apart.
+    assert c["proposal_id"] == p["id"] and c["body"]["legs"]
+    assert c["title"].startswith("Strangle") and c["detail"] and c["title"] not in c["detail"]
+    # Placed from the ticket on Positions: off the list here too, and not proposed again.
+    await auto.placed_from_ticket(p["id"])
+    assert (await scanner.view("sim"))["last"]["candidates"] == []
+    assert (await auto.view())["proposals"] == []
+
+
+@pytest.mark.anyio
+async def test_dismissing_a_find_dismisses_its_proposal_and_survives_a_rescan():
+    scanner, auto, _ = harness()
+    await scanner.scan("sim")
+    await scanner.dismiss("sim", "SPY")
+    assert (await scanner.view("sim"))["last"]["candidates"] == []
+    assert (await auto.view())["proposals"] == []
+    await scanner.scan("sim")
+    assert (await scanner.view("sim"))["last"]["candidates"] == []

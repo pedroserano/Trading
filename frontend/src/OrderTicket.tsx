@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, strike } from "./format";
-import type { Chain, Expiration, OrderLeg, Preview, SimOrder, StrategyView } from "./types";
+import type { Chain, Expiration, OrderLeg, Preview, ProposalBody, SimOrder, StrategyView } from "./types";
 
 export interface TicketSpec {
   title: string;
@@ -12,6 +12,32 @@ export interface TicketSpec {
   legs: OrderLeg[];
   /** For rolls: the strategy being rolled, so the new expiration can be chosen. */
   roll?: StrategyView;
+  /** Opened from a proposal's Review: placing it settles that proposal. */
+  proposalId?: string;
+  /** A proposal's own Automanage choice and view, instead of the Settings default. */
+  automanage?: boolean;
+  view?: string | null;
+}
+
+/** A proposed order (from automanage or the scanner) as a ticket, to read in full first. */
+export function proposalSpec(
+  p: { id?: string | null; underlying: string; strategy: string; trade_id?: string | null; automanage?: boolean; view?: string | null },
+  body: ProposalBody,
+  account: string,
+): TicketSpec {
+  const intent = (["open", "close", "roll", "adjust"].includes(body.intent) ? body.intent : "open") as TicketSpec["intent"];
+  const verb = { open: "Open", close: "Close", roll: "Roll", adjust: "Adjust" }[intent];
+  return {
+    title: `${verb} ${p.underlying} ${p.strategy}`,
+    account,
+    intent,
+    underlying: p.underlying,
+    tradeId: !p.trade_id || p.trade_id.startsWith("new:") ? null : p.trade_id,
+    legs: body.legs.map((l) => ({ symbol: l.symbol, quantity: l.quantity, effect: l.effect === "close" ? "close" : "open" })),
+    proposalId: p.id ?? undefined,
+    automanage: p.automanage,
+    view: p.view,
+  };
 }
 
 function netLabel(v: number | null): string {
@@ -93,7 +119,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   // then closes the trade at its target (50%, 25% for straddles), at the level set there.
   const [manage, setManage] = useState(false);
   // The new trade's view for automanage's rolls; "portfolio" follows the delta bias.
-  const [tradeView, setTradeView] = useState("portfolio");
+  const [tradeView, setTradeView] = useState(spec.view ?? "portfolio");
   const [profitLevel, setProfitLevel] = useState<string | null>(null);
   useEffect(() => {
     if (spec.intent !== "open") return;
@@ -102,10 +128,10 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     )
       .then((v) => {
         setProfitLevel(v.settings.levels.profit ?? null);
-        setManage(!!v.settings.ticket_automanage);
+        setManage(spec.automanage ?? !!v.settings.ticket_automanage);
       })
       .catch(() => undefined);
-  }, [spec.intent, spec.account]);
+  }, [spec.intent, spec.account, spec.automanage]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -224,6 +250,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         duration,
         automanage: spec.intent === "open" && manage,
         view: spec.intent === "open" && manage && tradeView !== "portfolio" ? tradeView : null,
+        proposal_id: spec.proposalId ?? null,
       });
       setPlaced(o);
     } catch (e) {

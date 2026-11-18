@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
+import { TicketContext } from "./context";
 import { clock } from "./format";
+import { proposalSpec } from "./OrderTicket";
 import { usePolling } from "./usePolling";
 import type { AutoLevel, AutomationView, StrategyView } from "./types";
 
@@ -36,6 +38,7 @@ function legText(l: { symbol: string; quantity: number; effect: string }): strin
 /** The Positions toolbar control and the proposals waiting for one tap. */
 export function AutoBar() {
   const { view, update } = useContext(AutomationContext);
+  const openTicket = useContext(TicketContext);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (!view) return null;
@@ -98,9 +101,16 @@ export function AutoBar() {
             ))}
           </div>
           <div className="proposal-actions">
-            <button type="button" className="small primary" disabled={busy} onClick={() => run(`/api/automation/proposal/${p.id}/accept`)}>
-              {live ? "Send to Schwab at mid" : "Place at mid"}
-            </button>
+            {p.bodies.length === 1 ? (
+              // One order: open it on the ticket, to see the legs, price, risk and checks first.
+              <button type="button" className="small primary" disabled={busy} onClick={() => openTicket(proposalSpec(p, p.bodies[0], view.account))}>
+                Review order
+              </button>
+            ) : (
+              <button type="button" className="small primary" disabled={busy} onClick={() => run(`/api/automation/proposal/${p.id}/accept`)}>
+                {live ? "Send to Schwab at mid" : "Place at mid"}
+              </button>
+            )}
             <button type="button" className="small" disabled={busy} onClick={() => run(`/api/automation/proposal/${p.id}/dismiss`)}>
               Dismiss
             </button>

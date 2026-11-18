@@ -1371,6 +1371,18 @@ class AutomationService:
                 self._log(None, None, f"Automation {'paused' if paused else 'resumed'} {why}")
                 await self._save()
 
+    async def placed_from_ticket(self, proposal_id: str) -> None:
+        """A proposal's order was sent from the order ticket: it is done, and the rule or
+        scan that made it does not propose it again."""
+        async with self.lock:
+            st = await self.load()
+            for p in st["proposals"]:
+                if p["id"] == proposal_id and p["status"] == "pending":
+                    p["status"] = "placed"
+                    st.setdefault("acted", {})[p["key"]] = time.time()
+                    self._log(p["trade_id"], p["rule"], "Proposal placed by you from the ticket")
+            await self._save()
+
     async def dismiss(self, proposal_id: str) -> None:
         async with self.lock:
             st = await self.load()

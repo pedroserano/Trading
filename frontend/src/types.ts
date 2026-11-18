@@ -416,7 +416,14 @@ export interface AutoProposal {
   reason: string;
   created_at: number;
   due_at: number | null;
-  bodies: { intent: string; legs: { symbol: string; quantity: number; effect: string }[] }[];
+  bodies: ProposalBody[];
+  automanage?: boolean;
+  view?: string | null;
+}
+
+export interface ProposalBody {
+  intent: string;
+  legs: { symbol: string; quantity: number; effect: string }[];
 }
 
 export interface AutoLogEntry {
