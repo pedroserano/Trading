@@ -839,3 +839,13 @@ td.leg-figs { color: var(--dim); }
   table.pos-table.compact td.leg-figs { white-space: nowrap; }
   .pos-actions { position: sticky; left: 10px; max-width: calc(100vw - 54px); }
 }
+
+/* Shares' history: covered calls and the adjusted basis. */
+.covered { margin: 4px 0 10px; }
+.covered-list { list-style: none; margin: 6px 0 0; padding: 0; border-top: 1px solid var(--line); }
+.covered-list li { border-bottom: 1px solid var(--line); }
+.covered-list button.link { display: flex; width: 100%; gap: 10px; align-items: baseline; background: none; border: 0;
+  color: var(--text); padding: 7px 2px; cursor: pointer; font: inherit; text-align: left; }
+.covered-list button.link:hover { background: #1a2029; }
+.covered-list button.link > span:first-child { flex: 1; }
+.ticket-head button.link.back { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0 8px 0 0; }

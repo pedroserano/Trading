@@ -567,3 +567,7 @@ entered in Settings.
 - Each snapshot is serialised once (PortfolioService.snapshot_text) and the same text goes to every browser.
 - SchwabDataSource shares quotes fetched in the last 2 seconds across accounts; the Trade chain endpoint reuses an answer for 5 seconds.
 - Frontend: one usePolling hook (Watchlist, Portfolio, Activity, Automation, MarketStrip, Trade) that stops while the app is hidden and reloads on return; the live stream closes while hidden too. The app's automation poll asks with log=0.
+
+### Shares: cost basis adjusted by covered calls
+- `chains.covered_premium` nets the option legs of "Short call"/"Covered call" chains (puts for short shares) on the stock opened since the oldest shares still held were bought, less fees. Open calls count at their net so far, so a credit lowers the basis when sold and a buyback or debit roll raises it.
+- The snapshot's share rows carry `adjusted_basis`, `covered_premium`, `covered_count`, `covered_since` (memoised per chain list); `GET /api/covered` lists the calls. Positions' Cost basis shows the adjusted price ("adj") with the arithmetic in its tooltip; the shares' History shows average paid, covered-call net and adjusted basis, each call one tap from its own history.

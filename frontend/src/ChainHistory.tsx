@@ -92,27 +92,106 @@ export function chainSummary(c: SimTrade) {
   return { net, fees, rolls, days };
 }
 
+interface Covered {
+  side: "long" | "short";
+  shares: number;
+  avg_price: number;
+  premium: number;
+  per_share: number;
+  adjusted: number;
+  since: number | null;
+  chains: { id: string | number; strategy: string; opened_at: number; closed_at: number | null; status: string; net: number }[];
+}
+
+/** Shares' history: what covered calls (covered puts, on short shares) have done to the cost
+ * basis, and each of them, one tap from its own history. */
+function CoveredBasis({ c, onOpen }: { c: Covered; onOpen: (id: string | number) => void }) {
+  const short = c.side === "short";
+  const what = short ? "Covered puts" : "Covered calls";
+  // Lower is better for long shares; higher is better for short ones.
+  const good = short ? c.adjusted >= c.avg_price : c.adjusted <= c.avg_price;
+  return (
+    <div className="covered">
+      <div className="ticket-sum">
+        <span>
+          <span className="lbl">{short ? "Sold at" : "Average paid"}</span> {c.avg_price.toFixed(2)}
+        </span>
+        <span>
+          <span className="lbl">{what}</span> <span className={tone(c.premium)}>{signed(c.premium)}</span>{" "}
+          <span className="sub">({c.chains.length})</span>
+        </span>
+        <span>
+          <span className="lbl">{short ? "Effective sale" : "Adjusted basis"}</span>{" "}
+          <b className={c.chains.length ? (good ? "pos" : "neg") : ""}>{c.adjusted.toFixed(2)}</b>{" "}
+          <span className="sub">
+            ({signed(short ? c.per_share : -c.per_share, 2)} a share)
+          </span>
+        </span>
+      </div>
+      {c.chains.length ? (
+        <ul className="covered-list">
+          {c.chains.map((x) => (
+            <li key={String(x.id)}>
+              <button type="button" className="link" onClick={() => onOpen(x.id)}>
+                <span>{x.strategy}</span>
+                <span className="dim-text">
+                  {when(x.opened_at)}
+                  {x.status === "open" ? " · open" : ""}
+                </span>
+                <span className={tone(x.net)}>{signed(x.net)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="dim-text">
+          No {what.toLowerCase()} written against these shares yet. Premium from them lowers the basis as each is sold; a buyback or roll for a debit raises it again.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function ChainHistory({ account, chainId, onClose }: { account: string; chainId: string | number; onClose: () => void }) {
+  // The trail of histories opened from here: the shares, then a covered call, and back.
+  const [trail, setTrail] = useState<(string | number)[]>([chainId]);
+  const id = trail[trail.length - 1];
   const [chain, setChain] = useState<SimTrade | null>(null);
+  const [covered, setCovered] = useState<Covered | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     try {
-      setChain(await getJson<SimTrade>(`/api/chains/${encodeURIComponent(String(chainId))}?account=${account}`));
+      const c = await getJson<SimTrade>(`/api/chains/${encodeURIComponent(String(id))}?account=${account}`);
+      setChain(c);
+      setCovered(null);
+      if (c.strategy === "Stock" && c.status === "open") {
+        try {
+          setCovered(await getJson<Covered>(`/api/covered?account=${account}&symbol=${encodeURIComponent(c.underlying)}`));
+        } catch {
+          /* no covered-call figures: the timeline still shows */
+        }
+      }
     } catch (e) {
       setError((e as Error).message);
     }
   };
   useEffect(() => {
+    setChain(null);
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, chainId]);
+  }, [account, id]);
 
   const sum = chain ? chainSummary(chain) : null;
   return (
     <div className="ticket-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="ticket history" role="dialog" aria-modal="true" aria-label="Trade history" tabIndex={-1} onKeyDown={(e) => e.key === "Escape" && onClose()}>
         <div className="ticket-head">
+          {trail.length > 1 ? (
+            <button type="button" className="link back" onClick={() => setTrail(trail.slice(0, -1))}>
+              ‹ Shares
+            </button>
+          ) : null}
           <strong>{chain ? `${chain.underlying} ${chain.strategy}` : "Trade history"}</strong>
           <span className={`badge ${account === "sim" ? "sim" : "live"}`}>{account === "sim" ? "SIMULATED" : "SCHWAB"}</span>
           <button type="button" className="x" aria-label="Close" onClick={onClose}>
@@ -151,6 +230,7 @@ export default function ChainHistory({ account, chainId, onClose }: { account: s
                 Net so far is every credit and debit in the chain, including rolls. Open P/L on the Positions screen adds the current value of the legs still held.
               </p>
             ) : null}
+            {covered ? <CoveredBasis c={covered} onOpen={(x) => setTrail([...trail, x])} /> : null}
             <ChainTimeline chain={chain} account={account} onChanged={load} />
           </>
         ) : null}

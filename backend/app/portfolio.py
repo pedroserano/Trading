@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from . import analytics, dividends, targets
 from . import cash as cash_mod
+from . import chains as chains_mod
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
@@ -61,6 +62,7 @@ class PortfolioService:
         after_quotes=None,
         trade_info=None,
         chain_holdings=None,
+        chain_list=None,
         account: str = "",
         name=None,
     ):
@@ -87,6 +89,9 @@ class PortfolioService:
         self.trade_info = trade_info  # () -> {trade_id: {strategy, net, rolls}}
         # () -> {chain_id: {symbol: quantity}}, for accounts whose legs carry no trade id.
         self.chain_holdings = chain_holdings
+        # () -> every trade chain (open and closed): covered calls adjust the shares' basis.
+        self.chain_list = chain_list
+        self._covered_memo: tuple[object, dict] = (None, {})
         self.stream = None  # StreamService, attached when streaming is available
         self.watchlist: list[str] = []
         self._symbols: set[str] = set()
@@ -311,6 +316,51 @@ class PortfolioService:
                 leg.iv = _num(q.get("volatility"))
             else:
                 leg.mark = self._price(leg.symbol) or leg.mark
+
+    def _adjust_basis(self, underlying: str, strategies: list[dict]) -> None:
+        """Shares' cost basis adjusted by the covered calls written against them (covered
+        puts for short shares) since the oldest shares still held were bought."""
+        if not self.chain_list or not self.trade_info:
+            return
+        shares = [
+            s for s in strategies if s["legs"] and all(x["kind"] == "EQUITY" for x in s["legs"])
+        ]
+        if not shares:
+            return
+        chains = self.chain_list() or []
+        # Chains change only when they sync (a new list); the snapshot is rebuilt every
+        # second. Holding the list itself means a new one is never mistaken for it.
+        if self._covered_memo[0] is not chains:
+            self._covered_memo = (chains, {})
+        memo = self._covered_memo[1]
+        info = self.trade_info()
+        for side in ("long", "short"):
+            sts = [s for s in shares if (s["legs"][0]["quantity"] > 0) == (side == "long")]
+            opened = [(info.get(s["trade_id"]) or {}).get("opened_at") for s in sts]
+            opened = [t for t in opened if t]
+            if not opened:
+                continue
+            since = min(opened)
+            k = (underlying, side, since)
+            if k not in memo:
+                memo[k] = chains_mod.covered_premium(chains, underlying, side, since)
+            cov = memo[k]
+            if not cov["chains"]:
+                continue
+            q = sum(x["quantity"] for s in sts for x in s["legs"])
+            cost = sum(x["quantity"] * x["avg_price"] for s in sts for x in s["legs"])
+            if not q:
+                continue
+            per = cov["premium"] / abs(q)
+            avg = cost / q
+            # Long shares: premium taken in lowers what they cost. Short shares: it raises
+            # what they were effectively sold at.
+            adjusted = avg - per if side == "long" else avg + per
+            for s in sts:
+                s["numbers"]["adjusted_basis"] = round(adjusted, 4)
+                s["numbers"]["covered_premium"] = cov["premium"]
+                s["numbers"]["covered_count"] = len(cov["chains"])
+                s["numbers"]["covered_since"] = since
 
     async def _build_and_publish_async(self) -> None:
         # IV rank for non-index underlyings and betas come from the store.
@@ -585,6 +635,7 @@ class PortfolioService:
                     missing[k] = True
                 else:
                     tot[k] += v
+            self._adjust_basis(u, out_strats)
             out_strats.sort(key=lambda s: (s["numbers"]["dte"] is None, s["numbers"]["dte"]))
             underlyings.append(
                 {

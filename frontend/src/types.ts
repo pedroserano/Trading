@@ -36,6 +36,12 @@ export interface StrategyNumbers {
   vega: number | null;
   /** Share gamma: how many shares of delta a $1 move adds. */
   gamma?: number | null;
+  /** Shares: the average price less what covered calls have netted a share (plus, for short
+   * shares and covered puts), with the dollars, how many and since when (epoch seconds). */
+  adjusted_basis?: number | null;
+  covered_premium?: number;
+  covered_count?: number;
+  covered_since?: number;
   /** This position's beta-weighted delta in SPY shares: its part of the header's β-Δ. */
   delta_bw?: number | null;
   short_deltas: (number | null)[];

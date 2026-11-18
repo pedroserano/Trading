@@ -353,34 +353,53 @@ function perUnit(st: StrategyView, total: number | null): number | null {
 }
 
 /** Cost basis per unit: the credit (cr) or debit (db) per contract, or shares' average price. */
-function costText(st: StrategyView): string {
+/** Shares' average price, and what covered calls (covered puts, on short shares) have done
+ * to it: premium taken in lowers the basis, a buyback or roll for a debit raises it. */
+function sharesBasis(st: StrategyView) {
+  const q = st.legs.reduce((a, l) => a + l.quantity, 0);
+  const cost = st.legs.reduce((a, l) => a + l.quantity * l.avg_price, 0);
   const n = st.numbers;
-  if (isShares(st)) {
-    const q = st.legs.reduce((a, l) => a + l.quantity, 0);
-    const cost = st.legs.reduce((a, l) => a + l.quantity * l.avg_price, 0);
-    return q ? `@ ${num(cost / q, 2)}` : "";
-  }
-  const px = perUnit(st, n.open_value);
-  return `${px === null ? money(Math.abs(n.open_value)) : num(px, 2)} ${n.credit ? "cr" : "db"}`;
+  return {
+    q,
+    cost,
+    avg: q ? cost / q : null,
+    adjusted: n.adjusted_basis ?? null,
+    premium: n.covered_premium ?? 0,
+    count: n.covered_count ?? 0,
+    since: n.covered_since ?? null,
+  };
 }
 
-function costTitle(st: StrategyView): string {
-  const n = st.numbers;
-  if (isShares(st)) {
-    const cost = st.legs.reduce((a, l) => a + l.quantity * l.avg_price, 0);
-    return `Average price paid per share; ${money(Math.abs(cost))} in all`;
-  }
-  return `Cost basis: ${n.credit ? "credit taken in" : "debit paid"}, ${money(Math.abs(n.open_value))} in all`;
+function basisTitle(st: StrategyView): string {
+  const b = sharesBasis(st);
+  const short = b.q < 0;
+  const paid = `${short ? "Sold at" : "Paid"} ${num(b.avg, 2)} a share, ${money(Math.abs(b.cost))} in all.`;
+  if (b.adjusted === null || !b.q) return paid;
+  const what = short ? "covered puts" : "covered calls";
+  const since = b.since ? ` since ${shortDate(new Date(b.since * 1000).toISOString().slice(0, 10))}` : "";
+  return (
+    `${paid}\n${b.count} ${b.count === 1 ? what.slice(0, -1) : what}${since} have netted ` +
+    `${signed(b.premium)} (${signed(b.premium / Math.abs(b.q), 2)} a share), so ` +
+    `${short ? "effectively sold at" : "adjusted basis"} ${num(b.adjusted, 2)}.`
+  );
 }
 
 function CostCell({ st }: { st: StrategyView }) {
-  const text = costText(st);
-  const unit =
-    text.endsWith(" cr") || text.endsWith(" db") ? text.slice(-2) : null;
+  const n = st.numbers;
+  if (isShares(st)) {
+    const b = sharesBasis(st);
+    return (
+      <td title={basisTitle(st)}>
+        {num(b.adjusted ?? b.avg, 2)}
+        {b.adjusted !== null ? <span className="sub"> adj</span> : null}
+      </td>
+    );
+  }
+  const px = perUnit(st, n.open_value);
   return (
-    <td title={costTitle(st)}>
-      {unit ? text.slice(0, -3) : text.replace(/^@ /, "")}
-      {unit ? <span className="sub"> {unit}</span> : null}
+    <td title={`Cost basis: ${n.credit ? "credit taken in" : "debit paid"}, ${money(Math.abs(n.open_value))} in all`}>
+      {px === null ? money(Math.abs(n.open_value)) : num(px, 2)}
+      <span className="sub"> {n.credit ? "cr" : "db"}</span>
     </td>
   );
 }

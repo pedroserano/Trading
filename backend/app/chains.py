@@ -571,3 +571,50 @@ def realized_by_leg(chain: dict) -> list[tuple[float, float]]:
         if closed_any:
             out.append((e["at"], round(realized, 2), (e.get("meta") or {}).get("source")))
     return out
+
+
+# The strategies a covered call (or, against short shares, a covered put) opens as: written
+# alone against shares already held, or bought with its shares in one order (a buy-write).
+COVERING = {"long": ("Short call", "Covered call"), "short": ("Short put", "Covered put")}
+
+
+def covered_premium(chains: list[dict], underlying: str, side: str, since: float) -> dict:
+    """What covered calls have netted against shares: every credit and debit on their option
+    legs, less their share of fees, for calls on `underlying` opened at or after `since`
+    (when the oldest shares still held were bought). Open calls count at their net so far,
+    so a credit lowers the basis when the call is sold and a buyback or roll for a debit
+    raises it again. side "short": covered puts against short shares.
+
+    Returns {"premium": dollars, "chains": [{id, strategy, opened_at, closed_at, status,
+    net}]}, oldest first. A buy-write's stock purchase is left out: only option legs count.
+    """
+    names = COVERING[side]
+    out, total = [], 0.0
+    for c in chains:
+        if c.get("underlying") != underlying or c.get("strategy") not in names:
+            continue
+        if (c.get("opened_at") or 0) < since:
+            continue
+        net = 0.0
+        for e in c.get("events", []):
+            legs = e.get("legs") or []
+            opts = [x for x in legs if parse_option_symbol(x["symbol"])]
+            if not opts:
+                continue
+            units = sum(abs(x["quantity"]) for x in legs) or 1
+            fee = (e.get("commission") or 0) * sum(abs(x["quantity"]) for x in opts) / units
+            net += sum(-x["quantity"] * x["price"] * 100 for x in opts) - fee
+        net = round(net, 2)
+        total += net
+        out.append(
+            {
+                "id": c["id"],
+                "strategy": c["strategy"],
+                "opened_at": c.get("opened_at"),
+                "closed_at": c.get("closed_at"),
+                "status": c.get("status"),
+                "net": net,
+            }
+        )
+    out.sort(key=lambda x: x["opened_at"] or 0)
+    return {"premium": round(total, 2), "chains": out}

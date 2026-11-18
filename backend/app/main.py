@@ -39,6 +39,7 @@ from . import (
 )
 from . import cash as cash_mod
 from . import chain as chain_mod
+from . import chains as chains_mod
 from . import dashboard as dash
 from . import scanner as scan_mod
 from .accounts import AccountRegistry
@@ -417,6 +418,7 @@ def create_app(
     )
     portfolio.trade_info = chain_service.trade_info
     portfolio.chain_holdings = chain_service.holdings
+    portfolio.chain_list = lambda: chain_service.result.get("chains", [])
     # Each Schwab account's own services, by key; the first ("live") is built here and the
     # others when the registry is read (add_account, below).
     chains = {"live": chain_service}
@@ -1847,6 +1849,7 @@ def create_app(
         )
         pf.trade_info = cs.trade_info
         pf.chain_holdings = cs.holdings
+        pf.chain_list = lambda: cs.result.get("chains", [])
         portfolios[key] = pf
         chains[key] = cs
         checks[key] = OrderCheckService(
@@ -2152,6 +2155,48 @@ def create_app(
                 }
             )
         return out
+
+    sim_portfolio.chain_list = lambda: sim_chains(broker.state) if broker.state else []
+
+    @app.get("/api/covered", dependencies=[Depends(require_login)])
+    async def api_covered(symbol: str, account: str = "live"):
+        """Shares' cost basis and the covered calls (covered puts, for short shares) written
+        against them since the oldest shares still held were bought."""
+        known(account)
+        symbol = _check_symbol(symbol)
+        pf = portfolios[account]
+        u = next((x for x in pf.snapshot.get("underlyings", []) if x["symbol"] == symbol), None)
+        shares = [
+            s
+            for s in (u or {}).get("strategies", [])
+            if s["legs"] and all(x["kind"] == "EQUITY" for x in s["legs"])
+        ]
+        if not shares:
+            raise HTTPException(status_code=404, detail=f"No shares of {symbol} held")
+        # Long shares first: covered calls; short shares only when no long ones.
+        long_ = [s for s in shares if s["legs"][0]["quantity"] > 0]
+        sts, side = (long_, "long") if long_ else (shares, "short")
+        q = sum(x["quantity"] for s in sts for x in s["legs"])
+        avg = sum(x["quantity"] * x["avg_price"] for s in sts for x in s["legs"]) / q
+        n = sts[0]["numbers"]
+        since = n.get("covered_since")
+        cov = (
+            chains_mod.covered_premium(pf.chain_list() or [], symbol, side, since)
+            if since is not None and pf.chain_list
+            else {"premium": 0.0, "chains": []}
+        )
+        per = cov["premium"] / abs(q)
+        return {
+            "symbol": symbol,
+            "side": side,
+            "shares": q,
+            "avg_price": round(avg, 4),
+            "premium": cov["premium"],
+            "per_share": round(per, 4),
+            "adjusted": round(avg - per if side == "long" else avg + per, 4),
+            "since": since,
+            "chains": cov["chains"],
+        }
 
     @app.get("/api/chains", dependencies=[Depends(require_login)])
     async def api_chains(account: str = "live"):
