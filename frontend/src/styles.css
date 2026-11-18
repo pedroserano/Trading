@@ -785,4 +785,9 @@ td > .view-select { margin-left: 0; }
 
 /* Badges are never split across lines. */
 .auto-badge, .undef, .flag { display: inline-block; white-space: nowrap; overflow-wrap: normal; }
-.ticket-sum .pop-high { color: var(--ok); }
+/* Probability of profit at 80% or more: a small green seal with a check. */
+.ticket-sum .pop-seal { width: 22px; height: 22px; margin-left: 6px; vertical-align: -4px;
+  filter: drop-shadow(0 0 3px #3fb95066); }
+.ticket-sum .pop-seal polygon { fill: var(--ok); }
+.ticket-sum .pop-seal circle { fill: none; stroke: #ffffff59; stroke-width: 0.8; }
+.ticket-sum .pop-seal path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }

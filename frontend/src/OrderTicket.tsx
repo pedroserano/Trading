@@ -464,9 +464,12 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     <div className="val">
                       {pct(preview.pop)}
                       {preview.pop >= 0.8 ? (
-                        <span className="pop-high" title="80% or more" aria-label="80% or more">
-                          {" "}✓
-                        </span>
+                        <svg className="pop-seal" viewBox="0 0 24 24" role="img" aria-label="80% or more">
+                          <title>80% or more</title>
+                          <polygon points="12.00,1.00 14.43,2.92 17.50,2.47 18.65,5.35 21.53,6.50 21.08,9.57 23.00,12.00 21.08,14.43 21.53,17.50 18.65,18.65 17.50,21.53 14.43,21.08 12.00,23.00 9.57,21.08 6.50,21.53 5.35,18.65 2.47,17.50 2.92,14.43 1.00,12.00 2.92,9.57 2.47,6.50 5.35,5.35 6.50,2.47 9.57,2.92" />
+                          <circle cx="12" cy="12" r="7.6" />
+                          <path d="M8.2 12.3l2.5 2.5 5.1-5.3" />
+                        </svg>
                       ) : null}
                     </div>
                     {preview.breakevens?.length ? (
