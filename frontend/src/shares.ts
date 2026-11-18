@@ -7,12 +7,12 @@ export function isShares(st: StrategyView): boolean {
 }
 
 /** "300 shares @ 112.40": the count and the cost per share, weighted over every lot. */
-export function sharesText(st: StrategyView): string {
+export function sharesText(st: StrategyView, withAvg = true): string {
   const q = st.legs.reduce((a, l) => a + l.quantity, 0);
   const cost = st.legs.reduce((a, l) => a + l.quantity * l.avg_price, 0);
   const avg = q ? cost / q : null;
   const count = `${money(Math.abs(q))} share${Math.abs(q) === 1 ? "" : "s"}${q < 0 ? " short" : ""}`;
-  return avg === null ? count : `${count} @ ${num(avg, 2)}`;
+  return avg === null || !withAvg ? count : `${count} @ ${num(avg, 2)}`;
 }
 
 function add(a: number | null | undefined, b: number | null | undefined): number | null {
@@ -44,7 +44,7 @@ export function mergeShares(strategies: StrategyView[]): StrategyView[] {
     const cost = lots.reduce((a, st) => a + st.legs.reduce((b, l) => b + l.quantity * l.avg_price, 0), 0);
     const first = lots[0].legs[0];
     const n = lots.map((st) => st.numbers);
-    const sum = (k: "value" | "pl" | "day_pl" | "delta" | "theta" | "vega") =>
+    const sum = (k: "value" | "pl" | "day_pl" | "delta" | "delta_bw" | "theta" | "vega" | "gamma") =>
       n.reduce<number | null>((a, x) => add(a, x[k]), null);
     out.push({
       trade_id: null,
@@ -62,6 +62,8 @@ export function mergeShares(strategies: StrategyView[]): StrategyView[] {
         delta: sum("delta"),
         theta: sum("theta"),
         vega: sum("vega"),
+        gamma: sum("gamma"),
+        delta_bw: sum("delta_bw"),
       },
       lots,
     });

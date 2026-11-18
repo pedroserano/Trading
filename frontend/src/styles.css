@@ -441,7 +441,7 @@ ul.findings { list-style: none; padding: 0; margin: 0; }
 .banner.proposal { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; }
 .banner.proposal .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .proposal-actions { display: flex; gap: 6px; flex-shrink: 0; }
-.auto-panel { display: inline-flex; align-items: center; gap: 8px; margin-left: 12px; white-space: normal; }
+.auto-panel { display: inline-flex; align-items: center; gap: 8px; margin-left: 8px; white-space: nowrap; }
 .auto-panel .check { display: inline-flex; align-items: center; gap: 4px; }
 .auto-panel a.sub { color: var(--dim); text-decoration: none; }
 .auto-panel a.sub:hover { text-decoration: underline; }
@@ -665,15 +665,10 @@ td > .view-select { margin-left: 0; }
 .stat a.in-band { color: var(--dim); text-decoration: none; font-size: 14px; }
 .stat a.in-band::before { content: "✓ "; color: var(--ok); }
 
-/* Positions on a phone: the table is exactly the screen's width. Number columns have fixed
-   widths, so they sit in the same place on every account; the Strategy column takes the rest
-   and wraps long names and the earnings flag instead of pushing the numbers off the screen. */
+/* Positions on a phone: fixed column widths, so numbers sit in the same place on every account;
+   the Strategy column wraps long names and the earnings flag. Cost and Greeks scroll sideways. */
 @media (max-width: 700px) {
   .table-wrap > table.pos-table.compact { table-layout: fixed; width: 100%; font-size: 14px; }
-  table.pos-table.compact th:nth-child(2) { width: 36px; }
-  table.pos-table.compact th:nth-child(3) { width: 70px; }
-  table.pos-table.compact th:nth-child(4) { width: 58px; }
-  table.pos-table.compact th:nth-child(5) { width: 48px; }
   table.pos-table.compact th, table.pos-table.compact td { padding-left: 3px; padding-right: 3px; }
   table.pos-table.compact th:first-child, table.pos-table.compact td:first-child { padding-left: 10px; }
   table.pos-table.compact th:last-child, table.pos-table.compact td:last-child { padding-right: 8px; }
@@ -692,9 +687,6 @@ td > .view-select { margin-left: 0; }
 }
 @media (max-width: 360px) {
   .table-wrap > table.pos-table.compact { font-size: 13px; }
-  table.pos-table.compact th:nth-child(3) { width: 64px; }
-  table.pos-table.compact th:nth-child(4) { width: 52px; }
-  table.pos-table.compact th:nth-child(5) { width: 44px; }
 }
 .toolbar.auto-bar .toolbar-link { font-size: 16px; text-decoration: none; }
 
@@ -829,3 +821,29 @@ table.watch tr.removing { opacity: .35; }
 @media (max-width: 700px) { .ph-hide { display: none; } }
 .scan-status { font-size: 13px; }
 @media (max-width: 700px) { .scan-bar { gap: 8px; } }
+
+/* Positions: an opened trade's buttons and Automanage wrap as whole pieces, never into a sliver. */
+.pos-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; white-space: normal; }
+.pos-actions .auto-panel { margin-left: 0; }
+.pos-actions .auto-panel .view-select { max-width: 150px; }
+tr.totals td { font-weight: 600; border-bottom: 1px solid var(--line); background: var(--panel); }
+tr.totals td.l { color: var(--dim); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+td.leg-figs { color: var(--dim); }
+@media (max-width: 700px) {
+  /* The position table scrolls sideways on phones; the strategy column stays put. */
+  .table-wrap > table.pos-table.compact { width: 600px; min-width: 0; }
+  table.pos-table.compact th.c-name { width: 158px; }
+  table.pos-table.compact th.c-dte { width: 34px; }
+  table.pos-table.compact th.c-pl { width: 62px; }
+  table.pos-table.compact th.c-day { width: 52px; }
+  table.pos-table.compact th.c-pct { width: 50px; }
+  table.pos-table.compact th.c-cost { width: 66px; }
+  table.pos-table.compact th.c-dbw, table.pos-table.compact th.c-theta,
+  table.pos-table.compact th.c-vega, table.pos-table.compact th.c-gamma { width: 46px; }
+  table.pos-table.compact tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+  table.pos-table.compact tr.under > :first-child, table.pos-table.compact tr.totals > :first-child { background: var(--panel); }
+  table.pos-table.compact tr.leg > :first-child { background: var(--row); }
+  table.pos-table.compact tr.strat:hover > :first-child, table.pos-table.compact tr.strat:focus > :first-child { background: #1a2029; }
+  table.pos-table.compact tr.actions > td { position: static; }
+  .pos-actions { position: sticky; left: 10px; max-width: calc(100vw - 54px); }
+}

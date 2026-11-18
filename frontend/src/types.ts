@@ -34,6 +34,10 @@ export interface StrategyNumbers {
   delta: number | null;
   theta: number | null;
   vega: number | null;
+  /** Share gamma: how many shares of delta a $1 move adds. */
+  gamma?: number | null;
+  /** This position's beta-weighted delta in SPY shares: its part of the header's β-Δ. */
+  delta_bw?: number | null;
   short_deltas: (number | null)[];
   short_strikes: number[];
   /** ZEBRAs: the shares the position moves like (negative for a put ZEBRA). */
@@ -87,6 +91,8 @@ export interface UnderlyingView {
   delta: number | null;
   delta_bw: number | null;
   theta: number | null;
+  vega?: number | null;
+  gamma?: number | null;
   strategies: StrategyView[];
 }
 
@@ -128,6 +134,8 @@ export interface Snapshot {
     theta: number | null;
     theta_pct_nl: number | null;
     delta_bw: number | null;
+    vega?: number | null;
+    gamma?: number | null;
     flags: number;
   };
   ivr: { SPY: IvRank | null };

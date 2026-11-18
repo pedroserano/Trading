@@ -554,3 +554,9 @@ entered in Settings.
 ### Watchlist edited in place
 - The Watchlist screen has a ticker box with Add and Import (thinkorswim export) on top and a × on each row; JSON routes `/api/watchlist/add|upload|remove` (session only, refused to API keys). The Settings Watchlist section is gone; that tab is now "Earnings", and old `#/settings/watchlist` links open the Watchlist.
 - Liquidity column moved after Skew so IV30, IVR, IVP and Skew sit together.
+
+### Positions: each position's Greeks, cost basis and DTE
+- Every position row shows its β-Δ (beta-weighted to SPY, so the column adds up to the header's β-Δ), Θ, vega and gamma, plus cost basis per unit (credit/debit per contract; average price for shares, moved out of the name). A Total row under the column headers carries the account figures; each symbol's row carries its subtotal.
+- Backend: strategies carry `gamma` and `delta_bw`; underlyings and totals carry `vega` and `gamma`.
+- Phones: the table scrolls sideways for cost and Greeks with the Strategy column pinned. The opened row's buttons and Automanage wrap whole; the rule summary moved into a tooltip behind "Rules".
+- The table lives in PositionsTable.tsx, rendered from one column list per mode so every row type lines up.

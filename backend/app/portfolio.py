@@ -504,8 +504,8 @@ class PortfolioService:
 
         groups = self._group_by_trade() if self.trade_info else group_all(self.legs)
         underlyings = []
-        tot = {"pl": 0.0, "day_pl": 0.0, "theta": 0.0, "delta_bw": 0.0}
-        missing = {"pl": False, "day_pl": False, "theta": False, "delta_bw": False}
+        tot = {"pl": 0.0, "day_pl": 0.0, "theta": 0.0, "delta_bw": 0.0, "vega": 0.0, "gamma": 0.0}
+        missing = {k: False for k in tot}
         for u, strategies in groups.items():
             price = self._price(u)
             q = self._quote(u)
@@ -522,7 +522,16 @@ class PortfolioService:
                         # A rank over a few days is noise; show only how much history exists.
                         ivr["rank"] = ivr["percentile"] = None
             div = dividends.info(self.quotes.get(u), today, u)
-            u_tot = {"pl": 0.0, "day_pl": 0.0, "delta": 0.0, "theta": 0.0}
+            u_tot = {
+                "pl": 0.0,
+                "day_pl": 0.0,
+                "delta": 0.0,
+                "theta": 0.0,
+                "vega": 0.0,
+                "gamma": 0.0,
+            }
+            # Beta-weighted to SPY: each position's share of the header's β-Δ.
+            bw = beta * price / spy if (beta is not None and price and spy) else None
             u_missing = {k: False for k in u_tot}
             out_strats = []
             for st in strategies:
@@ -533,23 +542,30 @@ class PortfolioService:
                     ("day_pl", "day_pl"),
                     ("delta", "delta"),
                     ("theta", "theta"),
+                    ("vega", "vega"),
+                    ("gamma", "gamma"),
                 ):
                     if n[nk] is None:
                         u_missing[k] = True
                     else:
                         u_tot[k] += n[nk]
                 sj = _strategy_json(st, today)
+                sj["numbers"]["delta_bw"] = (
+                    None if bw is None or n["delta"] is None else round(n["delta"] * bw, 1)
+                )
                 risky = dividends.at_risk(sj["legs"], price, div, today)
                 if risky:
                     sj["flags"] = [*sj["flags"], dividends.flag(risky, div)]
                 out_strats.append(sj)
             delta_bw = None
-            if not u_missing["delta"] and beta is not None and price and spy:
-                delta_bw = u_tot["delta"] * beta * price / spy
+            if not u_missing["delta"] and bw is not None:
+                delta_bw = u_tot["delta"] * bw
             for k, v in (
                 ("pl", u_tot["pl"]),
                 ("day_pl", u_tot["day_pl"]),
                 ("theta", u_tot["theta"]),
+                ("vega", u_tot["vega"]),
+                ("gamma", u_tot["gamma"]),
                 ("delta_bw", delta_bw),
             ):
                 if v is None or (k != "delta_bw" and u_missing[k]):
@@ -571,6 +587,8 @@ class PortfolioService:
                     "delta": None if u_missing["delta"] else round(u_tot["delta"], 1),
                     "delta_bw": None if delta_bw is None else round(delta_bw, 1),
                     "theta": None if u_missing["theta"] else round(u_tot["theta"], 2),
+                    "vega": None if u_missing["vega"] else round(u_tot["vega"], 1),
+                    "gamma": None if u_missing["gamma"] else round(u_tot["gamma"], 2),
                     "strategies": out_strats,
                 }
             )
@@ -582,6 +600,8 @@ class PortfolioService:
             "theta": None if missing["theta"] else round(tot["theta"], 2),
             "theta_pct_nl": (tot["theta"] / nl) if (nl and not missing["theta"]) else None,
             "delta_bw": None if missing["delta_bw"] else round(tot["delta_bw"], 1),
+            "vega": None if missing["vega"] else round(tot["vega"], 1),
+            "gamma": None if missing["gamma"] else round(tot["gamma"], 2),
             "flags": sum(len(s["flags"]) for u in underlyings for s in u["strategies"]),
         }
         snap["ivr"] = {"SPY": spy_ivr}

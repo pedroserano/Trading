@@ -77,6 +77,14 @@ async def test_jobs_record_iv_and_betas_then_snapshot_uses_them():
     assert set(store.betas) == {"AAPL", "IWM", "QQQ"}
     await p.tick()
     assert p.snapshot["totals"]["delta_bw"] is not None
+    # Each position's β-Δ, vega and gamma add up to its underlying's and the account's.
+    tot = p.snapshot["totals"]
+    for k in ("delta_bw", "vega", "gamma"):
+        per = [s["numbers"][k] for u in p.snapshot["underlyings"] for s in u["strategies"]]
+        assert None not in per and tot[k] is not None
+        assert abs(sum(per) - tot[k]) < 0.1 * len(per) + 0.01, k
+    for u in p.snapshot["underlyings"]:
+        assert abs(sum(s["numbers"]["delta_bw"] for s in u["strategies"]) - u["delta_bw"]) < 0.5
     iwm = next(u for u in p.snapshot["underlyings"] if u["symbol"] == "IWM")
     assert iwm["ivr"]["days"] == 1 and iwm["ivr"]["source"] == "recorded"
     assert iwm["ivr"]["rank"] is None  # too little history to rank

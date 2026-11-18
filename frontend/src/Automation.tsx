@@ -168,7 +168,7 @@ export function AutoPanel({ st }: { st: StrategyView }) {
   const save = (on: boolean) => post({ enabled: on });
   return (
     <span className="auto-panel" onClick={(e) => e.stopPropagation()}>
-      <label className="check">
+      <label className="check" title={enabled ? summary(view.settings.levels) : "Let automanage run this trade's rules"}>
         <input type="checkbox" checked={enabled} onChange={(e) => save(e.target.checked)} />
         Automanage
       </label>
@@ -188,8 +188,12 @@ export function AutoPanel({ st }: { st: StrategyView }) {
         </select>
       ) : null}
       {enabled ? (
-        <a className="sub" href="#/settings/automation" title="Change these in Settings">
-          {summary(view.settings.levels)}
+        <a
+          className="sub"
+          href="#/settings/automation"
+          title={`${summary(view.settings.levels)}. Change these in Settings.`}
+        >
+          Rules
         </a>
       ) : null}
       {error ? <span className="warn-text"> {error}</span> : null}

@@ -406,7 +406,7 @@ def group_all(legs: list[Leg]) -> dict[str, list[Strategy]]:
 
 
 def _greek(legs: list[Leg], attr: str) -> float | None:
-    """Position total in share terms. Stock counts as delta 1 and no theta or vega."""
+    """Position total in share terms. Stock counts as delta 1 and no theta, vega or gamma."""
     total = 0.0
     for leg in legs:
         if not leg.is_option:
@@ -494,6 +494,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "delta": _round(_greek(legs, "delta")),
         "theta": _round(_greek(legs, "theta")),
         "vega": _round(_greek(legs, "vega")),
+        "gamma": _round(_greek(legs, "gamma"), 2),
         "short_deltas": [None if x.delta is None else round(x.delta, 3) for x in shorts],
         "short_strikes": [x.strike for x in shorts],
         # A jade lizard loses to the upside only when the credit is less than the call
