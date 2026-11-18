@@ -137,7 +137,7 @@ export default function Activity() {
       {live && data.sheet?.error ? <div className="msg warn">{data.sheet.error}</div> : null}
       {data.trades.length ? (
         <div className="table-wrap">
-          <table className="positions">
+          <table className="positions fit ph-h2 ph-h3 ph-h4">
             <thead>
               <tr>
                 <th className="l">Trade</th>
@@ -185,7 +185,7 @@ export default function Activity() {
       <h3>Results by strategy</h3>
       {data.stats.length ? (
         <div className="table-wrap">
-          <table className="positions">
+          <table className="positions fit ph-h5 ph-h6 ph-h7">
             <thead>
               <tr>
                 <th className="l">Strategy</th>
@@ -227,7 +227,7 @@ export default function Activity() {
 function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: SimOrder) => void }) {
   return (
     <div className="table-wrap">
-      <table className="positions orders">
+      <table className="positions orders fit ph-h1">
         <thead>
           <tr>
             <th className="l">#</th>
@@ -307,7 +307,7 @@ function TradeRows(props: { t: SimTrade; account: string; open: boolean; toggle:
         <td>{when(t.closed_at)}</td>
         <td>{sum.rolls}</td>
         <td className={tone(sum.net)}>{signed(sum.net)}</td>
-        <td className={tone(t.realized_pl)}>{t.realized_pl === null ? "–" : signed(t.realized_pl)}</td>
+        <td className={tone(t.realized_pl)}>{t.realized_pl === null ? "" : signed(t.realized_pl)}</td>
         <td className="l">{t.status}</td>
       </tr>
       {open ? (

@@ -680,3 +680,27 @@ td > .view-select { margin-left: 0; }
   table.pos-table.compact th:nth-child(5) { width: 44px; }
 }
 .toolbar.auto-bar .toolbar-link { font-size: 16px; text-decoration: none; }
+
+/* Phones: tables marked "fit" are the screen's width. The first column takes about a third
+   and wraps; the number columns share the rest, so no column runs off the screen. Columns
+   marked ph-hN (the Nth) are left out on phones; the row still opens to its details. */
+@media (max-width: 700px) {
+  .table-wrap > table.fit { table-layout: fixed; width: 100%; min-width: 0; font-size: 13px; }
+  table.fit th { white-space: normal; line-height: 1.2; vertical-align: bottom; overflow-wrap: normal; }
+  table.fit .check-result { overflow-wrap: normal; display: inline-block; }
+  table.fit .ph-off { display: none; }
+  table.fit th, table.fit td { padding-left: 3px; padding-right: 3px; }
+  table.fit th:first-child, table.fit td:first-child { padding-left: 10px; }
+  table.fit th:last-child, table.fit td:last-child { padding-right: 10px; }
+  table.fit thead th:first-child { width: 34%; }
+  table.fit td { white-space: normal; overflow-wrap: break-word; }
+  table.fit td .bar { max-width: 100%; }
+  table.fit tr.leg td { white-space: normal; }
+  table.fit.ph-h1 thead th:nth-child(1), table.fit.ph-h1 tbody tr:not(.leg) > td:nth-child(1) { display: none; }
+  table.fit.ph-h2 thead th:nth-child(2), table.fit.ph-h2 tbody tr:not(.leg) > td:nth-child(2) { display: none; }
+  table.fit.ph-h3 thead th:nth-child(3), table.fit.ph-h3 tbody tr:not(.leg) > td:nth-child(3) { display: none; }
+  table.fit.ph-h4 thead th:nth-child(4), table.fit.ph-h4 tbody tr:not(.leg) > td:nth-child(4) { display: none; }
+  table.fit.ph-h5 thead th:nth-child(5), table.fit.ph-h5 tbody tr:not(.leg) > td:nth-child(5) { display: none; }
+  table.fit.ph-h6 thead th:nth-child(6), table.fit.ph-h6 tbody tr:not(.leg) > td:nth-child(6) { display: none; }
+  table.fit.ph-h7 thead th:nth-child(7), table.fit.ph-h7 tbody tr:not(.leg) > td:nth-child(7) { display: none; }
+}

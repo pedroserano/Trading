@@ -159,7 +159,7 @@ export default function Portfolio() {
         <section>
           <h3>Buying power by underlying</h3>
           <div className="table-wrap">
-            <table className="positions compact">
+            <table className="positions compact fit ph-h2">
               <thead>
                 <tr>
                   <th className="l">Underlying</th>
@@ -199,7 +199,7 @@ export default function Portfolio() {
         <section>
           <h3>By sector</h3>
           <div className="table-wrap">
-            <table className="positions compact">
+            <table className="positions compact fit ph-h5">
               <thead>
                 <tr>
                   <th className="l">Sector</th>
@@ -234,7 +234,7 @@ export default function Portfolio() {
                 Look-through: stocks inside your SPY and QQQ
               </h3>
               <div className="table-wrap">
-                <table className="positions compact">
+                <table className="positions compact fit">
                   <thead>
                     <tr>
                       <th className="l">Stock</th>
@@ -247,7 +247,7 @@ export default function Portfolio() {
                     {data.look_through.map((r) => (
                       <tr key={r.symbol}>
                         <td className="l">{r.symbol}</td>
-                        <td>{r.direct_bp ? money(r.direct_bp) : "–"}</td>
+                        <td>{r.direct_bp ? money(r.direct_bp) : ""}</td>
                         <td title={r.via.join(", ")}>{money(r.via_bp)}</td>
                         <td>{pct(r.total_pct, 1)}</td>
                       </tr>
@@ -264,7 +264,7 @@ export default function Portfolio() {
         <section>
           <h3>Beta-weighted delta by position</h3>
           <div className="table-wrap">
-            <table className="positions compact">
+            <table className="positions compact fit">
               <thead>
                 <tr>
                   <th className="l">Position</th>
@@ -281,7 +281,7 @@ export default function Portfolio() {
                       {p.underlying} {p.name}
                       {p.flags.length ? <span className="dim-text"> · {p.flags.join(", ")}</span> : null}
                     </td>
-                    <td>{p.dte ?? "–"}</td>
+                    <td>{p.dte ?? ""}</td>
                     <td className={tone(p.delta_bw)}>
                       {signed(p.delta_bw, 1)}
                       <Bar value={p.delta_bw} max={maxDelta} />
@@ -297,7 +297,7 @@ export default function Portfolio() {
         <section>
           <h3>Theta ladder</h3>
           <div className="table-wrap">
-            <table className="positions compact">
+            <table className="positions compact fit ph-h3">
               <thead>
                 <tr>
                   <th className="l">Expiration</th>

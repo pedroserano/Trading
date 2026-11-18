@@ -75,7 +75,7 @@ export default function OrderCheck() {
       {error || view?.error ? <div className="msg warn">{error || view?.error}</div> : null}
       {view && view.entries.length ? (
         <div className="table-wrap">
-          <table className="positions orders">
+          <table className="positions orders fit ph-h3">
             <thead>
               <tr>
                 <th className="l">Entered</th>
@@ -100,7 +100,7 @@ export default function OrderCheck() {
                       {e.result === "differs" ? (
                         <span className="sub"> {e.diffs.filter((d) => d.level === "differs").map((d) => d.field).join(", ")}</span>
                       ) : null}
-                      {e.reason ? <span className="sub"> {e.reason}</span> : null}
+                      {e.reason ? <span className="sub ph-off" title={e.reason}> {e.reason}</span> : null}
                     </td>
                   </tr>
                   {open === e.order_id ? (
