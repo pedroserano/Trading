@@ -18,7 +18,7 @@ No key can change settings, rules, views (Would own is set only by you), keys, t
 simulated account's reset or the Schwab sign-in. A live order from a key passes exactly the
 checks a manual one does: the live switches and underlying list, the cash and sweep check
 (never margin), the size limits, Schwab's preview and the kill switch. Every order a key places
-sends a notification. Revoke a key on the same page; it stops working at once.
+sends a notification and is marked in the Activity list with the key's name. Revoke a key on the same page; it stops working at once.
 
 Keep the app on your home network or VPN, as it is now. A live key can trade: use read only or
 simulated keys anywhere less private.

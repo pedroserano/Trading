@@ -113,6 +113,18 @@ def test_sim_key_trades_only_the_simulated_account_and_notifies(env):
     r = k.post("/api/orders", json={**body, "limit_net": pv["limit_net"]})
     assert r.status_code == 200 and r.json()["status"] == "FILLED"
     assert notifier.sent and "simbot" in notifier.sent[-1][1]
+    # Activity marks the key's order, and only that one.
+    by_id = {o["id"]: o for o in c.get("/api/activity?account=sim").json()["orders"]}
+    assert by_id[r.json()["id"]]["placed_by_key"] == "simbot"
+    manual = c.post("/api/orders", json={**body, "limit_net": pv["limit_net"]}).json()
+    by_id = {o["id"]: o for o in c.get("/api/activity?account=sim").json()["orders"]}
+    assert "placed_by_key" not in by_id[manual["id"]]
+    # A reset starts the order numbers again, so the marks go with it.
+    assert (
+        c.post("/api/sim/reset", json={"start_cash": 50000, "confirm": "RESET"}).status_code == 200
+    )
+    orders = c.get("/api/activity?account=sim").json()["orders"]
+    assert not any("placed_by_key" in o for o in orders)
     r = k.post("/api/orders", json={**body, "account": "live", "limit_net": pv["limit_net"]})
     assert r.status_code == 403 and "can't trade on 'live'" in r.json()["detail"]
     r = k.post("/api/scanner/run?account=live")

@@ -247,7 +247,13 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
               <td className="l">
                 <span className="sym-inline">{o.underlying}</span>
                 {[o.intent, o.strategy, o.duration].filter(Boolean).join(" · ")}
-                {o.placed_by_app ? <span className="sub"> · placed by the app</span> : null}
+                {o.placed_by_key ? (
+                  <span className="badge ai" title="Placed through the app's API with this key (Settings, Connection, AI access)">
+                    AI key: {o.placed_by_key}
+                  </span>
+                ) : o.placed_by_app ? (
+                  <span className="sub"> · placed by the app</span>
+                ) : null}
                 {o.reason ? <div className="sub">{o.reason}</div> : null}
               </td>
               <td className="l legs-cell">

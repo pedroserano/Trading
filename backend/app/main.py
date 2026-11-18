@@ -122,6 +122,9 @@ MAX_LOGIN_FAILURES = 5
 LOGIN_LOCKOUT_S = 60
 # Settings key: whether the header's account picker leaves out the simulated account.
 HIDE_SIM_KEY = "accounts.hide_sim"
+# Settings key: "account:order id" -> the name of the API key that placed the order.
+KEY_ORDERS_KEY = "api.key_orders"
+MAX_KEY_ORDERS = 2000
 
 
 class LegIn(BaseModel):
@@ -1621,6 +1624,27 @@ def create_app(
         t, p, quotes = await build_ticket(body)
         return await assess(body, t, p, quotes)
 
+    async def mark_key_order(account: str, order_id, name: str) -> None:
+        """Remember that an API key placed this order, for the Activity list."""
+        if order_id is None:
+            return
+        marks = dict(await store.get_setting(KEY_ORDERS_KEY) or {})
+        marks[f"{account}:{order_id}"] = name
+        # Oldest first in insertion order; keep the most recent.
+        if len(marks) > MAX_KEY_ORDERS:
+            marks = dict(list(marks.items())[-MAX_KEY_ORDERS:])
+        await store.set_setting(KEY_ORDERS_KEY, marks)
+
+    async def with_key_marks(account: str, orders: list[dict]) -> list[dict]:
+        """Orders, each placed by an API key carrying placed_by_key: the key's name."""
+        marks = await store.get_setting(KEY_ORDERS_KEY) or {}
+        return [
+            {**o, "placed_by_key": marks[f"{account}:{o['id']}"]}
+            if f"{account}:{o['id']}" in marks
+            else o
+            for o in orders
+        ]
+
     async def key_order_notice(key: dict, body: OrderIn) -> None:
         """Tell the user an API key placed an order. Never raises: the order already went."""
         where = "simulated account" if body.account == "sim" else registry.name(body.account)
@@ -1667,6 +1691,7 @@ def create_app(
         order = await place_order(body)
         key = getattr(request.state, "api_key", None)
         if key is not None:
+            await mark_key_order(body.account, order.get("id"), key["name"])
             await key_order_notice(key, body)
         if body.automanage and body.intent == "open":
             view = body.view if body.view in targets.VIEWS else None
@@ -2133,10 +2158,13 @@ def create_app(
                 "name": registry.name(account),
                 # Orders at Schwab from the last week, working first, as the live broker
                 # last read them (every 10 seconds while one of the app's orders works).
-                "orders": sorted(
-                    lb.state["orders"],
-                    key=lambda o: (o["status"] != "WORKING", -(o["created_at"] or 0)),
-                )[:200],
+                "orders": await with_key_marks(
+                    account,
+                    sorted(
+                        lb.state["orders"],
+                        key=lambda o: (o["status"] != "WORKING", -(o["created_at"] or 0)),
+                    )[:200],
+                ),
                 "live": await lb.status(),
                 "trades": sorted(
                     shown,
@@ -2162,7 +2190,9 @@ def create_app(
             "cash": st["cash"],
             "start_cash": st["start_cash"],
             "net_liq": acct.get("net_liq"),
-            "orders": sorted(st["orders"], key=lambda o: -o["id"])[:300],
+            "orders": await with_key_marks(
+                "sim", sorted(st["orders"], key=lambda o: -o["id"])[:300]
+            ),
             "trades": sorted(sim_chains(st), key=lambda tr: -tr["id"])[:300],
             "stats": stats(st["trades"]),
         }
@@ -2225,6 +2255,11 @@ def create_app(
         if body.confirm != "RESET":
             raise HTTPException(status_code=400, detail="Type RESET to confirm")
         await broker.reset(body.start_cash)
+        # Order numbers start again after a reset: drop the simulated account's key marks.
+        marks = await store.get_setting(KEY_ORDERS_KEY) or {}
+        await store.set_setting(
+            KEY_ORDERS_KEY, {k: v for k, v in marks.items() if not k.startswith("sim:")}
+        )
         sim_portfolio.refresh_soon()
         return {"ok": True}
 

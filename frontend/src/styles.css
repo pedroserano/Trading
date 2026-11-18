@@ -255,6 +255,7 @@ button.link.clear { background: none; border: 0; color: var(--dim); cursor: poin
 .acct-switch button[aria-pressed="true"] { color: var(--text); }
 .badge.sim { background: #8957e5; color: #fff; }
 .badge.live { background: #1f6feb; color: #fff; }
+.badge.ai { margin-left: 6px; background: #bf3989; color: #fff; white-space: nowrap; }
 
 /* Actions on positions */
 button.small { background: #21262d; border: 1px solid var(--line); border-radius: 5px; padding: 2px 10px;

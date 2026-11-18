@@ -300,6 +300,8 @@ export interface SimOrder {
   status: "WORKING" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED" | "REPLACED";
   schwab_status?: string;
   placed_by_app?: boolean;
+  /** The name of the API key that placed the order, when a key did. */
+  placed_by_key?: string;
   replaces?: (number | string)[];
   intent: string;
   trade_id: number | string | null;
