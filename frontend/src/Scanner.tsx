@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
 import { AccountContext, AccountsContext } from "./context";
-import { clock, money, pct, shortDate } from "./format";
+import { money, pct, shortDate } from "./format";
 
 type Candidate = {
   symbol: string;
@@ -29,32 +29,42 @@ type ScanView = {
   } | null;
 };
 
-const DONE: Record<string, string> = { notify: "Notified", propose: "Proposed", place: "Placed" };
+const DONE: Record<string, string> = {
+  notify: "Notified",
+  propose: "Proposed",
+  place: "Placed",
+};
 
 function done(acted: string[], symbol: string): string {
   const a = acted.find((x) => x.endsWith(` ${symbol}`));
-  return a ? DONE[a.split(" ")[0]] ?? "" : "";
+  return a ? (DONE[a.split(" ")[0]] ?? "") : "";
 }
 
 /** The scanner's last look for new trades, and Scan now. */
 export default function Scanner() {
   const account = useContext(AccountContext);
-  const accountName = useContext(AccountsContext).find((a) => a.key === account)?.name ?? "Schwab account";
+  const accountName =
+    useContext(AccountsContext).find((a) => a.key === account)?.name ??
+    "Schwab account";
   const [view, setView] = useState<ScanView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showSkipped, setShowSkipped] = useState(false);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     setView(null);
-    getJson<ScanView>(`/api/scanner?account=${account}`).then(setView, (e) => setError(String(e.message)));
+    getJson<ScanView>(`/api/scanner?account=${account}`).then(setView, (e) =>
+      setError(String(e.message)),
+    );
   }, [account]);
 
   const scan = async () => {
     setBusy(true);
     setError(null);
     try {
-      setView(await postJson<ScanView>(`/api/scanner/run?account=${account}`, {}));
+      setView(
+        await postJson<ScanView>(`/api/scanner/run?account=${account}`, {}),
+      );
     } catch (e) {
       setError(String((e as Error).message));
     } finally {
@@ -72,26 +82,70 @@ export default function Scanner() {
         : view.level === "propose"
           ? "proposes what it finds on Positions, for one tap"
           : "places what it finds";
+  const short = {
+    off: "Off",
+    notify: "Notify",
+    propose: "Propose",
+    auto: "Auto",
+  }[view.level];
+  const status = last
+    ? `${new Date(last.at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · ${last.candidates.length} found`
+    : "no scan yet";
   return (
     <div className="scanner">
-      <div className="toolbar">
-        <span>
+      {/* One line; tap it for the schedule, thresholds and what was skipped. */}
+      <div className="scan-bar">
+        <button
+          type="button"
+          className="scan-sum"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
           <b>Scanner</b>{" "}
-          <span className="dim-text">
-            {account !== "sim" ? accountName : "Simulated account"}: {what}. Daily at {view.settings.scan_time} ET;
-            opens when IV rank ≥ {view.settings.min_ivr}, strangles from {view.settings.undefined_ivr}.
-            {last ? ` Last scan ${clock(last.at)}.` : " No scan yet."}
-          </span>
-        </span>
-        <span>
-          <a href="#/settings/scanner" className="toolbar-link">
-            Scanner settings
-          </a>{" "}
-          <button type="button" className="small" disabled={busy} onClick={scan}>
-            {busy ? "Scanning…" : "Scan now"}
-          </button>
-        </span>
+          <span className={`scan-level ${view.level}`}>{short}</span>{" "}
+          <span className="dim-text scan-status">
+            {status}
+            {last && last.skipped.length ? (
+              <span className="ph-hide"> · {last.skipped.length} skipped</span>
+            ) : null}
+          </span>{" "}
+          <span className="dim-text">{open ? "▴" : "▾"}</span>
+        </button>
+        <a
+          href="#/settings/scanner"
+          className="scan-gear"
+          title="Scanner settings"
+          aria-label="Scanner settings"
+        >
+          ⚙︎
+        </a>
+        <button type="button" className="small" disabled={busy} onClick={scan}>
+          {busy ? (
+            "Scanning…"
+          ) : (
+            <>
+              Scan<span className="ph-hide"> now</span>
+            </>
+          )}
+        </button>
       </div>
+      {open ? (
+        <div className="scan-more dim-text">
+          {account !== "sim" ? accountName : "Simulated account"}: {what}. Daily
+          at {view.settings.scan_time} ET; opens when IV rank ≥{" "}
+          {view.settings.min_ivr}, strangles from {view.settings.undefined_ivr}.
+          {last && last.skipped.length ? (
+            <ul className="skipped">
+              {last.skipped.map((x) => (
+                <li key={x.symbol}>
+                  <span className="sym-inline">{x.symbol}</span>
+                  {x.reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       {error ? <div className="msg warn">{error}</div> : null}
       {last && last.candidates.length ? (
         <div className="table-wrap">
@@ -104,7 +158,9 @@ export default function Scanner() {
                 <th>Credit</th>
                 <th title="Probability of profit at entry">POP</th>
                 <th>Buying power</th>
-                <th title="Ranking: IV rank, credit per dollar of buying power and probability of profit">Score</th>
+                <th title="Ranking: IV rank, credit per dollar of buying power and probability of profit">
+                  Score
+                </th>
                 <th className="l" />
               </tr>
             </thead>
@@ -117,7 +173,8 @@ export default function Scanner() {
                   </td>
                   <td>{Math.round(c.ivr)}</td>
                   <td>
-                    {shortDate(c.expiration)} <span className="sub">{c.dte}d</span>
+                    {shortDate(c.expiration)}{" "}
+                    <span className="sub">{c.dte}d</span>
                   </td>
                   <td>{c.mid === null ? "" : Math.abs(c.mid).toFixed(2)}</td>
                   <td>{pct(c.pop)}</td>
@@ -131,25 +188,6 @@ export default function Scanner() {
             </tbody>
           </table>
         </div>
-      ) : last ? (
-        <p className="dim-text">Nothing qualified in the last scan.</p>
-      ) : null}
-      {last && last.skipped.length ? (
-        <p className="dim-text">
-          <button type="button" className="link" onClick={() => setShowSkipped(!showSkipped)}>
-            {showSkipped ? "Hide" : "Show"} {last.skipped.length} skipped
-          </button>
-        </p>
-      ) : null}
-      {showSkipped && last ? (
-        <ul className="skipped">
-          {last.skipped.map((s) => (
-            <li key={s.symbol}>
-              <span className="sym-inline">{s.symbol}</span>
-              {s.reason}
-            </li>
-          ))}
-        </ul>
       ) : null}
     </div>
   );
