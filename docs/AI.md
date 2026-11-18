@@ -12,7 +12,7 @@ real positions and chains, not a pasted screenshot. Some examples:
 **A quick look at the book**
 - "Summarise my Joint account: what's open, what's near its profit target, what's tested, and
   what reaches 21 DTE this week."
-- "Which positions are losing the most theta to gamma right now, and why?"
+- "Which positions carry the most gamma risk for the theta they earn, and why?"
 - "Is my beta-weighted delta inside my band? If not, which positions are pushing it out?"
 
 **Finding and checking trades**

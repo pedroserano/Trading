@@ -29,6 +29,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import (
     apikeys,
     guards,
+    guides,
     indexweights,
     mcp_server,
     plain,
@@ -878,6 +879,19 @@ def create_app(
         if s < 172800:
             return f"{s // 3600} hours ago"
         return f"{s // 86400} days ago"
+
+    @app.get("/guide/{name}", response_class=HTMLResponse, dependencies=[Depends(require_login)])
+    async def guide_page(request: Request, name: str):
+        found = guides.render(name)
+        if found is None:
+            raise HTTPException(status_code=404, detail="No such guide")
+        title, body = found
+        back = settings_url("ai" if name == "ai" else "connection")
+        return templates.TemplateResponse(
+            request,
+            "guide.html",
+            {"title": title, "body": Markup(body), "back": back},  # noqa: S704 - our own docs, raw HTML off
+        )
 
     @app.post("/api-keys/create", dependencies=[Depends(require_login)])
     async def api_key_create(request: Request, name: str = Form(), level: str = Form()):

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block header %}
+<a href="{{ back }}" class="signout">Back to Settings</a>
+{% endblock %}
+{% block main %}
+<style>
+  .guide h1 { font-size: 22px; margin: 4px 0 14px; }
+  .guide h2 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text);
+              margin: 26px 0 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .guide h3 { font-size: 15px; margin: 18px 0 6px; }
+  .guide a, header a { color: var(--accent); text-decoration: none; }
+  .guide ul { padding-left: 20px; } .guide li { margin: 4px 0; }
+  .guide pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+               padding: 10px 12px; overflow-x: auto; font-size: 13px; }
+  .guide pre code { background: none; padding: 0; overflow-wrap: normal; }
+  .guide table { margin: 8px 0; }
+  .guide td, .guide th { white-space: normal; text-align: left; vertical-align: top; }
+  .guide h1, .guide h2, .guide h3 { scroll-margin-top: 12px; }
+</style>
+<section class="guide">{{ body }}</section>
+{% endblock %}

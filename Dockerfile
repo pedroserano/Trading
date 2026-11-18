@@ -18,6 +18,8 @@ COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/app ./app
+# The guides, shown in the app at /guide/<name>.
+COPY docs ./docs
 COPY --from=frontend /src/dist ./app/static
 
 # 568 is the "apps" user on TrueNAS, so files on the dataset get a sensible owner.

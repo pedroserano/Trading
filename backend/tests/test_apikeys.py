@@ -225,3 +225,20 @@ def test_mcp_tools_use_the_keys_level(env):
     )
     res = placed.json()["result"]
     assert res.get("isError") and "403" in res["content"][0]["text"]
+
+
+def test_the_ai_guide_is_shown_in_the_app(env):
+    c, app, _, _ = env
+    page = c.get("/guide/ai")
+    assert page.status_code == 200
+    html = page.text
+    assert "Why connect an AI" in html and "Tailscale" in html
+    # Links between guides stay inside the app, and headings carry GitHub's anchors.
+    assert 'href="/guide/deploy#tailscale-optional-a-trusted-certificate' in html
+    deploy = c.get("/guide/deploy").text
+    assert 'id="tailscale-optional-a-trusted-certificate-and-access-away-from-home"' in deploy
+    assert c.get("/guide/nope").status_code == 404
+    assert c.get("/guide/..%2Fmain").status_code == 404
+    # Settings links to it; signed out it goes to the login page, and a key can't open it.
+    assert 'href="/guide/ai"' in c.get("/connect?fragment=1").text
+    assert TestClient(app, follow_redirects=False).get("/guide/ai").status_code == 303
