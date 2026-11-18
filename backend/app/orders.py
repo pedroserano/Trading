@@ -37,6 +37,7 @@ class TicketLeg:
     bid: float | None = None
     ask: float | None = None
     mark: float | None = None
+    oi: int | None = None  # open interest at the strike, when the quote has it
     equity: bool = False  # shares: closing orders only, alone in their order
 
     @classmethod
@@ -140,6 +141,8 @@ def apply_quotes(t: Ticket, quotes: dict) -> None:
         leg.bid = _num(q.get("bidPrice", q.get("bid")))
         leg.ask = _num(q.get("askPrice", q.get("ask")))
         leg.mark = _num(q.get("mark"))
+        oi = _num(q.get("openInterest"))
+        leg.oi = int(oi) if oi is not None else None
         if leg.mark is None and leg.bid is not None and leg.ask is not None:
             leg.mark = (leg.bid + leg.ask) / 2
 

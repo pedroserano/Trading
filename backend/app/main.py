@@ -1507,6 +1507,9 @@ def create_app(
             d_theta = a["theta"] / nl if a.get("theta") is not None else None
             band_after = targets.after((pf.snapshot or {}).get("bands"), d_delta, d_theta)
             warnings.extend(band_after["warnings"])
+        # A wide or thin market: advice, whatever the order does.
+        watch_row = next((r for r in await watchlist.rows() if r["symbol"] == t.underlying), None)
+        warnings.extend(guards.liquidity(t, (watch_row or {}).get("atm_oi")))
         if body.account == "sim" and t.intent in ("close", "roll") and t.trade_id is not None:
             for o in await broker.replaceable(t.trade_id, {x.symbol for x in t.legs}):
                 price = f"{abs(o['limit_net']):.2f} {'credit' if o['limit_net'] > 0 else 'debit'}"

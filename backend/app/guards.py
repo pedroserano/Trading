@@ -174,3 +174,44 @@ def check(
 
 def _fmt(net: float) -> str:
     return f"{abs(net):.2f} {'credit' if net > 0 else 'debit' if net < 0 else 'even'}"
+
+
+# Liquidity, the tastylive way: a tight market is a penny to a nickel wide, and open interest
+# runs "in the thousands" across an underlying's options. Advice only; never blocks an order.
+MAX_LEG_WIDTH = 0.50  # an option leg's bid/ask wider than this, in dollars
+MIN_LEG_OI = 100  # open interest at one strike under this
+MIN_ATM_OI = 1000  # the underlying's at-the-money open interest under this
+
+
+def _leg_name(leg) -> str:
+    if leg.equity or not leg.put_call:
+        return f"{leg.symbol} shares"
+    when = f"{leg.expiration:%b} {leg.expiration.day}" if leg.expiration else ""
+    side = "Put" if leg.put_call == "P" else "Call"
+    return f"{leg.underlying} {when} {leg.strike:g} {side}"
+
+
+def liquidity(t: Ticket, atm_oi: float | None = None) -> list[str]:
+    """Warnings for a wide or thin market on the ticket's option legs."""
+    out = []
+    for leg in t.legs:
+        if leg.equity or not leg.put_call:
+            continue
+        if leg.bid is not None and leg.ask is not None:
+            width = leg.ask - leg.bid
+            if width > MAX_LEG_WIDTH + 1e-9:
+                out.append(
+                    f"{_leg_name(leg)} is {width:.2f} wide ({leg.bid:.2f} × {leg.ask:.2f}), "
+                    f"over {MAX_LEG_WIDTH:.2f}: expect a fill away from mid"
+                )
+        if leg.oi is not None and leg.oi < MIN_LEG_OI:
+            out.append(
+                f"{_leg_name(leg)} has open interest of {leg.oi:,}: few contracts are open "
+                "there, so fills and later adjustments can be costly"
+            )
+    if atm_oi is not None and atm_oi < MIN_ATM_OI:
+        out.append(
+            f"{t.underlying} has at-the-money open interest of {atm_oi:,.0f}, under the "
+            "thousands tastylive looks for in a liquid underlying"
+        )
+    return out

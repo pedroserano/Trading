@@ -266,6 +266,7 @@ class DemoDataSource:
                 "vega": round(g["vega"], 4),
                 "volatility": round(vol * 100, 2),
                 "underlyingPrice": round(s, 2),
+                "openInterest": int(5000 * math.exp(-abs(math.log(occ.strike / s)) * 12)),
             },
         }
 

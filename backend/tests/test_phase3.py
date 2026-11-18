@@ -961,3 +961,41 @@ def test_a_closing_ticket_has_no_probability_of_profit(client):
     }
     r = client.post("/api/orders/preview", json=close).json()
     assert r["pop"] is None and r["breakevens"] is None
+
+
+def _quoted(bid, ask, oi=None):
+    t = ticket([(sym("P", 575), -1, "open")], limit_net=1.0)
+    leg = t.legs[0]
+    leg.bid, leg.ask, leg.mark, leg.oi = bid, ask, (bid + ask) / 2, oi
+    return t
+
+
+def test_liquidity_warns_on_a_leg_over_fifty_cents_wide():
+    assert guards.liquidity(_quoted(2.00, 2.50)) == []
+    wide = guards.liquidity(_quoted(2.00, 2.51))
+    assert len(wide) == 1 and "0.51 wide (2.00 × 2.51), over 0.50" in wide[0]
+
+
+def test_liquidity_warns_on_thin_open_interest_and_is_quiet_when_unknown():
+    assert guards.liquidity(_quoted(1.00, 1.05, oi=None)) == []
+    assert guards.liquidity(_quoted(1.00, 1.05, oi=100)) == []
+    thin = guards.liquidity(_quoted(1.00, 1.05, oi=40))
+    assert len(thin) == 1 and "open interest of 40" in thin[0]
+    under = guards.liquidity(_quoted(1.00, 1.05), atm_oi=600)
+    assert len(under) == 1 and "at-the-money open interest of 600" in under[0]
+    assert guards.liquidity(_quoted(1.00, 1.05), atm_oi=5000) == []
+
+
+def test_liquidity_warnings_never_block_the_order(client):
+    # Far out of the money: thin open interest in the demo, still placeable.
+    exps = client.get("/api/trade/SPY/expirations").json()
+    ch = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()
+    row = min(ch["rows"], key=lambda r: r["strike"])
+    body = {
+        "account": "sim",
+        "intent": "open",
+        "legs": [{"symbol": row["put"]["symbol"], "quantity": -1, "effect": "open"}],
+    }
+    pv = client.post("/api/orders/preview", json=body).json()
+    assert any("open interest of" in w for w in pv["warnings"])
+    assert not any("open interest" in e for e in pv["errors"])
