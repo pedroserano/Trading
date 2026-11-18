@@ -75,6 +75,13 @@ export default function Settings({ section }: { section: string | null }) {
       const own = panels.find((p) => p.dataset.tab === section);
       const holder = own ?? document.getElementById(section)?.closest<HTMLElement>(".tab-panel");
       if (holder?.dataset.tab) pick = holder.dataset.tab;
+      // A setting inside a folded step: open the step so the jump lands on it.
+      const target = own ? null : document.getElementById(section);
+      const step = target?.closest<HTMLDetailsElement>("details.step");
+      if (step) {
+        step.open = true;
+        window.setTimeout(() => target?.scrollIntoView({ block: "center" }), 50);
+      }
     }
     setActive(pick);
     markChanged(el);
@@ -116,6 +123,16 @@ export default function Settings({ section }: { section: string | null }) {
       }
     };
     const onClick = (e: Event) => {
+      // "Open every step" / "Fold every step" for the step lists on Automation and Scanner.
+      const all = (e.target as HTMLElement).closest<HTMLButtonElement>("button.steps-all");
+      if (all) {
+        e.preventDefault();
+        const steps = Array.from(all.closest(".group")?.querySelectorAll<HTMLDetailsElement>("details.step") ?? []);
+        const open = !steps.every((d) => d.open);
+        for (const d of steps) d.open = open;
+        all.textContent = open ? "Fold every step" : "Open every step";
+        return;
+      }
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button.reset-group");
       if (!b) return;
       e.preventDefault();

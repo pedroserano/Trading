@@ -721,3 +721,22 @@ td > .view-select { margin-left: 0; }
   .chain td.click button { padding: 1px 2px; }
   table.fit select { max-width: 100%; padding: 2px 0 2px 2px; font-size: 12px; }
 }
+
+/* Settings, Automation and Scanner: each numbered step folds under its title. A dot marks a
+   step with a value changed from its default; the text is larger on phones. */
+.settings-page details.step { border-top: 1px solid var(--line); }
+.settings-page details.step > summary { list-style: none; cursor: pointer; padding: 10px 0;
+  display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.settings-page details.step > summary::-webkit-details-marker { display: none; }
+.settings-page details.step > summary::before { content: "▸"; color: var(--dim); font-size: 11px; width: 10px; }
+.settings-page details.step[open] > summary::before { content: "▾"; }
+.settings-page details.step:has(.is-changed) > summary::after { content: "changed"; font-size: 11px;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 0 6px; }
+.settings-page details.step .plain-list { margin: 0 0 10px; font-size: 14px; }
+.settings-page .steps-toggle { margin: 4px 0 2px; text-align: right; }
+.settings-page .steps-toggle .link { color: var(--accent); font-size: 13px; cursor: pointer; }
+@media (max-width: 700px) {
+  .settings-page details.step > summary { font-size: 15px; padding: 12px 0; }
+  .settings-page details.step .plain-list { font-size: 15px; padding-left: 14px; }
+  .settings-page details.step .plain-list li { line-height: 2.1; margin: 10px 0; }
+}

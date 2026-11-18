@@ -176,9 +176,12 @@
         number, choice or box right in the text; underlined values are set on another tab and
         open it. Levels: Off does nothing, Notify sends a message, Propose waits for your tap,
         Auto places the order.</p>
+      <p class="steps-toggle"><button type="button" class="link steps-all">Open every step</button></p>
       {% for title, lines in auto_steps_html %}
-      <p class="small step-title"><b>{{ title }}</b></p>
-      <ul class="small rmap-list plain-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      <details class="step"{% if loop.first %} open{% endif %}>
+        <summary class="step-title"><b>{{ title }}</b></summary>
+        <ul class="rmap-list plain-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      </details>
       {% endfor %}
     {% endcall %}
     <p class="save"><button class="primary" type="submit">Save automation</button></p>
@@ -240,9 +243,12 @@
     {% call group("How the scanner picks trades") %}
       <p class="dim small">First the accounts it runs on and at what level, then its steps in order, as it runs. Change any number, choice or box right in the
         text; underlined values are set on another tab and open it.</p>
+      <p class="steps-toggle"><button type="button" class="link steps-all">Open every step</button></p>
       {% for title, lines in scan_steps_html %}
-      <p class="small step-title"><b>{{ title }}</b></p>
-      <ul class="small rmap-list plain-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      <details class="step"{% if loop.first %} open{% endif %}>
+        <summary class="step-title"><b>{{ title }}</b></summary>
+        <ul class="rmap-list plain-list">{% for line in lines %}<li>{{ line }}</li>{% endfor %}</ul>
+      </details>
       {% endfor %}
     {% endcall %}
     <p class="save"><button class="primary" type="submit">Save scanner</button></p>
