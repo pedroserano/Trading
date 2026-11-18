@@ -718,6 +718,8 @@ function StrategyRows(props: {
   const markPx = perUnit(st, n.value);
   const shares = isShares(st);
   const stockLeg = shares ? st.legs[0] : null;
+  const undefinedRisk =
+    !shares && !st.defined_risk && n.covered_by !== "ZEBRA" && st.legs.some((l) => l.quantity < 0);
   return (
     <>
       <tr
@@ -733,39 +735,68 @@ function StrategyRows(props: {
         aria-expanded={expanded}
       >
         <td className="l name">
-          <span className="caret">{expanded ? "▾" : "▸"}</span>
-          {props.under ? <span className="sym-inline">{props.under}</span> : null}
-          {shares ? sharesText(st) : st.name}
-          {st.lots ? <span className="sub"> · {st.lots.length} purchases</span> : null}
-          {n.covered_by === "ZEBRA" ? (
-            <span
-              className="sub"
-              title={`Written against a ZEBRA held on this underlying, expiring ${n.cover_until ?? "–"}: automanage never rolls it past that date`}
-            >
-              {" "}on ZEBRA
-            </span>
-          ) : null}
-          {n.shares_like ? (
-            <span className="sub" title="A ZEBRA moves like stock: 100 shares per unit">
-              {" "}≈{n.shares_like < 0 ? "−" : ""}
-              {Math.abs(n.shares_like)} sh
-            </span>
-          ) : null}
-          {props.under && !compact ? <EarningsFlag e={props.earnings} /> : null}
-          {compact && !shares && (n.contracts || n.expiration) ? (
-            <span className="sub">
-              {" "}
-              {n.contracts ? `×${n.contracts} ` : ""}
-              {n.expiration ? shortDate(n.expiration) : ""}
-            </span>
-          ) : null}
-          {!shares && !st.defined_risk && n.covered_by !== "ZEBRA" && st.legs.some((l) => l.quantity < 0) ? (
-            <span className="undef" title="Undefined risk">
-              U
-            </span>
-          ) : null}
-          <AutoBadge st={st} />
-          {compact && st.flags.length ? <Flags st={st} /> : null}
+          {compact ? (
+            <>
+              {/* Phones: the name on one line, everything about it on the next, so the
+                  caret and the badges never wrap on their own. */}
+              <span className="nm">
+                <span className="caret">{expanded ? "▾" : "▸"}</span>
+                {props.under ? <span className="sym-inline">{props.under}</span> : null}
+                {shares ? sharesText(st) : st.name}
+              </span>
+              <div className="meta">
+                {st.lots ? <span className="sub">{st.lots.length} purchases</span> : null}
+                {!shares && (n.contracts || n.expiration) ? (
+                  <span className="sub">
+                    {n.contracts ? `×${n.contracts} ` : ""}
+                    {n.expiration ? shortDate(n.expiration) : ""}
+                  </span>
+                ) : null}
+                {n.covered_by === "ZEBRA" ? <span className="sub">on ZEBRA</span> : null}
+                {n.shares_like ? (
+                  <span className="sub">
+                    ≈{n.shares_like < 0 ? "−" : ""}
+                    {Math.abs(n.shares_like)} sh
+                  </span>
+                ) : null}
+                {undefinedRisk ? (
+                  <span className="undef" title="Undefined risk">
+                    U
+                  </span>
+                ) : null}
+                <AutoBadge st={st} />
+                {st.flags.length ? <Flags st={st} /> : null}
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="caret">{expanded ? "▾" : "▸"}</span>
+              {props.under ? <span className="sym-inline">{props.under}</span> : null}
+              {shares ? sharesText(st) : st.name}
+              {st.lots ? <span className="sub"> · {st.lots.length} purchases</span> : null}
+              {n.covered_by === "ZEBRA" ? (
+                <span
+                  className="sub"
+                  title={`Written against a ZEBRA held on this underlying, expiring ${n.cover_until ?? "–"}: automanage never rolls it past that date`}
+                >
+                  {" "}on ZEBRA
+                </span>
+              ) : null}
+              {n.shares_like ? (
+                <span className="sub" title="A ZEBRA moves like stock: 100 shares per unit">
+                  {" "}≈{n.shares_like < 0 ? "−" : ""}
+                  {Math.abs(n.shares_like)} sh
+                </span>
+              ) : null}
+              {props.under ? <EarningsFlag e={props.earnings} /> : null}
+              {undefinedRisk ? (
+                <span className="undef" title="Undefined risk">
+                  U
+                </span>
+              ) : null}
+              <AutoBadge st={st} />
+            </>
+          )}
         </td>
         {compact ? (
           <>

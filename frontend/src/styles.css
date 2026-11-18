@@ -668,7 +668,13 @@ td > .view-select { margin-left: 0; }
   table.pos-table.compact th:last-child, table.pos-table.compact td:last-child { padding-right: 8px; }
   table.pos-table.compact th { overflow: hidden; }
   table.pos-table.compact td.name, table.pos-table.compact tr.under td.l, table.pos-table.compact tr.leg td.l {
-    white-space: normal; overflow-wrap: break-word; }
+    white-space: normal; overflow-wrap: normal; }
+  /* The name on its line; under it the details, the U and AUTO badges and the flags, each
+     kept whole. */
+  table.pos-table.compact td.name .nm .caret { margin-right: 6px; }
+  table.pos-table.compact td.name .meta { display: flex; flex-wrap: wrap; align-items: center;
+    gap: 3px 6px; margin: 3px 0 0 16px; }
+  table.pos-table.compact td.name .meta .flags { margin: 0; }
   /* Prices and changes wrap whole, never mid-number. */
   table.pos-table.compact tr.under td.l > span, table.pos-table.compact td.name .sub { white-space: nowrap; }
   table.pos-table.compact tr.under .earn { display: block; margin: 2px 0 0; white-space: normal; }
@@ -775,3 +781,6 @@ td > .view-select { margin-left: 0; }
   .ticket-actions > button { white-space: nowrap; }
   .ticket-actions > button.primary, .ticket-actions > button.danger { flex: 1; }
 }
+
+/* Badges are never split across lines. */
+.auto-badge, .undef, .flag { display: inline-block; white-space: nowrap; overflow-wrap: normal; }

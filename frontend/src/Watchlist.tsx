@@ -105,7 +105,7 @@ export default function Watchlist() {
         </a>
       </div>
       <div className="table-wrap">
-        <table className="positions watch fit ph-h5 ph-h6 ph-h7 ph-h9 ph-h10 ph-h11 ph-h12 ph-h13 ph-h14 ph-h15 ph-h16">
+        <table className="positions watch">
           <thead>
             <tr>
               {th("symbol", "Symbol")}
