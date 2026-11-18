@@ -34,7 +34,7 @@ type Col =
 
 const GREEKS: Col[] = ["dbw", "theta", "vega", "gamma"];
 const COLS: Record<"compact" | "simple" | "detail", Col[]> = {
-  // Phones: how the trade is doing first, then cost and Greeks to the right (scrolls sideways).
+  // Phones: how the trade is doing first; cost and Greeks further right (the table scrolls).
   compact: ["name", "dte", "pl", "day", "pct", "cost", ...GREEKS],
   simple: [
     "name",
@@ -97,6 +97,12 @@ const HEAD: Record<Col, [string, string?]> = {
   maxloss: ["Max loss"],
   flags: ["Flags"],
 };
+
+/** Where the summed figures start: what comes before is the name and descriptive columns. */
+const SUMMED: Col[] = ["pl", "day", ...GREEKS];
+function leadOf(cols: Col[]): number {
+  return cols.findIndex((c) => SUMMED.includes(c));
+}
 
 /** Gamma is small: a decimal under 10. */
 function greek(v: number | null | undefined, c: Col): string {
@@ -178,9 +184,7 @@ export default function PositionsTable(props: {
               >
                 {c === "name" && showUnder && !compact
                   ? "Underlying / strategy"
-                  : c === "cost" && compact
-                    ? "Cost"
-                    : HEAD[c][0]}
+                  : HEAD[c][0]}
               </th>
             ))}
           </tr>
@@ -257,7 +261,7 @@ function UnderGroup(props: {
   cols: Col[];
 }) {
   const { u, detail, cols } = props;
-  const lead = cols.indexOf("pl");
+  const lead = leadOf(cols);
   const sub: Partial<Record<Col, number | null | undefined>> = {
     pl: u.pl,
     day: u.day_pl,
@@ -277,7 +281,10 @@ function UnderGroup(props: {
           >
             {u.symbol}
           </a>
+          {/* Break points, so a narrow phone wraps the change under the price. */}
+          <wbr />
           <span className="px">{num(u.price, 2)}</span>
+          <wbr />
           <span className="chg">
             {u.change_pct === null ? "" : `${signed(u.change_pct, 2)}%`}
           </span>
@@ -345,28 +352,35 @@ function perUnit(st: StrategyView, total: number | null): number | null {
   return Math.abs(total) / (n.contracts * 100);
 }
 
-/** Cost basis: per unit, with the total in the tooltip. */
-function CostCell({ st }: { st: StrategyView }) {
+/** Cost basis per unit: the credit (cr) or debit (db) per contract, or shares' average price. */
+function costText(st: StrategyView): string {
   const n = st.numbers;
   if (isShares(st)) {
     const q = st.legs.reduce((a, l) => a + l.quantity, 0);
     const cost = st.legs.reduce((a, l) => a + l.quantity * l.avg_price, 0);
-    const avg = q ? cost / q : null;
-    return (
-      <td
-        title={`Average price paid per share; ${money(Math.abs(cost))} in all`}
-      >
-        {num(avg, 2)}
-      </td>
-    );
+    return q ? `@ ${num(cost / q, 2)}` : "";
   }
   const px = perUnit(st, n.open_value);
+  return `${px === null ? money(Math.abs(n.open_value)) : num(px, 2)} ${n.credit ? "cr" : "db"}`;
+}
+
+function costTitle(st: StrategyView): string {
+  const n = st.numbers;
+  if (isShares(st)) {
+    const cost = st.legs.reduce((a, l) => a + l.quantity * l.avg_price, 0);
+    return `Average price paid per share; ${money(Math.abs(cost))} in all`;
+  }
+  return `Cost basis: ${n.credit ? "credit taken in" : "debit paid"}, ${money(Math.abs(n.open_value))} in all`;
+}
+
+function CostCell({ st }: { st: StrategyView }) {
+  const text = costText(st);
+  const unit =
+    text.endsWith(" cr") || text.endsWith(" db") ? text.slice(-2) : null;
   return (
-    <td
-      title={`${n.credit ? "Credit taken in" : "Debit paid"}: ${money(Math.abs(n.open_value))} in all`}
-    >
-      {px === null ? money(Math.abs(n.open_value)) : num(px, 2)}
-      <span className="sub"> {n.credit ? "cr" : "db"}</span>
+    <td title={costTitle(st)}>
+      {unit ? text.slice(0, -3) : text.replace(/^@ /, "")}
+      {unit ? <span className="sub"> {unit}</span> : null}
     </td>
   );
 }
@@ -597,7 +611,7 @@ function StrategyRows(props: {
 
 /** One leg: its own figures up to P/L, then a line of per-share numbers. */
 function LegRow({ l, cols }: { l: LegView; cols: Col[] }) {
-  const lead = cols.indexOf("pl");
+  const lead = leadOf(cols);
   const head = cols.slice(0, lead);
   const bits = [
     head.includes("cost") ? null : `open ${num(l.avg_price, 2)}`,

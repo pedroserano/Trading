@@ -1,9 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AccountContext, AccountsContext, TicketContext, type Account, type SchwabAccount } from "./context";
+import {
+  AccountContext,
+  AccountsContext,
+  TicketContext,
+  type Account,
+  type SchwabAccount,
+} from "./context";
 import { getJson } from "./api";
 import Activity from "./Activity";
 import MarketStrip from "./MarketStrip";
-import { AutoBar, AutomationContext, PauseSwitch, useAutomation } from "./Automation";
+import {
+  AutoBar,
+  AutomationContext,
+  PauseSwitch,
+  useAutomation,
+} from "./Automation";
 import Dashboard from "./Dashboard";
 import Portfolio from "./Portfolio";
 import PositionsTable from "./PositionsTable";
@@ -24,19 +35,25 @@ type Route =
   | { page: "settings"; section: string | null }
   | { page: "trade"; symbol: string };
 
-
-
 function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/");
   // The watchlist used to be edited in Settings; old links land on the Watchlist screen.
-  if (parts[0] === "watchlist" || (parts[0] === "settings" && parts[1] === "watchlist")) {
+  if (
+    parts[0] === "watchlist" ||
+    (parts[0] === "settings" && parts[1] === "watchlist")
+  ) {
     return { page: "watchlist" };
   }
   if (parts[0] === "portfolio") return { page: "portfolio" };
   if (parts[0] === "activity") return { page: "activity" };
   if (parts[0] === "dashboard") return { page: "dashboard" };
-  if (parts[0] === "settings") return { page: "settings", section: parts[1] || null };
-  if (parts[0] === "trade") return { page: "trade", symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase() };
+  if (parts[0] === "settings")
+    return { page: "settings", section: parts[1] || null };
+  if (parts[0] === "trade")
+    return {
+      page: "trade",
+      symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase(),
+    };
   return { page: "positions" };
 }
 
@@ -52,7 +69,10 @@ function useRoute(): Route {
 
 type View = "underlying" | "dte";
 
-function usePersisted<T extends string>(key: string, initial: T): [T, (v: T) => void] {
+function usePersisted<T extends string>(
+  key: string,
+  initial: T,
+): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => {
     try {
       return (localStorage.getItem(key) as T) || initial;
@@ -82,13 +102,22 @@ function useNow(ms: number) {
 
 /** The Schwab accounts the app runs, by their Schwab names, and whether the simulated
  * account is hidden (Settings); read again every few minutes. */
-function useSchwabAccounts(): { accounts: SchwabAccount[]; hide_sim: boolean } | null {
-  const [accounts, setAccounts] = useState<{ accounts: SchwabAccount[]; hide_sim: boolean } | null>(null);
+function useSchwabAccounts(): {
+  accounts: SchwabAccount[];
+  hide_sim: boolean;
+} | null {
+  const [accounts, setAccounts] = useState<{
+    accounts: SchwabAccount[];
+    hide_sim: boolean;
+  } | null>(null);
   useEffect(() => {
     let live = true;
     const read = async () => {
       try {
-        const r = await getJson<{ accounts: SchwabAccount[]; hide_sim?: boolean }>("/api/accounts/in-use");
+        const r = await getJson<{
+          accounts: SchwabAccount[];
+          hide_sim?: boolean;
+        }>("/api/accounts/in-use");
         if (live) setAccounts({ accounts: r.accounts, hide_sim: !!r.hide_sim });
       } catch {
         /* kept as it was; the next read tries again */
@@ -112,80 +141,137 @@ export default function App() {
   // A remembered account no longer in use (or the simulated one, hidden in Settings)
   // falls back to the first Schwab account.
   const account =
-    (stored === "sim" && !hideSim) || accounts === null || accounts.some((a) => a.key === stored)
+    (stored === "sim" && !hideSim) ||
+    accounts === null ||
+    accounts.some((a) => a.key === stored)
       ? stored
       : (accounts[0]?.key ?? "live");
   const { snapshot, link } = useSnapshot(account);
   const route = useRoute();
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
-  const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
+  const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">(
+    "positions.flagged",
+    "0",
+  );
   // Simple: the columns that say how a trade is doing; Detail: every number.
-  const [cols, setCols] = usePersisted<"simple" | "detail">("positions.cols", "simple");
+  const [cols, setCols] = usePersisted<"simple" | "detail">(
+    "positions.cols",
+    "simple",
+  );
   const automation = useAutomation(account);
 
   if (!snapshot) {
     return (
       <div className="loading">
-        {link === "retrying" ? "Cannot reach the app server. Retrying…" : "Loading…"}
+        {link === "retrying"
+          ? "Cannot reach the app server. Retrying…"
+          : "Loading…"}
       </div>
     );
   }
   return (
     <TicketContext.Provider value={setTicket}>
       <AccountContext.Provider value={account}>
-      <AccountsContext.Provider value={accounts ?? []}>
-      <AutomationContext.Provider value={automation}>
-      <Header s={snapshot} link={link} route={route} account={account} setAccount={setAccount} accounts={accounts ?? []} hideSim={hideSim} />
-      <main>
-        <Banner s={snapshot} />
-        {route.page === "watchlist" ? <Watchlist /> : null}
-        {route.page === "portfolio" ? <Portfolio /> : null}
-        {route.page === "activity" ? <Activity /> : null}
-        {route.page === "dashboard" ? <Dashboard /> : null}
-        {route.page === "settings" ? <Settings section={route.section} /> : null}
-        {route.page === "trade" ? <Trade symbol={route.symbol} cover={coverHeld(snapshot, route.symbol)} /> : null}
-        {route.page === "positions" ? (
-          <>
-        <MarketStrip />
-        <div className="toolbar">
-          <div className="seg" role="group" aria-label="Group positions">
-            <button aria-pressed={view === "underlying"} onClick={() => setView("underlying")}>
-              By underlying
-            </button>
-            <button aria-pressed={view === "dte"} onClick={() => setView("dte")}>
-              By DTE
-            </button>
-          </div>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={flaggedOnly === "1"}
-              onChange={(e) => setFlaggedOnly(e.target.checked ? "1" : "0")}
+        <AccountsContext.Provider value={accounts ?? []}>
+          <AutomationContext.Provider value={automation}>
+            <Header
+              s={snapshot}
+              link={link}
+              route={route}
+              account={account}
+              setAccount={setAccount}
+              accounts={accounts ?? []}
+              hideSim={hideSim}
             />
-            Flagged only ({snapshot.totals.flags})
-          </label>
-          <div className="seg cols-toggle" role="group" aria-label="Columns">
-            <button aria-pressed={cols === "simple"} onClick={() => setCols("simple")} title="How each trade is doing">
-              Simple
-            </button>
-            <button aria-pressed={cols === "detail"} onClick={() => setCols("detail")} title="Every number: prices, Greeks, short deltas, max loss">
-              Detail
-            </button>
-          </div>
-        </div>
-        <AutoBar />
-        <PositionsTable s={snapshot} view={view} flaggedOnly={flaggedOnly === "1"} detail={cols === "detail"} />
-        <p className="footnote">
-          Positions are grouped by their trade history, including trades placed in thinkorswim;
-          credit includes every roll. Positions with no known history are grouped by their legs.
-        </p>
-          </>
-        ) : null}
-      </main>
-      {ticket ? <OrderTicket spec={ticket} onClose={() => setTicket(null)} /> : null}
-      </AutomationContext.Provider>
-      </AccountsContext.Provider>
+            <main>
+              <Banner s={snapshot} />
+              {route.page === "watchlist" ? <Watchlist /> : null}
+              {route.page === "portfolio" ? <Portfolio /> : null}
+              {route.page === "activity" ? <Activity /> : null}
+              {route.page === "dashboard" ? <Dashboard /> : null}
+              {route.page === "settings" ? (
+                <Settings section={route.section} />
+              ) : null}
+              {route.page === "trade" ? (
+                <Trade
+                  symbol={route.symbol}
+                  cover={coverHeld(snapshot, route.symbol)}
+                />
+              ) : null}
+              {route.page === "positions" ? (
+                <>
+                  <MarketStrip />
+                  <div className="toolbar">
+                    <div
+                      className="seg"
+                      role="group"
+                      aria-label="Group positions"
+                    >
+                      <button
+                        aria-pressed={view === "underlying"}
+                        onClick={() => setView("underlying")}
+                      >
+                        By underlying
+                      </button>
+                      <button
+                        aria-pressed={view === "dte"}
+                        onClick={() => setView("dte")}
+                      >
+                        By DTE
+                      </button>
+                    </div>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={flaggedOnly === "1"}
+                        onChange={(e) =>
+                          setFlaggedOnly(e.target.checked ? "1" : "0")
+                        }
+                      />
+                      Flagged only ({snapshot.totals.flags})
+                    </label>
+                    <div
+                      className="seg cols-toggle"
+                      role="group"
+                      aria-label="Columns"
+                    >
+                      <button
+                        aria-pressed={cols === "simple"}
+                        onClick={() => setCols("simple")}
+                        title="How each trade is doing"
+                      >
+                        Simple
+                      </button>
+                      <button
+                        aria-pressed={cols === "detail"}
+                        onClick={() => setCols("detail")}
+                        title="Every number: prices, Greeks, short deltas, max loss"
+                      >
+                        Detail
+                      </button>
+                    </div>
+                  </div>
+                  <AutoBar />
+                  <PositionsTable
+                    s={snapshot}
+                    view={view}
+                    flaggedOnly={flaggedOnly === "1"}
+                    detail={cols === "detail"}
+                  />
+                  <p className="footnote">
+                    Positions are grouped by their trade history, including
+                    trades placed in thinkorswim; credit includes every roll.
+                    Positions with no known history are grouped by their legs.
+                  </p>
+                </>
+              ) : null}
+            </main>
+            {ticket ? (
+              <OrderTicket spec={ticket} onClose={() => setTicket(null)} />
+            ) : null}
+          </AutomationContext.Provider>
+        </AccountsContext.Provider>
       </AccountContext.Provider>
     </TicketContext.Provider>
   );
@@ -198,7 +284,9 @@ function coverHeld(s: Snapshot, symbol: string): Cover {
   const u = s.underlyings.find((x) => x.symbol === symbol);
   const side = (pc: "C" | "P"): SideCover => {
     const [stockName, zebraName, coveredName] =
-      pc === "C" ? ["Stock", "Call ZEBRA", "Covered call"] : ["Short stock", "Put ZEBRA", "Covered put"];
+      pc === "C"
+        ? ["Stock", "Call ZEBRA", "Covered call"]
+        : ["Short stock", "Put ZEBRA", "Covered put"];
     const cover: SideCover = { shares: 0, zebras: [] };
     if (!u) return cover;
     let shares = u.strategies
@@ -206,15 +294,24 @@ function coverHeld(s: Snapshot, symbol: string): Cover {
       .flatMap((st) => st.legs)
       .reduce((a, l) => a + Math.abs(l.quantity), 0);
     for (const st of u.strategies) {
-      if (st.name === zebraName && st.numbers.shares_like && st.numbers.expiration) {
-        cover.zebras.push({ expiration: st.numbers.expiration, shares: Math.abs(st.numbers.shares_like) });
+      if (
+        st.name === zebraName &&
+        st.numbers.shares_like &&
+        st.numbers.expiration
+      ) {
+        cover.zebras.push({
+          expiration: st.numbers.expiration,
+          shares: Math.abs(st.numbers.shares_like),
+        });
       }
     }
     cover.zebras.sort((a, b) => a.expiration.localeCompare(b.expiration));
     // Options already written against them use them up, soonest first, shares before ZEBRAs.
     const written = u.strategies
       .filter((st) => st.name === coveredName && st.numbers.covered_by)
-      .sort((a, b) => (a.numbers.expiration ?? "").localeCompare(b.numbers.expiration ?? ""));
+      .sort((a, b) =>
+        (a.numbers.expiration ?? "").localeCompare(b.numbers.expiration ?? ""),
+      );
     for (const st of written) {
       let need = st.legs.reduce((a, l) => a + Math.abs(l.quantity), 0) * 100;
       const fromShares = Math.min(shares, need);
@@ -222,7 +319,8 @@ function coverHeld(s: Snapshot, symbol: string): Cover {
       need -= fromShares;
       for (const z of cover.zebras) {
         if (need <= 0) break;
-        if (st.numbers.expiration && z.expiration < st.numbers.expiration) continue;
+        if (st.numbers.expiration && z.expiration < st.numbers.expiration)
+          continue;
         const take = Math.min(z.shares, need);
         z.shares -= take;
         need -= take;
@@ -253,14 +351,21 @@ function DataLight({ s, link }: { s: Snapshot; link: Link }) {
     text = `Stale · ${clock(s.data.quotes_at)}`;
   }
   return (
-    <span className="light" title={s.error ?? `Quotes ${clock(s.data.quotes_at)}`}>
+    <span
+      className="light"
+      title={s.error ?? `Quotes ${clock(s.data.quotes_at)}`}
+    >
       <span className={`dot ${cls}`} />
       {text}
     </span>
   );
 }
 
-function Stat(props: { label: string; children: React.ReactNode; title?: string }) {
+function Stat(props: {
+  label: string;
+  children: React.ReactNode;
+  title?: string;
+}) {
   return (
     <div className="stat" title={props.title}>
       <div className="stat-label">{props.label}</div>
@@ -282,7 +387,9 @@ const ICONS: Record<string, React.ReactNode> = {
       <path d="M20.5 15A9 9 0 1 1 9 3.5" />
     </>
   ),
-  watchlist: <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />,
+  watchlist: (
+    <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />
+  ),
   trade: <path d="M4 8h14l-3-3M20 16H6l3 3" />,
   activity: (
     <>
@@ -303,7 +410,11 @@ const ICONS: Record<string, React.ReactNode> = {
  * to the bottom of the screen on phones (styles.css). */
 function Nav({ route }: { route: Route }) {
   const tab = (page: Route["page"], href: string, label: string) => (
-    <a href={href} className={route.page === page ? "active" : ""} aria-current={route.page === page ? "page" : undefined}>
+    <a
+      href={href}
+      className={route.page === page ? "active" : ""}
+      aria-current={route.page === page ? "page" : undefined}
+    >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         {ICONS[page]}
       </svg>
@@ -315,7 +426,11 @@ function Nav({ route }: { route: Route }) {
       {tab("positions", "#/", "Positions")}
       {tab("portfolio", "#/portfolio", "Portfolio")}
       {tab("watchlist", "#/watchlist", "Watchlist")}
-      {tab("trade", route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY", "Trade")}
+      {tab(
+        "trade",
+        route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY",
+        "Trade",
+      )}
       {tab("activity", "#/activity", "Activity")}
       {tab("dashboard", "#/dashboard", "Dashboard")}
       {tab("settings", "#/settings", "Settings")}
@@ -334,20 +449,32 @@ function useStackedStats() {
     const st = stats.current;
     if (!h || !st) return;
     const measure = () => {
-      const gap = (el: Element) => parseFloat(getComputedStyle(el).columnGap) || 0;
+      const gap = (el: Element) =>
+        parseFloat(getComputedStyle(el).columnGap) || 0;
       const kids = Array.from(st.children) as HTMLElement[];
       // The stats' width on one line, whatever their layout is now.
-      const statsWidth = kids.reduce((w, k) => w + k.offsetWidth, 0) + gap(st) * Math.max(0, kids.length - 1);
-      const others = (Array.from(h.children) as HTMLElement[]).filter((k) => k !== st);
+      const statsWidth =
+        kids.reduce((w, k) => w + k.offsetWidth, 0) +
+        gap(st) * Math.max(0, kids.length - 1);
+      const others = (Array.from(h.children) as HTMLElement[]).filter(
+        (k) => k !== st,
+      );
       const cs = getComputedStyle(h);
-      const room = h.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      const need = others.reduce((w, k) => w + k.offsetWidth, 0) + statsWidth + gap(h) * others.length;
+      const room =
+        h.clientWidth -
+        parseFloat(cs.paddingLeft) -
+        parseFloat(cs.paddingRight);
+      const need =
+        others.reduce((w, k) => w + k.offsetWidth, 0) +
+        statsWidth +
+        gap(h) * others.length;
       setOn(need > room);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(h);
-    for (const k of [...Array.from(h.children), ...Array.from(st.children)]) ro.observe(k);
+    for (const k of [...Array.from(h.children), ...Array.from(st.children)])
+      ro.observe(k);
     return () => ro.disconnect();
   }, []);
   return { header, stats, on };
@@ -390,12 +517,18 @@ function Header(props: {
     : "Target band 0.1%–0.3% of net liq";
   const exp = s.connection.expires_in_days;
   return (
-    <header className={`top ${stacked.on ? "stacked" : ""}`} ref={stacked.header}>
+    <header
+      className={`top ${stacked.on ? "stacked" : ""}`}
+      ref={stacked.header}
+    >
       <div className="brand">
         <strong>Trading</strong>
         {s.mode === "demo" ? <span className="badge demo">DEMO</span> : null}
         <div className="seg acct-switch" role="group" aria-label="Account">
-          {(props.accounts.length ? props.accounts : [{ key: "live", name: "Schwab", last4: "" }]).map((x) => (
+          {(props.accounts.length
+            ? props.accounts
+            : [{ key: "live", name: "Schwab", last4: "" }]
+          ).map((x) => (
             <button
               key={x.key}
               aria-pressed={props.account === x.key}
@@ -406,7 +539,10 @@ function Header(props: {
             </button>
           ))}
           {props.hideSim ? null : (
-            <button aria-pressed={props.account === "sim"} onClick={() => props.setAccount("sim")}>
+            <button
+              aria-pressed={props.account === "sim"}
+              onClick={() => props.setAccount("sim")}
+            >
               Simulated
             </button>
           )}
@@ -436,10 +572,16 @@ function Header(props: {
         <Stat
           label="BP used"
           title={`Maintenance requirement as a share of net liq. Ceiling at this VIX: ${pct(ceiling)}${
-            a?.margin_type === "pm" ? " (portfolio margin: half the Reg T ceiling)" : ""
+            a?.margin_type === "pm"
+              ? " (portfolio margin: half the Reg T ceiling)"
+              : ""
           }`}
         >
-          <span className={bp !== null && ceiling !== null && bp > ceiling ? "warn-text" : ""}>
+          <span
+            className={
+              bp !== null && ceiling !== null && bp > ceiling ? "warn-text" : ""
+            }
+          >
             {pct(bp)}
           </span>
           <span className="sub"> / {pct(ceiling)}</span>
@@ -448,7 +590,9 @@ function Header(props: {
         {out(db) ? (
           <Stat label="β-Δ SPY" title={deltaTitle}>
             <span className="warn-text">{signed(s.totals.delta_bw, 0)}</span>
-            {db && db.value !== null ? <span className="sub warn-text"> {pct(db.value, 1)}</span> : null}
+            {db && db.value !== null ? (
+              <span className="sub warn-text"> {pct(db.value, 1)}</span>
+            ) : null}
           </Stat>
         ) : null}
         {thetaTone ? (
@@ -467,7 +611,11 @@ function Header(props: {
             }
           >
             <a href="#/portfolio" className="in-band">
-              {!out(db) && !thetaTone ? "In band" : !out(db) ? "Δ in band" : "Θ in band"}
+              {!out(db) && !thetaTone
+                ? "In band"
+                : !out(db)
+                  ? "Δ in band"
+                  : "Θ in band"}
             </a>
           </Stat>
         ) : null}
@@ -475,7 +623,9 @@ function Header(props: {
           <span className={tone(s.totals.pl)}>{signed(s.totals.pl, 0)}</span>
         </Stat>
         <Stat label="P/L day" title="Today's P/L on open positions">
-          <span className={tone(s.totals.day_pl ?? null)}>{signed(s.totals.day_pl ?? null, 0)}</span>
+          <span className={tone(s.totals.day_pl ?? null)}>
+            {signed(s.totals.day_pl ?? null, 0)}
+          </span>
         </Stat>
       </div>
     </header>
@@ -508,4 +658,3 @@ function Banner({ s }: { s: Snapshot }) {
 }
 
 // Positions ---------------------------------------------------------------------------
-
