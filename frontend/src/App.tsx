@@ -557,7 +557,7 @@ function Positions(props: { s: Snapshot; view: View; flaggedOnly: boolean; detai
   const showUnder = view === "dte";
   return (
     <div className="table-wrap">
-      <table className={`positions ${compact ? "compact" : ""}`}>
+      <table className={`positions pos-table ${compact ? "compact" : ""}`}>
         <thead>
           {compact ? (
             <tr>
