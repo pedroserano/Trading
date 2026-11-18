@@ -152,7 +152,19 @@ function CoveredBasis({ c, onOpen }: { c: Covered; onOpen: (id: string | number)
   );
 }
 
-export default function ChainHistory({ account, chainId, onClose }: { account: string; chainId: string | number; onClose: () => void }) {
+export default function ChainHistory({
+  account,
+  chainId,
+  onClose,
+  shares = false,
+}: {
+  account: string;
+  chainId: string | number;
+  onClose: () => void;
+  /** Opened from a shares row: also show what covered calls have done to their basis. The
+   * shares' chain can carry any name (an assigned put's chain keeps the put's). */
+  shares?: boolean;
+}) {
   // The trail of histories opened from here: the shares, then a covered call, and back.
   const [trail, setTrail] = useState<(string | number)[]>([chainId]);
   const id = trail[trail.length - 1];
@@ -165,7 +177,7 @@ export default function ChainHistory({ account, chainId, onClose }: { account: s
       const c = await getJson<SimTrade>(`/api/chains/${encodeURIComponent(String(id))}?account=${account}`);
       setChain(c);
       setCovered(null);
-      if (c.strategy === "Stock" && c.status === "open") {
+      if (shares && trail.length === 1 && c.status === "open") {
         try {
           setCovered(await getJson<Covered>(`/api/covered?account=${account}&symbol=${encodeURIComponent(c.underlying)}`));
         } catch {

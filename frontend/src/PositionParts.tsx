@@ -66,7 +66,12 @@ export function Actions({ st, under }: { st: StrategyView; under: string | undef
           </button>
         ))}
       {history && history.trade_id !== null ? (
-        <ChainHistory account={account} chainId={history.trade_id} onClose={() => setHistory(null)} />
+        <ChainHistory
+          account={account}
+          chainId={history.trade_id}
+          onClose={() => setHistory(null)}
+          shares={shares}
+        />
       ) : null}
       {st.lots ? null : <AutoPanel st={st} />}
     </>

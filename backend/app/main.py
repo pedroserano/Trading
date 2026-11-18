@@ -2178,10 +2178,10 @@ def create_app(
         sts, side = (long_, "long") if long_ else (shares, "short")
         q = sum(x["quantity"] for s in sts for x in s["legs"])
         avg = sum(x["quantity"] * x["avg_price"] for s in sts for x in s["legs"]) / q
-        n = sts[0]["numbers"]
-        since = n.get("covered_since")
+        since = sts[0]["numbers"].get("covered_since")
+        ids = [str(s["trade_id"]) for s in sts if s["trade_id"] is not None]
         cov = (
-            chains_mod.covered_premium(pf.chain_list() or [], symbol, side, since)
+            chains_mod.covered_premium(pf.chain_list() or [], symbol, side, since, ids)
             if since is not None and pf.chain_list
             else {"premium": 0.0, "chains": []}
         )

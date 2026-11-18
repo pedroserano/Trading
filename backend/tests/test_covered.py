@@ -3,7 +3,7 @@ buyback or roll for a debit raises it again."""
 
 from test_phase3 import client  # noqa: F401  (fixture)
 
-from app.chains import covered_premium
+from app.chains import covered_premium, shares_arrived
 
 CALL = "AAPL  261218C00250000"
 CALL2 = "AAPL  270115C00255000"
@@ -78,6 +78,70 @@ def test_only_calls_written_while_holding_and_never_spreads_or_zebras():
     # Short shares: covered puts instead.
     short = covered_premium(chains, "AAPL", "short", since=100)
     assert [c["id"] for c in short["chains"]] == ["put"] and short["premium"] == 200.0
+
+
+def at(e, t):
+    return {**e, "at": t}
+
+
+def test_shares_assigned_from_a_put_count_calls_sold_after_not_the_put():
+    # The wheel: a put sold at 100, assigned at 200 (the shares join the put's chain), then
+    # a call sold at 300 in its own chain and another linked into the shares' chain.
+    put_chain = chain(
+        "p",
+        "Short put",
+        100,
+        [
+            at(ev([(PUT, -1, 2.0)]), 100),
+            at(ev([(PUT, 1, 0.0), ("AAPL", 100, 200.0)], kind="assign"), 200),
+            at(ev([(CALL2, -1, 1.5)], kind="adjust"), 400),
+        ],
+    )
+    call_chain = chain("c", "Short call", 300, [at(ev([(CALL, -1, 3.0)]), 300)])
+    chains = [put_chain, call_chain]
+    since = shares_arrived(chains, ["p"], "long")
+    assert since == 200  # when the shares came in, not when the put was sold
+    out = covered_premium(chains, "AAPL", "long", since, ["p"])
+    assert out["premium"] == 300.0 + 150.0  # both calls; the put premium is not counted
+    labels = {c["id"]: c["strategy"] for c in out["chains"]}
+    assert labels == {"p": "Calls in this trade", "c": "Short call"}
+
+
+def test_a_carried_in_covered_call_and_calls_sold_in_one_order_count():
+    carried = chain(
+        "cc",
+        "Covered call",
+        50,
+        [
+            at(ev([("AAPL", 100, 200.0), (CALL, -1, 4.0)]), 50),
+        ],
+    )
+    custom = chain(
+        "x",
+        "Custom",
+        300,
+        [
+            at(ev([(CALL, -1, 2.0), (CALL2, -1, 1.0)]), 300),
+        ],
+    )
+    chains = [carried, custom]
+    since = shares_arrived(chains, ["cc"], "long")
+    out = covered_premium(chains, "AAPL", "long", since, ["cc"])
+    assert out["premium"] == 400.0 + 300.0
+
+
+def test_a_chain_that_bought_calls_to_open_is_not_a_covered_call():
+    # Named "Short call" when it opened, but later turned into a spread by buying calls.
+    c = chain(
+        "s",
+        "Short call",
+        300,
+        [
+            at(ev([(CALL, -1, 3.0)]), 300),
+            at(ev([(CALL2, 2, 1.0)], kind="adjust"), 320),
+        ],
+    )
+    assert covered_premium([c], "AAPL", "long", 100)["chains"] == []
 
 
 def shares_row(tid, qty, avg):

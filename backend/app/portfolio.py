@@ -336,14 +336,26 @@ class PortfolioService:
         info = self.trade_info()
         for side in ("long", "short"):
             sts = [s for s in shares if (s["legs"][0]["quantity"] > 0) == (side == "long")]
-            opened = [(info.get(s["trade_id"]) or {}).get("opened_at") for s in sts]
-            opened = [t for t in opened if t]
-            if not opened:
-                continue
-            since = min(opened)
-            k = (underlying, side, since)
+            ids = tuple(sorted(str(s["trade_id"]) for s in sts if s["trade_id"] is not None))
+            k = (underlying, side, ids)
             if k not in memo:
-                memo[k] = chains_mod.covered_premium(chains, underlying, side, since)
+                # When the shares came in (bought, or assigned into a put's chain); the
+                # trades' own open dates if their chains are not in the list.
+                since = chains_mod.shares_arrived(chains, ids, side)
+                if since is None:
+                    opened = [(info.get(s["trade_id"]) or {}).get("opened_at") for s in sts]
+                    opened = [t for t in opened if t]
+                    since = min(opened) if opened else None
+                memo[k] = (
+                    None
+                    if since is None
+                    else {
+                        **chains_mod.covered_premium(chains, underlying, side, since, ids),
+                        "since": since,
+                    }
+                )
+            if memo[k] is None:
+                continue
             cov = memo[k]
             if not cov["chains"]:
                 continue
@@ -360,7 +372,7 @@ class PortfolioService:
                 s["numbers"]["adjusted_basis"] = round(adjusted, 4)
                 s["numbers"]["covered_premium"] = cov["premium"]
                 s["numbers"]["covered_count"] = len(cov["chains"])
-                s["numbers"]["covered_since"] = since
+                s["numbers"]["covered_since"] = cov["since"]
 
     async def _build_and_publish_async(self) -> None:
         # IV rank for non-index underlyings and betas come from the store.
