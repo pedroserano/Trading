@@ -61,6 +61,8 @@ export interface StrategyView {
   numbers: StrategyNumbers;
   flags: Flag[];
   legs: LegView[];
+  /** Shares bought in several orders, shown as one row: each purchase. Frontend only. */
+  lots?: StrategyView[];
 }
 
 export interface IvRank {

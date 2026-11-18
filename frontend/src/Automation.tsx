@@ -61,20 +61,24 @@ export function AutoBar() {
   return (
     <>
       {idle ? null : (
-      <div className="toolbar auto-bar">
-        <span className="dim-text">Automanage</span>
-        <span className="dim-text">
-          {managed} trade{managed === 1 ? "" : "s"} · {view.orders_today}/{view.settings.daily_cap} orders today ·{" "}
-          {view.in_window ? "in" : "outside"} its window {view.settings.window_start}–{view.settings.window_end} ET
-          {view.early_close ? " (early close: stops at 12:30)" : ""}
-          {live
+      <div
+        className="toolbar auto-bar"
+        title={
+          `Trades ${view.settings.window_start}–${view.settings.window_end} ET` +
+          (view.early_close ? " (early close: stops at 12:30)" : "") +
+          (live
             ? view.max_level === "auto"
-              ? " · Schwab: automatic orders allowed (LIVE_AUTO)"
-              : " · Schwab: no automatic orders (LIVE_AUTO off), Auto not offered"
-            : ""}
+              ? ". Schwab: automatic orders allowed (LIVE_AUTO)."
+              : ". Schwab: no automatic orders (LIVE_AUTO off), Auto not offered."
+            : ".")
+        }
+      >
+        <span className="dim-text">
+          Automanage · {managed} trade{managed === 1 ? "" : "s"} · {view.orders_today}/{view.settings.daily_cap} orders
+          {view.in_window ? "" : " · off hours"}
         </span>
-        <a href="#/settings/automation" className="toolbar-link">
-          Automanage settings
+        <a href="#/settings/automation" className="toolbar-link" aria-label="Automanage settings" title="Automanage settings">
+          ⚙
         </a>
       </div>
       )}

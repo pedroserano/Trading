@@ -1,15 +1,16 @@
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccountContext, AccountsContext, TicketContext, type Account, type SchwabAccount } from "./context";
 import { getJson } from "./api";
 import Activity from "./Activity";
 import EarningsFlag from "./Earnings";
 import MarketStrip from "./MarketStrip";
-import { AutoBadge, AutoBar, AutomationContext, AutoPanel, PauseSwitch, useAutomation } from "./Automation";
-import ChainHistory from "./ChainHistory";
+import { Actions, Flags, LotLine } from "./PositionParts";
+import { isShares, mergeShares, sharesText } from "./shares";
+import { AutoBadge, AutoBar, AutomationContext, PauseSwitch, useAutomation } from "./Automation";
 import Dashboard from "./Dashboard";
 import Portfolio from "./Portfolio";
 import Settings from "./Settings";
-import OrderTicket, { actionsFor, closeSpec, closeStockSpec, rollSpec, type TicketSpec } from "./OrderTicket";
+import OrderTicket, { type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Cover, EarningsInfo, SideCover, Snapshot, StrategyView, UnderlyingView } from "./types";
 import { useSnapshot, type Link } from "./useSnapshot";
@@ -536,13 +537,18 @@ function Positions(props: { s: Snapshot; view: View; flaggedOnly: boolean; detai
     });
 
   const filter = (st: StrategyView) => !flaggedOnly || st.flags.length > 0;
+  // Shares bought in several orders show as one row per underlying.
+  const unders = useMemo(
+    () => s.underlyings.map((u) => ({ ...u, strategies: mergeShares(u.strategies) })),
+    [s],
+  );
   const flat: Row[] = useMemo(
     () =>
-      s.underlyings
+      unders
         .flatMap((u) => u.strategies.map((st) => ({ under: u, st })))
         .filter((r) => filter(r.st))
         .sort((a, b) => (a.st.numbers.dte ?? 9999) - (b.st.numbers.dte ?? 9999)),
-    [s, flaggedOnly],
+    [unders, flaggedOnly],
   );
 
   if (s.underlyings.length === 0) {
@@ -592,7 +598,7 @@ function Positions(props: { s: Snapshot; view: View; flaggedOnly: boolean; detai
         </thead>
         <tbody>
           {view === "underlying"
-            ? s.underlyings.map((u) => {
+            ? unders.map((u) => {
                 const sts = u.strategies.filter(filter);
                 if (!sts.length) return null;
                 return (
@@ -697,18 +703,6 @@ function UnderGroup(props: {
   );
 }
 
-function Flags({ st }: { st: StrategyView }) {
-  return (
-    <span className="flags">
-      {st.flags.map((f) => (
-        <span key={f.kind} className={`flag ${f.kind}`} title={f.detail}>
-          {f.label}
-        </span>
-      ))}
-    </span>
-  );
-}
-
 function perUnit(st: StrategyView, total: number | null): number | null {
   const n = st.numbers;
   if (total === null || n.contracts === 0 || st.legs.some((l) => l.kind === "EQUITY")) return null;
@@ -732,6 +726,8 @@ function StrategyRows(props: {
   const expanded = props.open.has(id);
   const openPx = perUnit(st, n.open_value);
   const markPx = perUnit(st, n.value);
+  const shares = isShares(st);
+  const stockLeg = shares ? st.legs[0] : null;
   return (
     <>
       <tr
@@ -749,7 +745,8 @@ function StrategyRows(props: {
         <td className="l name">
           <span className="caret">{expanded ? "▾" : "▸"}</span>
           {props.under ? <span className="sym-inline">{props.under}</span> : null}
-          {st.name}
+          {shares ? sharesText(st) : st.name}
+          {st.lots ? <span className="sub"> · {st.lots.length} purchases</span> : null}
           {n.covered_by === "ZEBRA" ? (
             <span
               className="sub"
@@ -765,14 +762,14 @@ function StrategyRows(props: {
             </span>
           ) : null}
           {props.under && !compact ? <EarningsFlag e={props.earnings} /> : null}
-          {compact ? (
+          {compact && !shares && (n.contracts || n.expiration) ? (
             <span className="sub">
               {" "}
               {n.contracts ? `×${n.contracts} ` : ""}
-              {shortDate(n.expiration)}
+              {n.expiration ? shortDate(n.expiration) : ""}
             </span>
           ) : null}
-          {!st.defined_risk && n.covered_by !== "ZEBRA" && st.legs.some((l) => l.quantity < 0) ? (
+          {!shares && !st.defined_risk && n.covered_by !== "ZEBRA" && st.legs.some((l) => l.quantity < 0) ? (
             <span className="undef" title="Undefined risk">
               U
             </span>
@@ -782,10 +779,33 @@ function StrategyRows(props: {
         </td>
         {compact ? (
           <>
-            <td>{n.dte ?? "–"}</td>
+            <td>{n.dte ?? ""}</td>
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
             <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
-            <td>{pct(n.pct_max_profit)}</td>
+            <td>{n.pct_max_profit === null ? "" : pct(n.pct_max_profit)}</td>
+          </>
+        ) : shares ? (
+          <>
+            <td />
+            <td />
+            {detail ? (
+              <>
+                <td />
+                <td>{num(stockLeg?.avg_price ?? null, 2)}</td>
+                <td>{num(stockLeg?.mark ?? null, 2)}</td>
+              </>
+            ) : null}
+            <td className={tone(n.pl)}>{signed(n.pl)}</td>
+            <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
+            <td />
+            {detail ? (
+              <>
+                <td>{signed(n.delta, 0)}</td>
+                <td />
+                <td />
+                <td />
+              </>
+            ) : null}
           </>
         ) : !detail ? (
           <>
@@ -793,7 +813,7 @@ function StrategyRows(props: {
             <td>{n.dte ?? "–"}</td>
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
             <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
-            <td>{pct(n.pct_max_profit)}</td>
+            <td>{n.pct_max_profit === null ? "" : pct(n.pct_max_profit)}</td>
           </>
         ) : (
           <>
@@ -807,7 +827,7 @@ function StrategyRows(props: {
             <td>{markPx === null ? money(n.value === null ? null : Math.abs(n.value)) : num(markPx, 2)}</td>
             <td className={tone(n.pl)}>{signed(n.pl)}</td>
             <td className={tone(n.day_pl)}>{signed(n.day_pl)}</td>
-            <td>{pct(n.pct_max_profit)}</td>
+            <td>{n.pct_max_profit === null ? "" : pct(n.pct_max_profit)}</td>
             <td>{signed(n.delta, 0)}</td>
             <td>{signed(n.theta, 0)}</td>
             <td>
@@ -824,7 +844,16 @@ function StrategyRows(props: {
           </td>
         )}
       </tr>
-      {expanded
+      {expanded && st.lots
+        ? st.lots.map((lot, i) => (
+            <tr className="leg" key={`lot-${i}`}>
+              <td className="l" colSpan={cols}>
+                <LotLine lot={lot} />
+              </td>
+            </tr>
+          ))
+        : null}
+      {expanded && !st.lots
         ? st.legs.map((l) => (
             <tr className="leg" key={l.symbol}>
               <td className="l">
@@ -874,43 +903,11 @@ function StrategyRows(props: {
 }
 
 function ActionsRow({ st, under, cols }: { st: StrategyView; under: string | undefined; cols: number }) {
-  const open = useContext(TicketContext);
-  const account = useContext(AccountContext);
-  const [history, setHistory] = useState(false);
   if (!under) return null;
-  const acts = actionsFor(st);
-  const options = st.legs.some((l) => l.kind === "OPTION");
-  const shares = st.legs.some((l) => l.kind === "EQUITY");
   return (
     <tr className="leg actions">
       <td className="l" colSpan={cols}>
-        {shares && account !== "sim" ? (
-          <button type="button" className="small" onClick={() => open(closeStockSpec(st, under, account))}>
-            Close shares
-          </button>
-        ) : null}
-        {acts.close.map((side) => (
-          <button key={`c${side}`} type="button" className="small" onClick={() => open(closeSpec(st, under, account, side))}>
-            Close{side === "P" ? " puts" : side === "C" ? " calls" : ""}
-          </button>
-        ))}
-        {acts.roll.map((side) => (
-          <button key={`r${side}`} type="button" className="small" onClick={() => open(rollSpec(st, under, account, side))}>
-            Roll{side === "P" ? " puts" : side === "C" ? " calls" : ""}
-          </button>
-        ))}
-        {options && acts.roll.length === 0 ? (
-          <span className="sub" title="Schwab accepts at most four legs in one order">
-            No roll: it would need more than four legs.{" "}
-          </span>
-        ) : null}
-        {st.trade_id !== null ? (
-          <button type="button" className="small" onClick={() => setHistory(true)}>
-            History{st.rolls ? ` · ${st.rolls} roll${st.rolls > 1 ? "s" : ""}` : ""}
-          </button>
-        ) : null}
-        {history && st.trade_id !== null ? <ChainHistory account={account} chainId={st.trade_id} onClose={() => setHistory(false)} /> : null}
-        <AutoPanel st={st} />
+        <Actions st={st} under={under} />
       </td>
     </tr>
   );
