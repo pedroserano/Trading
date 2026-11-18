@@ -740,3 +740,38 @@ td > .view-select { margin-left: 0; }
   .settings-page details.step .plain-list { font-size: 15px; padding-left: 14px; }
   .settings-page details.step .plain-list li { line-height: 2.1; margin: 10px 0; }
 }
+
+/* Order ticket: one red box for what stops the order, one amber box for advice, Schwab's
+   preview as a status line, the totals two by two, and Cancel and Place always in view. */
+.msg .msg-title { font-weight: 600; margin-bottom: 2px; }
+.msg ul { margin: 2px 0 0; padding-left: 18px; }
+.msg li { margin: 3px 0; }
+.ticket-status { font-size: 12px; color: var(--dim); margin: 6px 0; display: flex; flex-wrap: wrap; gap: 0 6px; }
+.ticket-status::before { content: "●"; }
+.ticket-status.ok::before { color: var(--ok); }
+.ticket-status.warn::before { color: var(--warn); }
+.ticket-status.bad { color: var(--bad); }
+.ticket-status .sub { flex-basis: 100%; }
+.ticket-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 12px; margin: 10px 0;
+  padding: 8px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.ticket-sum .lbl { margin-right: 0; }
+.ticket-sum .val { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ticket-legs td.instr { width: auto; text-transform: none; font-weight: 600; }
+.ticket-legs td.instr .sub { font-weight: 400; }
+/* It sticks into the backdrop's bottom padding too, so nothing shows through below it. */
+.ticket-actions { position: sticky; bottom: calc(-12px - env(safe-area-inset-bottom)); background: var(--panel);
+  padding: 10px 0 calc(12px + env(safe-area-inset-bottom)); margin: 8px 0 -12px;
+  border-top: 1px solid var(--line); z-index: 1; }
+@media (max-width: 700px) {
+  .ticket { padding: 12px; }
+  .ticket-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .price-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .presets button { padding: 6px 4px; }
+  .limit { margin-left: 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 12px; }
+  .limit-ctl { justify-content: flex-end; }
+  .limit input[type=range] { grid-column: 1 / -1; width: 100%; }
+  .ticket-legs td.sub { font-size: 12px; }
+  .ticket-actions > button { white-space: nowrap; }
+  .ticket-actions > button.primary, .ticket-actions > button.danger { flex: 1; }
+}

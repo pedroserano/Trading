@@ -199,6 +199,8 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
 
   const live = spec.account !== "sim";
   const liveBlocks = preview?.live_blocks ?? [];
+  // Everything that stops the order, in one list: the guards, the live gate, a failed send.
+  const stops = [...(preview?.errors ?? []), ...(live ? liveBlocks : []), ...(error ? [error] : [])];
   const canPlace =
     !!preview && preview.errors.length === 0 && (!live || liveBlocks.length === 0) && !busy && limit !== null;
   // A live order takes two clicks: Place, then Send to Schwab.
@@ -336,8 +338,10 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               <tbody>
                 {(preview?.legs ?? []).map((l) => (
                   <tr key={l.symbol}>
-                    <td className={`l instr ${l.instruction.startsWith("SELL") ? "neg" : "pos"}`}>{l.instruction.replace(/_/g, " ").toLowerCase()}</td>
-                    <td>{l.quantity}</td>
+                    <td className={`l instr ${l.instruction.startsWith("SELL") ? "neg" : "pos"}`}>
+                      {l.instruction.startsWith("SELL") ? "Sell" : "Buy"} {l.quantity}
+                      <span className="sub"> to {l.instruction.endsWith("CLOSE") ? "close" : "open"}</span>
+                    </td>
                     <td className="l">
                       {l.put_call ? `${shortDate(l.expiration)} ${strike(l.strike)} ${l.put_call === "P" ? "Put" : "Call"}` : `${l.symbol} shares`}
                     </td>
@@ -432,38 +436,56 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
 
             {preview ? (
               <div className="ticket-sum">
-                <span>
-                  <span className="lbl">Total</span> {money(Math.abs((limit ?? 0) * (preview.multiplier ?? 100) * preview.units))} {credit ? "credit" : "debit"}
-                </span>
-                <span>
-                  <span className="lbl">Commission</span> {money(preview.commission, 2)}
-                </span>
+                <div>
+                  <div className="lbl">Total {credit ? "credit" : "debit"}</div>
+                  <div className="val">{money(Math.abs((limit ?? 0) * (preview.multiplier ?? 100) * preview.units))}</div>
+                </div>
+                <div>
+                  <div className="lbl">Commission</div>
+                  <div className="val">{money(preview.commission, 2)}</div>
+                </div>
                 {preview.bp_effect !== null ? (
-                  <span>
-                    <span className="lbl">BP effect{preview.defined_risk ? "" : " ≈"}</span> {money(preview.bp_effect)}
-                  </span>
+                  <div>
+                    <div className="lbl">BP effect{preview.defined_risk ? "" : " ≈"}</div>
+                    <div className="val">{money(preview.bp_effect)}</div>
+                  </div>
                 ) : null}
                 {preview.bp_used_after !== null ? (
-                  <span>
-                    <span className="lbl">BP used after</span> {pct(preview.bp_used_after, 1)}
-                  </span>
+                  <div>
+                    <div className="lbl">BP used after</div>
+                    <div className="val">{pct(preview.bp_used_after, 1)}</div>
+                  </div>
                 ) : null}
               </div>
             ) : null}
 
-            {preview?.errors.map((e) => (
-              <div key={e} className="msg bad">{e}</div>
-            ))}
-            {preview?.warnings.map((w) => (
-              <div key={w} className="msg warn">{w}</div>
-            ))}
+            {stops.length ? (
+              <div className="msg bad">
+                <div className="msg-title">{live ? "Can't send to Schwab" : "Can't place this order"}</div>
+                <ul>
+                  {stops.map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {preview?.warnings.length ? (
+              <div className="msg warn">
+                <div className="msg-title">Check before placing</div>
+                <ul>
+                  {preview.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {sp ? (
-              <div className={`msg ${sp.error || !sp.ok ? (live ? "bad" : "warn") : "ok"}`}>
+              <div className={`ticket-status ${sp.error || !sp.ok ? (live ? "bad" : "warn") : "ok"}`}>
                 {sp.simulated
-                  ? "Demo mode: Schwab preview skipped."
+                  ? "Demo mode: Schwab preview skipped"
                   : sp.error
                     ? `Schwab preview failed: ${sp.error}`
-                    : `Schwab preview: ${sp.ok ? "accepted" : "rejected"}${
+                    : `Schwab preview ${sp.ok ? "accepted" : "rejected"}${
                         sp.fields.projectedCommission !== undefined ? ` · commission ${money(sp.fields.projectedCommission, 2)}` : ""
                       }${sp.fields.projectedBuyingPower !== undefined ? ` · buying power after ${money(sp.fields.projectedBuyingPower)}` : ""}`}
                 {sp.messages?.map((m) => (
@@ -473,14 +495,6 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                 ))}
               </div>
             ) : null}
-            {live
-              ? liveBlocks.map((b) => (
-                  <div key={b} className="msg bad">
-                    Live: {b}
-                  </div>
-                ))
-              : null}
-            {error ? <div className="msg bad">{error}</div> : null}
 
             {preview?.schwab_json ? (
               <details className="json">
@@ -498,7 +512,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                   {busy ? "Checking…" : "Place simulated order"}
                 </button>
               ) : liveBlocks.length ? (
-                <span className="dim-text">Preview only: see why above.</span>
+                <span className="dim-text">Preview only: see the red box.</span>
               ) : (
                 <button
                   type="button"
