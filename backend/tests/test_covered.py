@@ -215,3 +215,20 @@ def test_calls_sold_after_a_spread_closes_count_again():
         ],
     )
     assert covered_premium([c], "AAPL", "long", 100)["premium"] == 200.0
+
+
+def test_shares_no_trade_accounts_for_count_calls_from_the_history_start(client):  # noqa: F811
+    # AFRM: 400 shares no trade explains (held before the record), 100 bought later. The
+    # calls started before that purchase and must still count.
+    pf = client.app.state.accounts["portfolios"]["sim"]
+    chains = [
+        chain("calls", "Short call", 100, [at(ev([(CALL, -4, 2.0)]), 100)], status="closed"),
+        chain("buy", "Stock", 300, [at(ev([("AAPL", 100, 60.0)]), 300)]),
+    ]
+    pf.trade_info = lambda: {"buy": {"opened_at": 300}}
+    pf.chain_list = lambda: chains
+    rows = [shares_row(None, 400, 89.32), shares_row("buy", 100, 89.32)]
+    pf._adjust_basis("AAPL", rows)
+    n = rows[0]["numbers"]
+    assert n["covered_premium"] == 800.0 and n["covered_since"] == 100
+    assert n["adjusted_basis"] == round(89.32 - 1.6, 4)

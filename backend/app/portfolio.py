@@ -337,11 +337,19 @@ class PortfolioService:
         for side in ("long", "short"):
             sts = [s for s in shares if (s["legs"][0]["quantity"] > 0) == (side == "long")]
             ids = tuple(sorted(str(s["trade_id"]) for s in sts if s["trade_id"] is not None))
-            k = (underlying, side, ids)
+            untraced = any(s["trade_id"] is None for s in sts)
+            k = (underlying, side, ids, untraced)
             if k not in memo:
                 # When the shares came in (bought, or assigned into a put's chain); the
-                # trades' own open dates if their chains are not in the list.
+                # trades' own open dates if their chains are not in the list. Shares no
+                # trade accounts for were held before what the history shows: from its start.
                 since = chains_mod.shares_arrived(chains, ids, side)
+                if untraced:
+                    starts = [
+                        c.get("opened_at") or 0 for c in chains if c.get("underlying") == underlying
+                    ]
+                    if starts:
+                        since = min([*starts, *([since] if since is not None else [])])
                 if since is None:
                     opened = [(info.get(s["trade_id"]) or {}).get("opened_at") for s in sts]
                     opened = [t for t in opened if t]
