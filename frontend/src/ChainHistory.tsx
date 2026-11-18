@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { getJson, postJson } from "./api";
 import { money, shortDate, signed, strike, tone } from "./format";
 import type { SimTrade } from "./types";
@@ -195,7 +196,9 @@ export default function ChainHistory({
   }, [account, id]);
 
   const sum = chain ? chainSummary(chain) : null;
-  return (
+  // Drawn at the page's root: opened from a sticky button row, it would otherwise sit in that
+  // row's layer, and other positions' rows would show through it.
+  return createPortal(
     <div className="ticket-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="ticket history" role="dialog" aria-modal="true" aria-label="Trade history" tabIndex={-1} onKeyDown={(e) => e.key === "Escape" && onClose()}>
         <div className="ticket-head">
@@ -247,6 +250,7 @@ export default function ChainHistory({
           </>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

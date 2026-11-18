@@ -183,3 +183,35 @@ def test_short_shares_add_covered_put_premium(client):  # noqa: F811
     rows = [shares_row("s1", -100, 240.0)]
     pf._adjust_basis("AAPL", rows)
     assert rows[0]["numbers"]["adjusted_basis"] == 242.0  # sold at 240, plus 2 a share
+
+
+def test_a_covered_call_rolled_into_a_zebra_counts_up_to_the_roll():
+    # Sold a call for 3.00, bought it back for 1.00 in the order that opened a ZEBRA (long 2,
+    # short 1). The ZEBRA's own legs are not covered calls; the 200 netted before it is.
+    zeb_long, zeb_short = "AAPL  281215C00200000", "AAPL  281215C00260000"
+    c = chain(
+        "z",
+        "Call ZEBRA",
+        300,
+        [
+            at(ev([(CALL, -1, 3.0)]), 300),
+            at(ev([(CALL, 1, 1.0), (zeb_long, 2, 60.0), (zeb_short, -1, 20.0)], kind="roll"), 400),
+            at(ev([(zeb_short, 1, 10.0)], kind="adjust"), 500),
+        ],
+    )
+    out = covered_premium([c], "AAPL", "long", 100)
+    assert out["premium"] == 200.0 and [x["id"] for x in out["chains"]] == ["z"]
+
+
+def test_calls_sold_after_a_spread_closes_count_again():
+    c = chain(
+        "v",
+        "Call vertical",
+        300,
+        [
+            at(ev([(CALL, -1, 3.0), (CALL2, 1, 1.0)]), 300),
+            at(ev([(CALL, 1, 0.5), (CALL2, -1, 0.1)], kind="close"), 400),
+            at(ev([(CALL, -1, 2.0)], kind="adjust"), 500),
+        ],
+    )
+    assert covered_premium([c], "AAPL", "long", 100)["premium"] == 200.0

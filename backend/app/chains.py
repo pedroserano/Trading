@@ -592,6 +592,60 @@ def shares_arrived(chains: list[dict], chain_ids, side: str) -> float | None:
     return min(times) if times else None
 
 
+def _covered_net(c: dict, pc: str, since: float | None) -> tuple[float, bool]:
+    """A chain's covered calls (covered puts when pc is "P"): their net, and whether any
+    counted. Calls count while the chain holds no long ones. When it buys calls, the calls
+    it was short count up to their buyback in that order; if they stay open into the
+    spread, that stretch counts for nothing. Nothing counts again until the chain holds
+    none of them. Events before `since` (the shares' own chains) are skipped."""
+    held: dict[str, float] = defaultdict(float)
+    net, counted = 0.0, False
+    stretch, stretch_counted = 0.0, False  # covered calls not yet known to stay covered
+    covering = True
+    for e in c.get("events", []):
+        legs = e.get("legs") or []
+        opts = [x for x in legs if (o := parse_option_symbol(x["symbol"])) and o.put_call == pc]
+        if not opts:
+            continue
+        short_before = {s for s, q in held.items() if q < -1e-9}
+        before = dict(held)
+        for x in opts:
+            held[x["symbol"]] += x["quantity"]
+        long_after = any(q > 1e-9 for q in held.values())
+        skip = since is not None and (e.get("at") or 0) < since
+        units = sum(abs(x["quantity"]) for x in legs) or 1
+        fee_each = (e.get("commission") or 0) / units
+
+        def value(xs, fee_each=fee_each):
+            return sum(-x["quantity"] * x["price"] * 100 for x in xs) - fee_each * sum(
+                abs(x["quantity"]) for x in xs
+            )
+
+        if covering and not long_after:
+            if not skip:
+                stretch += value(opts)
+                stretch_counted = True
+        elif covering:
+            # Turned into a spread: the calls it was short count to their buyback here.
+            closing = []
+            for x in opts:
+                was = before.get(x["symbol"], 0.0)
+                if was < -1e-9 and x["quantity"] > 0:
+                    closing.append({**x, "quantity": min(x["quantity"], -was)})
+            still_short = any(held[s] < -1e-9 for s in short_before)
+            if not still_short:
+                if not skip and closing:
+                    stretch += value(closing)
+                    stretch_counted = True
+                net, counted = net + stretch, counted or stretch_counted
+            stretch, stretch_counted, covering = 0.0, False, False
+        elif all(abs(q) <= 1e-9 for q in held.values()):
+            covering = True  # the spread is closed; calls sold from here are covered again
+    if covering:
+        net, counted = net + stretch, counted or stretch_counted
+    return net, counted
+
+
 def covered_premium(
     chains: list[dict], underlying: str, side: str, since: float, share_chain_ids=()
 ) -> dict:
@@ -601,7 +655,9 @@ def covered_premium(
     in that put's chain, calls sold in one order are named Custom, and a position held when
     the history starts is carried in as one chain. A chain counts when it holds short calls
     on `underlying` and never bought a call to open (so no ZEBRA, vertical or diagonal), and
-    opened at or after `since`, when the shares came in. The shares' own chains
+    opened at or after `since`, when the shares came in. A chain that later buys calls (a
+    covered call rolled into a ZEBRA or a spread) counts up to that point: the calls sold
+    before it and the buyback that closes them, never the spread itself. The shares' own chains
     (`share_chain_ids`) count their calls from `since` on.
 
     Only call legs count (puts, for short shares): never the stock, and never a put whose
@@ -622,25 +678,8 @@ def covered_premium(
         mine = str(c.get("id")) in own
         if not mine and (c.get("opened_at") or 0) < since:
             continue
-        held: dict[str, float] = defaultdict(float)
-        went_long, counted, net = False, False, 0.0
-        for e in c.get("events", []):
-            legs = e.get("legs") or []
-            opts = []
-            for x in legs:
-                occ = parse_option_symbol(x["symbol"])
-                if occ and occ.put_call == pc:
-                    opts.append(x)
-                    held[x["symbol"]] += x["quantity"]
-                    if held[x["symbol"]] > 1e-9:
-                        went_long = True
-            if not opts or (mine and (e.get("at") or 0) < since):
-                continue
-            units = sum(abs(x["quantity"]) for x in legs) or 1
-            fee = (e.get("commission") or 0) * sum(abs(x["quantity"]) for x in opts) / units
-            net += sum(-x["quantity"] * x["price"] * 100 for x in opts) - fee
-            counted = True
-        if went_long or not counted:
+        net, counted = _covered_net(c, pc, since if mine else None)
+        if not counted:
             continue
         net = round(net, 2)
         total += net
