@@ -27,7 +27,7 @@ export function useSnapshot(account: string = "live"): {
       source.onerror = async () => {
         setLink("retrying");
         source?.close();
-        if (closed) return;
+        if (closed || document.hidden) return;
         // A 401 means the app session ended; EventSource cannot see status codes.
         try {
           const r = await fetch("/api/snapshot", { cache: "no-store" });
@@ -38,14 +38,29 @@ export function useSnapshot(account: string = "live"): {
         } catch {
           /* network down: keep retrying */
         }
-        retry = window.setTimeout(connect, 3000);
+        if (!document.hidden) retry = window.setTimeout(connect, 3000);
       };
     };
-    connect();
+    // In the background (a hidden tab, the phone app swapped out) the stream is closed, so
+    // the server stops sending a snapshot a second; on return it reconnects and the first
+    // message is the current snapshot.
+    const onVisibility = () => {
+      if (document.hidden) {
+        window.clearTimeout(retry);
+        source?.close();
+        source = null;
+      } else if (!source || source.readyState === EventSource.CLOSED) {
+        window.clearTimeout(retry);
+        connect();
+      }
+    };
+    if (!document.hidden) connect();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       closed = true;
       source?.close();
       window.clearTimeout(retry);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [account]);
 

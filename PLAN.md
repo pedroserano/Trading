@@ -560,3 +560,10 @@ entered in Settings.
 - Backend: strategies carry `gamma` and `delta_bw`; underlyings and totals carry `vega` and `gamma`.
 - Phones: the table scrolls sideways at natural column widths (nothing pinned, so nothing overlaps or is cut); cost and Greeks are a swipe to the right. The opened row's buttons and Automanage wrap whole; the rule summary moved into a tooltip behind "Rules".
 - The table lives in PositionsTable.tsx, rendered from one column list per mode so every row type lines up.
+
+### Efficiency pass
+- PgStore caches settings (as JSON text, a fresh copy per read), IV history per symbol and betas; every write updates the cache, so the 5-second portfolio refresh, automation and scanner no longer query Postgres for unchanged data.
+- WatchlistService.row(symbol) builds one row for previews, chains and the scanner instead of the whole list.
+- Each snapshot is serialised once (PortfolioService.snapshot_text) and the same text goes to every browser.
+- SchwabDataSource shares quotes fetched in the last 2 seconds across accounts; the Trade chain endpoint reuses an answer for 5 seconds.
+- Frontend: one usePolling hook (Watchlist, Portfolio, Activity, Automation, MarketStrip, Trade) that stops while the app is hidden and reloads on return; the live stream closes while hidden too. The app's automation poll asks with log=0.

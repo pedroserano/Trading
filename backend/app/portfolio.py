@@ -7,6 +7,7 @@ inside Schwab's limits.
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -93,6 +94,8 @@ class PortfolioService:
         self._extras: dict = {}
         self._dirty = False
         self._subscribers: set[asyncio.Queue] = set()
+        # The snapshot as sent to browsers, made once however many are connected.
+        self._text: tuple[dict, str] | None = None
         self._wake = asyncio.Event()
 
         self.account_raw: dict | None = None
@@ -116,14 +119,24 @@ class PortfolioService:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subscribers.discard(q)
 
+    def snapshot_text(self) -> str:
+        """The current snapshot as JSON, serialised once per snapshot."""
+        snap = self.snapshot
+        if self._text is None or self._text[0] is not snap:
+            self._text = (snap, json.dumps(snap, default=str))
+        return self._text[1]
+
     def _publish(self) -> None:
+        if not self._subscribers:
+            return
+        text = self.snapshot_text()
         for q in list(self._subscribers):
             if q.full():
                 try:
                     q.get_nowait()
                 except asyncio.QueueEmpty:
                     pass
-            q.put_nowait(self.snapshot)
+            q.put_nowait(text)
 
     def wanted_symbols(self) -> set[str]:
         """Everything that needs live quotes; used by the streamer."""

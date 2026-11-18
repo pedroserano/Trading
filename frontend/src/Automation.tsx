@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
 import { clock } from "./format";
+import { usePolling } from "./usePolling";
 import type { AutoLevel, AutomationView, StrategyView } from "./types";
 
 type Ctx = { view: AutomationView | null; update: (v: AutomationView) => void };
@@ -10,24 +11,20 @@ export const AutomationContext = createContext<Ctx>({ view: null, update: () => 
 
 export function useAutomation(account: string): Ctx {
   const [view, setView] = useState<AutomationView | null>(null);
-  useEffect(() => {
-    setView(null);
-    let stop = false;
-    const load = async () => {
+  useEffect(() => setView(null), [account]);
+  // The app never shows the automation log, so the poll leaves it out (log=0).
+  const load = useCallback(
+    async (current: () => boolean) => {
       try {
-        const v = await getJson<AutomationView>(`/api/automation?account=${account}`);
-        if (!stop) setView(v);
+        const v = await getJson<AutomationView>(`/api/automation?account=${account}&log=0`);
+        if (current()) setView(v);
       } catch {
         /* shown as missing controls; the next poll retries */
       }
-    };
-    load();
-    const t = window.setInterval(load, 10000);
-    return () => {
-      stop = true;
-      window.clearInterval(t);
-    };
-  }, [account]);
+    },
+    [account],
+  );
+  usePolling(load, 10000);
   return { view, update: setView };
 }
 

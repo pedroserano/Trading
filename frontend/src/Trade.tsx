@@ -4,6 +4,7 @@ import { useMediaQuery } from "./useMediaQuery";
 
 import { AccountContext, TicketContext } from "./context";
 import { MAX_LEGS } from "./OrderTicket";
+import { usePolling } from "./usePolling";
 import { getJson, postJson } from "./api";
 import { money, num, pct, shortDate, signed, strike, tone } from "./format";
 import PayoffChart from "./PayoffChart";
@@ -269,16 +270,15 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
     };
   }, [symbol]);
 
-  // Chain for the chosen expiration, refreshed every 10 seconds.
-  useEffect(() => {
-    if (!exp) return;
-    let stop = false;
-    const load = async () => {
+  // Chain for the chosen expiration, refreshed every 10 seconds while the screen is visible.
+  const loadChain = useCallback(
+    async (current: () => boolean) => {
+      if (!exp) return;
       try {
         const c = await getJson<Chain>(
           `/api/trade/${encodeURIComponent(symbol)}/chain?expiration=${exp}`,
         );
-        if (stop) return;
+        if (!current()) return;
         setChain(c);
         setError(null);
         // Reprice legs from this expiration at the new mids.
@@ -293,16 +293,12 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
           }),
         );
       } catch (e) {
-        if (!stop) setError((e as Error).message);
+        if (current()) setError((e as Error).message);
       }
-    };
-    load();
-    const t = window.setInterval(load, 10000);
-    return () => {
-      stop = true;
-      window.clearInterval(t);
-    };
-  }, [symbol, exp]);
+    },
+    [symbol, exp],
+  );
+  usePolling(loadChain, 10000);
 
   // Keep the at-the-money strike in view when a new chain arrives.
   useEffect(() => {

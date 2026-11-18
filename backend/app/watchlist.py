@@ -84,58 +84,71 @@ class WatchlistService:
         return stats
 
     async def rows(self) -> list[dict]:
-        p = self.portfolio
-        held = {u["symbol"]: u for u in p.snapshot.get("underlyings", [])}
-        since = p.clock().date() - timedelta(days=366)
-        out = []
+        held = self._held()
+        since = self.portfolio.clock().date() - timedelta(days=366)
         # The saved list is the truth; the portfolio's copy can lag by one refresh.
-        symbols = await self.preferences.watchlist() if self.preferences else p.watchlist
-        for sym in symbols:
-            q = p._quote(sym)
-            c = self.cache.get(sym, {})
-            if sym == BENCH:
-                ivr = (p.snapshot.get("ivr") or {}).get("SPY")
-            else:
-                hist = [v for _, v in await self.store.iv_history(sym, since)]
-                current = c.get("iv30") or (hist[-1] if hist else None)
-                ivr = analytics.iv_rank(current, hist) if hist else None
-                if ivr:
-                    ivr["source"] = "recorded"
-                    if ivr["days"] < MIN_IVR_DAYS:
-                        ivr["rank"] = ivr["percentile"] = None
-            u = held.get(sym)
-            change = _num(q.get("netPercentChange"))
-            iv30 = c.get("iv30")
-            if iv30 is None and sym == BENCH:
-                iv30 = p._price("$VIX")
-            ext = await self.extremes(sym, p._price(sym), change, iv30) if self.extremes else None
-            out.append(
-                {
-                    "symbol": sym,
-                    "price": p._price(sym),
-                    "change_pct": _num(q.get("netPercentChange")),
-                    "iv30": c.get("iv30"),
-                    "ivr": ivr,
-                    "expected_move": c.get("expected_move"),
-                    "expiration": c.get("expiration"),
-                    "dte": c.get("dte"),
-                    "spread_pct": c.get("spread_pct"),
-                    "atm_oi": c.get("atm_oi"),
-                    "spread_width": c.get("spread_width"),
-                    "liquidity": analytics.liquidity_stars(
-                        c.get("spread_pct"), c.get("spread_width"), c.get("atm_oi")
-                    ),
-                    "earnings": self.earnings(sym) if self.earnings else None,
-                    "extreme": ext,
-                    "skew": c.get("skew"),
-                    "shock": await self.shock(sym, change) if self.shock else None,
-                    "error": c.get("error"),
-                    "held": u is not None,
-                    "position_delta": None if u is None else u["delta"],
-                    "position_theta": None if u is None else u["theta"],
-                }
-            )
-        return out
+        symbols = (
+            await self.preferences.watchlist() if self.preferences else self.portfolio.watchlist
+        )
+        return [await self._row(sym, held, since) for sym in symbols]
+
+    async def row(self, symbol: str) -> dict | None:
+        """One symbol's row, without building the rest: for previews, chains and the scanner."""
+        symbols = (
+            await self.preferences.watchlist() if self.preferences else self.portfolio.watchlist
+        )
+        if symbol not in symbols:
+            return None
+        since = self.portfolio.clock().date() - timedelta(days=366)
+        return await self._row(symbol, self._held(), since)
+
+    def _held(self) -> dict:
+        return {u["symbol"]: u for u in self.portfolio.snapshot.get("underlyings", [])}
+
+    async def _row(self, sym: str, held: dict, since) -> dict:
+        p = self.portfolio
+        q = p._quote(sym)
+        c = self.cache.get(sym, {})
+        if sym == BENCH:
+            ivr = (p.snapshot.get("ivr") or {}).get("SPY")
+        else:
+            hist = [v for _, v in await self.store.iv_history(sym, since)]
+            current = c.get("iv30") or (hist[-1] if hist else None)
+            ivr = analytics.iv_rank(current, hist) if hist else None
+            if ivr:
+                ivr["source"] = "recorded"
+                if ivr["days"] < MIN_IVR_DAYS:
+                    ivr["rank"] = ivr["percentile"] = None
+        u = held.get(sym)
+        change = _num(q.get("netPercentChange"))
+        iv30 = c.get("iv30")
+        if iv30 is None and sym == BENCH:
+            iv30 = p._price("$VIX")
+        ext = await self.extremes(sym, p._price(sym), change, iv30) if self.extremes else None
+        return {
+            "symbol": sym,
+            "price": p._price(sym),
+            "change_pct": change,
+            "iv30": c.get("iv30"),
+            "ivr": ivr,
+            "expected_move": c.get("expected_move"),
+            "expiration": c.get("expiration"),
+            "dte": c.get("dte"),
+            "spread_pct": c.get("spread_pct"),
+            "atm_oi": c.get("atm_oi"),
+            "spread_width": c.get("spread_width"),
+            "liquidity": analytics.liquidity_stars(
+                c.get("spread_pct"), c.get("spread_width"), c.get("atm_oi")
+            ),
+            "earnings": self.earnings(sym) if self.earnings else None,
+            "extreme": ext,
+            "skew": c.get("skew"),
+            "shock": await self.shock(sym, change) if self.shock else None,
+            "error": c.get("error"),
+            "held": u is not None,
+            "position_delta": None if u is None else u["delta"],
+            "position_theta": None if u is None else u["theta"],
+        }
 
 
 def _num(v):

@@ -129,6 +129,9 @@ class Watchlist:
     async def rows(self):
         return [{"symbol": "AAPL", "ivr": {"rank": 70}}, {"symbol": "XLE", "ivr": {"rank": 10}}]
 
+    async def row(self, symbol):
+        return next((r for r in await self.rows() if r["symbol"] == symbol), None)
+
 
 class LiveBroker:
     async def config(self):

@@ -95,6 +95,12 @@ class PgStore:
             host=host, port=port, dbname=dbname, user=user, password=password, connect_timeout=5
         )
         self._pool = AsyncConnectionPool(self._conninfo, min_size=1, max_size=4, open=False)
+        # Read-through caches. This app is the database's only writer and every write below
+        # updates them, so they never go stale; reads that run every few seconds (rules,
+        # settings, a year of IV per symbol, betas) then cost no round trip.
+        self._settings: dict[str, str | None] = {}  # JSON text, as stored; None: no row
+        self._iv: dict[str, tuple[date, list[tuple[date, float]]]] = {}  # rows since a day
+        self._betas: dict[str, tuple[float, date] | None] = {}
 
     async def open(self):
         await self._pool.open(wait=True, timeout=30)
@@ -139,18 +145,24 @@ class PgStore:
                 await conn.execute("SELECT pg_advisory_unlock(7461)")
 
     async def get_setting(self, key: str):
-        async with self._pool.connection() as conn:
-            cur = await conn.execute("SELECT value FROM settings WHERE key = %s", (key,))
-            row = await cur.fetchone()
-            return None if row is None else row[0]
+        if key not in self._settings:
+            async with self._pool.connection() as conn:
+                cur = await conn.execute("SELECT value FROM settings WHERE key = %s", (key,))
+                row = await cur.fetchone()
+            self._settings[key] = None if row is None else json.dumps(row[0])
+        text = self._settings[key]
+        # A fresh copy each time, as from the database: callers may change what they get.
+        return None if text is None else json.loads(text)
 
     async def set_setting(self, key: str, value) -> None:
+        text = json.dumps(value)
         async with self._pool.connection() as conn:
             await conn.execute(
                 "INSERT INTO settings (key, value) VALUES (%s, %s::jsonb)"
                 " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
-                (key, json.dumps(value)),
+                (key, text),
             )
+        self._settings[key] = text
 
     async def mark_notified(self, key: str) -> bool:
         async with self._pool.connection() as conn:
@@ -168,14 +180,19 @@ class PgStore:
                 " source = EXCLUDED.source, recorded_at = EXCLUDED.recorded_at",
                 (symbol, day, iv30, source, datetime.now(UTC)),
             )
+        self._iv.pop(symbol, None)
 
     async def iv_history(self, symbol: str, since: date) -> list[tuple[date, float]]:
-        async with self._pool.connection() as conn:
-            cur = await conn.execute(
-                "SELECT day, iv30 FROM iv_history WHERE symbol = %s AND day >= %s ORDER BY day",
-                (symbol, since),
-            )
-            return [(r[0], r[1]) for r in await cur.fetchall()]
+        cached = self._iv.get(symbol)
+        if cached is None or since < cached[0]:
+            async with self._pool.connection() as conn:
+                cur = await conn.execute(
+                    "SELECT day, iv30 FROM iv_history WHERE symbol = %s AND day >= %s ORDER BY day",
+                    (symbol, since),
+                )
+                cached = (since, [(r[0], r[1]) for r in await cur.fetchall()])
+            self._iv[symbol] = cached
+        return [r for r in cached[1] if r[0] >= since]
 
     async def upsert_beta(self, symbol: str, beta: float, as_of: date) -> None:
         async with self._pool.connection() as conn:
@@ -184,6 +201,7 @@ class PgStore:
                 " ON CONFLICT (symbol) DO UPDATE SET beta = EXCLUDED.beta, as_of = EXCLUDED.as_of",
                 (symbol, beta, as_of),
             )
+        self._betas[symbol] = (beta, as_of)
 
     async def upsert_transactions(self, items: list[dict], account: str = "live") -> int:
         from .chains import _ts
@@ -266,7 +284,11 @@ class PgStore:
             return [r[0] for r in await cur.fetchall()]
 
     async def get_beta(self, symbol: str) -> tuple[float, date] | None:
-        async with self._pool.connection() as conn:
-            cur = await conn.execute("SELECT beta, as_of FROM betas WHERE symbol = %s", (symbol,))
-            row = await cur.fetchone()
-            return None if row is None else (row[0], row[1])
+        if symbol not in self._betas:
+            async with self._pool.connection() as conn:
+                cur = await conn.execute(
+                    "SELECT beta, as_of FROM betas WHERE symbol = %s", (symbol,)
+                )
+                row = await cur.fetchone()
+            self._betas[symbol] = None if row is None else (row[0], row[1])
+        return self._betas[symbol]

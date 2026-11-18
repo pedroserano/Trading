@@ -1,6 +1,7 @@
 import OrderCheck from "./OrderCheck";
 import { useCallback, useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
+import { usePolling } from "./usePolling";
 import { ChainTimeline, chainSummary, legText, when } from "./ChainHistory";
 import { AccountContext } from "./context";
 import { money, pct, signed, tone } from "./format";
@@ -18,21 +19,22 @@ export default function Activity() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [limit, setLimit] = useState(300);
 
-  const load = useCallback(async () => {
+  const load = useCallback(
+    async (current: () => boolean = () => true) => {
     try {
-      setData(await getJson<ActivityData>(`/api/activity?account=${account}&limit=${limit}`));
+      const d = await getJson<ActivityData>(`/api/activity?account=${account}&limit=${limit}`);
+      if (!current()) return;
+      setData(d);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [account, limit]);
+  },
+    [account, limit],
+  );
 
-  useEffect(() => {
-    setData(null);
-    load();
-    const t = window.setInterval(load, 5000);
-    return () => window.clearInterval(t);
-  }, [load]);
+  useEffect(() => setData(null), [account]);
+  usePolling(load, 5000);
 
   const cancel = async (o: SimOrder) => {
     try {

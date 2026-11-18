@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useState } from "react";
 import { getJson } from "./api";
+import { usePolling } from "./usePolling";
 import { AccountContext } from "./context";
 import { money, pct, shortDate, signed, tone } from "./format";
 import type { Band, Bands } from "./types";
@@ -100,21 +101,22 @@ export default function Portfolio() {
   const [data, setData] = useState<PortfolioData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(
+    async (current: () => boolean) => {
     try {
-      setData(await getJson<PortfolioData>(`/api/portfolio?account=${account}`));
+      const d = await getJson<PortfolioData>(`/api/portfolio?account=${account}`);
+      if (!current()) return;
+      setData(d);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [account]);
+  },
+    [account],
+  );
 
-  useEffect(() => {
-    setData(null);
-    load();
-    const t = window.setInterval(load, 10000);
-    return () => window.clearInterval(t);
-  }, [load]);
+  useEffect(() => setData(null), [account]);
+  usePolling(load, 10000);
 
   if (error) return <div className="msg bad">Portfolio could not be loaded: {error}</div>;
   if (!data) return <div className="empty">Loading…</div>;

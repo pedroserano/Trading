@@ -621,7 +621,7 @@ class Scanner:
         if symbol == "SPY":
             snap = self.portfolios["live"].snapshot or {}
             return ((snap.get("ivr") or {}).get("SPY") or {}).get("rank")
-        row = next((r for r in await self.watchlist.rows() if r["symbol"] == symbol), None)
+        row = await self.watchlist.row(symbol)
         return ((row or {}).get("ivr") or {}).get("rank")
 
     async def run(self) -> None:

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { getJson } from "./api";
+import { usePolling } from "./usePolling";
 import { clock } from "./format";
 
 type Item = {
@@ -45,26 +46,18 @@ export default function MarketStrip() {
     }
   };
 
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const r = await getJson<{ items: Item[]; at: number | null }>("/api/market");
-        if (!stop) {
-          setItems(r.items);
-          setAt(r.at);
-        }
-      } catch {
-        /* the next poll retries; the strip keeps its last values */
+  const loadMarket = useCallback(async (current: () => boolean) => {
+    try {
+      const r = await getJson<{ items: Item[]; at: number | null }>("/api/market");
+      if (current()) {
+        setItems(r.items);
+        setAt(r.at);
       }
-    };
-    load();
-    const t = window.setInterval(load, 15000);
-    return () => {
-      stop = true;
-      window.clearInterval(t);
-    };
+    } catch {
+      /* the next poll retries; the strip keeps its last values */
+    }
   }, []);
+  usePolling(loadMarket, 15000);
 
   if (!items || !items.length) return null;
   const pinned = items.filter((i) => PINNED.includes(i.label));

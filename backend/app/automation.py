@@ -1380,7 +1380,7 @@ class AutomationService:
                     self._log(p["trade_id"], p["rule"], "Proposal dismissed by you")
             await self._save()
 
-    async def view(self) -> dict:
+    async def view(self, log: bool = True) -> dict:
         st = await self.load()
         settings = await self.settings()
         today = self.clock().date().isoformat()
@@ -1397,7 +1397,7 @@ class AutomationService:
             "account": self.account,
             "trades": st["trades"],
             "proposals": [p for p in st["proposals"] if p["status"] == "pending"],
-            "log": st["log"][-150:][::-1],
+            "log": st["log"][-150:][::-1] if log else [],
             "orders_today": st["counts"].get(today, 0),
             "in_window": in_window(self.clock(), settings),
             "early_close": early_close(self.clock().astimezone(ET).date()),

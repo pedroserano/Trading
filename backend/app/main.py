@@ -1,7 +1,6 @@
 import asyncio
 import copy
 import hmac
-import json
 import logging
 import secrets
 import time
@@ -1276,11 +1275,20 @@ def create_app(
             "low52": min(closes) if closes else None,
         }
 
+    # The Trade screen reloads its chain every 10 seconds, per open tab: answers are reused
+    # for a few seconds rather than asking Schwab for the whole chain each time.
+    chain_cache: dict[tuple, tuple[float, dict]] = {}
+    CHAIN_TTL_S = 5.0
+
     @app.get("/api/trade/{symbol:path}/chain", dependencies=[Depends(require_login)])
     async def api_chain(symbol: str, expiration: date, strikes: int = 0):
         """strikes: how many either side of the money; 0 returns every strike."""
         symbol = _check_symbol(symbol)
         count = None if strikes <= 0 else max(4, min(strikes, 200))
+        key = (symbol, expiration, count)
+        hit = chain_cache.get(key)
+        if hit and time.monotonic() - hit[0] < CHAIN_TTL_S:
+            return hit[1]
         try:
             raw = await source.option_chain(symbol, expiration, expiration, strike_count=count)
         except SchwabError as e:
@@ -1297,8 +1305,13 @@ def create_app(
         if symbol == BENCH:
             out["ivr"] = (portfolio.snapshot.get("ivr") or {}).get("SPY")
         else:
-            wl = next((r for r in await watchlist.rows() if r["symbol"] == symbol), None)
+            wl = await watchlist.row(symbol)
             out["ivr"] = out["ivr"] or (wl or {}).get("ivr")
+        now = time.monotonic()
+        if len(chain_cache) > 50:
+            for k in [k for k, v in chain_cache.items() if now - v[0] >= CHAIN_TTL_S]:
+                del chain_cache[k]
+        chain_cache[key] = (now, out)
         return out
 
     @app.post("/api/analyze", dependencies=[Depends(require_login)])
@@ -1428,7 +1441,7 @@ def create_app(
         if t.underlying in ("SPY", "SPX", "XSP"):
             ivr = ((portfolio.snapshot or {}).get("ivr") or {}).get("SPY")
         else:
-            row = next((r for r in await watchlist.rows() if r["symbol"] == t.underlying), None)
+            row = await watchlist.row(t.underlying)
             ivr = (row or {}).get("ivr")
         entry = {
             "spot": spot,
@@ -1533,7 +1546,7 @@ def create_app(
             band_after = targets.after((pf.snapshot or {}).get("bands"), d_delta, d_theta)
             warnings.extend(band_after["warnings"])
         # A wide or thin market: advice, whatever the order does.
-        watch_row = next((r for r in await watchlist.rows() if r["symbol"] == t.underlying), None)
+        watch_row = await watchlist.row(t.underlying)
         warnings.extend(guards.liquidity(t, (watch_row or {}).get("atm_oi")))
         if body.account == "sim" and t.intent in ("close", "roll") and t.trade_id is not None:
             for o in await broker.replaceable(t.trade_id, {x.symbol for x in t.legs}):
@@ -1920,9 +1933,10 @@ def create_app(
     Acct = str
 
     @app.get("/api/automation", dependencies=[Depends(require_login)])
-    async def api_automation(account: Acct = "sim"):
+    async def api_automation(account: Acct = "sim", log: bool = True):
+        """log=0 leaves out the recent actions: the app's own poll never shows them."""
         known(account)
-        return await automations[account].view()
+        return await automations[account].view(log=log)
 
     async def allowed_symbols() -> dict:
         """Each Schwab account's allowed underlyings (None: any), by its name."""
@@ -1963,7 +1977,7 @@ def create_app(
         for acct, name in [("sim", "Simulated"), *schwab_accounts()]:
             if acct not in automations:
                 continue
-            v = await automations[acct].view()
+            v = await automations[acct].view(log=False)
             parts = []
             if not v.get("auto_possible", True):
                 parts.append("Auto off (header)")
@@ -2338,11 +2352,11 @@ def create_app(
         async def stream():
             try:
                 if pf.snapshot:
-                    yield f"data: {json.dumps(pf.snapshot, default=str)}\n\n"
+                    yield f"data: {pf.snapshot_text()}\n\n"
                 while not await request.is_disconnected():
                     try:
-                        snap = await asyncio.wait_for(queue.get(), timeout=15)
-                        yield f"data: {json.dumps(snap, default=str)}\n\n"
+                        text = await asyncio.wait_for(queue.get(), timeout=15)
+                        yield f"data: {text}\n\n"
                     except TimeoutError:
                         yield ": keep-alive\n\n"
             finally:

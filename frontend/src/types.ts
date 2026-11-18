@@ -431,6 +431,7 @@ export interface AutomationView {
   /** view: the trade's own direction for automanage's rolls; absent follows the portfolio bias. */
   trades: Record<string, { enabled: boolean; view?: "neutral" | "bullish" | "bearish" | "would_own" }>;
   proposals: AutoProposal[];
+  /** Empty when asked with log=0, as the app's own poll does. */
   log: AutoLogEntry[];
   orders_today: number;
   in_window: boolean;

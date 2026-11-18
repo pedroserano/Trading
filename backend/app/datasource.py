@@ -1,7 +1,9 @@
 """Where account and market data come from: Schwab, or a simulator for demo mode."""
 
+import asyncio
 import math
 import random
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
@@ -26,9 +28,16 @@ class DataSource(Protocol):
     async def orders(self, account_hash: str, start: datetime, end: datetime) -> list: ...
 
 
+# Quotes fetched within this many seconds are reused: every account's portfolio asks for
+# SPY, VIX and the watchlist on the same few-second cycle.
+QUOTE_TTL_S = 2.0
+
+
 class SchwabDataSource:
     def __init__(self, schwab: SchwabService):
         self.schwab = schwab
+        self._quotes: dict[str, tuple[float, dict]] = {}
+        self._quotes_lock = asyncio.Lock()
 
     async def account_numbers(self) -> list[dict]:
         return await self.schwab.call("get_account_numbers") or []
@@ -50,10 +59,31 @@ class SchwabDataSource:
         )
 
     async def quotes(self, symbols: list[str]) -> dict:
+        # One request at a time, so a second account asking at the same moment is served
+        # from what the first just fetched.
+        async with self._quotes_lock:
+            now = time.monotonic()
+            missing = [
+                s for s in symbols if now - self._quotes.get(s, (-1e9, None))[0] > QUOTE_TTL_S
+            ]
+            # Keep each request modest in size.
+            for i in range(0, len(missing), 200):
+                got = await self.schwab.call("get_quotes", missing[i : i + 200]) or {}
+                for sym, q in got.items():
+                    self._quotes[sym] = (now, q)
+            if len(self._quotes) > 2000:
+                self._quotes = {k: v for k, v in self._quotes.items() if now - v[0] <= QUOTE_TTL_S}
+        # Copies: callers keep and update what they get (streamed fields land in "quote").
         out = {}
-        # Keep each request modest in size.
-        for i in range(0, len(symbols), 200):
-            out.update(await self.schwab.call("get_quotes", symbols[i : i + 200]) or {})
+        for s in symbols:
+            hit = self._quotes.get(s)
+            if hit is not None:
+                q = hit[1]
+                out[s] = (
+                    {**q, "quote": dict(q["quote"])}
+                    if isinstance(q.get("quote"), dict)
+                    else dict(q)
+                )
         return out
 
     async def daily_candles(self, symbol: str, days: int) -> list[dict]:

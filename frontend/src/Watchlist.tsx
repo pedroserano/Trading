@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Stars, { liquidityTitle } from "./Stars";
 import { getJson, postForm, postJson } from "./api";
+import { usePolling } from "./usePolling";
 import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
@@ -41,9 +42,10 @@ export default function Watchlist() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "symbol", desc: false });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (current: () => boolean = () => true) => {
     try {
       const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string> }>("/api/watchlist");
+      if (!current()) return;
       setRows(r.rows);
       setViews(r.views ?? {});
       setError(null);
@@ -52,11 +54,7 @@ export default function Watchlist() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const t = window.setInterval(load, 10000);
-    return () => window.clearInterval(t);
-  }, [load]);
+  usePolling(load, 10000);
 
   // Editing: a ticker box and Import on top, a × on each row.
   const [ticker, setTicker] = useState("");
