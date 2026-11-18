@@ -370,7 +370,7 @@ function StatsTable({ rows, label }: { rows: Bucket[]; label: string }) {
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.avg ?? 0)));
   return (
     <div className="table-wrap">
-      <table className="positions statstable">
+      <table className="positions statstable fit ph-h4 ph-h6 ph-h7">
         <thead>
           <tr>
             <th className="l">{label}</th>
@@ -416,7 +416,7 @@ function StatsTable({ rows, label }: { rows: Bucket[]; label: string }) {
 function TradesTable({ trades }: { trades: Trade[] }) {
   return (
     <div className="table-wrap">
-      <table className="positions">
+      <table className="positions fit ph-h2 ph-h3 ph-h5 ph-h7 ph-h8 ph-h9 ph-h10">
         <thead>
           <tr>
             <th className="l">Trade</th>

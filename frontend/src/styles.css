@@ -703,4 +703,21 @@ td > .view-select { margin-left: 0; }
   table.fit.ph-h5 thead th:nth-child(5), table.fit.ph-h5 tbody tr:not(.leg) > td:nth-child(5) { display: none; }
   table.fit.ph-h6 thead th:nth-child(6), table.fit.ph-h6 tbody tr:not(.leg) > td:nth-child(6) { display: none; }
   table.fit.ph-h7 thead th:nth-child(7), table.fit.ph-h7 tbody tr:not(.leg) > td:nth-child(7) { display: none; }
+  table.fit.ph-h8 thead th:nth-child(8), table.fit.ph-h8 tbody tr:not(.leg) > td:nth-child(8) { display: none; }
+  table.fit.ph-h9 thead th:nth-child(9), table.fit.ph-h9 tbody tr:not(.leg) > td:nth-child(9) { display: none; }
+  table.fit.ph-h10 thead th:nth-child(10), table.fit.ph-h10 tbody tr:not(.leg) > td:nth-child(10) { display: none; }
+  table.fit.ph-h11 thead th:nth-child(11), table.fit.ph-h11 tbody tr:not(.leg) > td:nth-child(11) { display: none; }
+  table.fit.ph-h12 thead th:nth-child(12), table.fit.ph-h12 tbody tr:not(.leg) > td:nth-child(12) { display: none; }
+  table.fit.ph-h13 thead th:nth-child(13), table.fit.ph-h13 tbody tr:not(.leg) > td:nth-child(13) { display: none; }
+  table.fit.ph-h14 thead th:nth-child(14), table.fit.ph-h14 tbody tr:not(.leg) > td:nth-child(14) { display: none; }
+  table.fit.ph-h15 thead th:nth-child(15), table.fit.ph-h15 tbody tr:not(.leg) > td:nth-child(15) { display: none; }
+  table.fit.ph-h16 thead th:nth-child(16), table.fit.ph-h16 tbody tr:not(.leg) > td:nth-child(16) { display: none; }
+}
+
+/* Phones: the option chain is the screen's width (its OI columns are hidden above). */
+@media (max-width: 700px) {
+  table.chain { table-layout: fixed; font-size: 12px; }
+  .chain th.k, .chain td.k { width: 22%; }
+  .chain td.click button { padding: 1px 2px; }
+  table.fit select { max-width: 100%; padding: 2px 0 2px 2px; font-size: 12px; }
 }

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useMediaQuery } from "./useMediaQuery";
 
 import { AccountContext, TicketContext } from "./context";
 import { MAX_LEGS } from "./OrderTicket";
@@ -237,6 +238,8 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [anaError, setAnaError] = useState<string | null>(null);
   const [params, setParams] = useState<Params>({ strangle: 0.16, vertical: 0.3, condor: 0.2, width: 5 });
+  // Phones hide the OI columns (styles.css).
+  const phone = useMediaQuery("(max-width: 700px)");
   const scroller = useRef<HTMLDivElement>(null);
   const openTicket = useContext(TicketContext);
   const account = useContext(AccountContext);
@@ -466,9 +469,9 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
           <table className="chain">
             <thead>
               <tr>
-                <th colSpan={4} className="side">Calls</th>
+                <th colSpan={phone ? 3 : 4} className="side">Calls</th>
                 <th />
-                <th colSpan={4} className="side">Puts</th>
+                <th colSpan={phone ? 3 : 4} className="side">Puts</th>
               </tr>
               <tr>
                 <th>OI</th>

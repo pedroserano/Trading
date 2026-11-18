@@ -13,6 +13,7 @@ import Settings from "./Settings";
 import OrderTicket, { type TicketSpec } from "./OrderTicket";
 import { clock, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type { Cover, EarningsInfo, SideCover, Snapshot, StrategyView, UnderlyingView } from "./types";
+import { useMediaQuery } from "./useMediaQuery";
 import { useSnapshot, type Link } from "./useSnapshot";
 import Trade from "./Trade";
 import Watchlist from "./Watchlist";
@@ -68,17 +69,6 @@ function usePersisted<T extends string>(key: string, initial: T): [T, (v: T) => 
     }
   };
   return [v, set];
-}
-
-function useMediaQuery(q: string): boolean {
-  const [match, setMatch] = useState(() => window.matchMedia(q).matches);
-  useEffect(() => {
-    const m = window.matchMedia(q);
-    const on = () => setMatch(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, [q]);
-  return match;
 }
 
 function useNow(ms: number) {

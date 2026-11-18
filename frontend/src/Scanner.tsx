@@ -95,7 +95,7 @@ export default function Scanner() {
       {error ? <div className="msg warn">{error}</div> : null}
       {last && last.candidates.length ? (
         <div className="table-wrap">
-          <table className="positions">
+          <table className="positions fit ph-h2 ph-h3 ph-h6 ph-h7">
             <thead>
               <tr>
                 <th className="l">Found</th>
@@ -119,7 +119,7 @@ export default function Scanner() {
                   <td>
                     {shortDate(c.expiration)} <span className="sub">{c.dte}d</span>
                   </td>
-                  <td>{c.mid === null ? "–" : Math.abs(c.mid).toFixed(2)}</td>
+                  <td>{c.mid === null ? "" : Math.abs(c.mid).toFixed(2)}</td>
                   <td>{pct(c.pop)}</td>
                   <td>{money(c.bp)}</td>
                   <td>{c.score === undefined ? "–" : c.score.toFixed(2)}</td>
