@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import Stars, { liquidityTitle } from "./Stars";
 import { getJson, postJson } from "./api";
 import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
 import type { PriceExtreme, WatchRow } from "./types";
 
-type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move";
+type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq";
 
 const sorters: Record<Key, (r: WatchRow) => number | string> = {
   symbol: (r) => r.symbol,
   ivr: (r) => r.ivr?.rank ?? -1,
+  liq: (r) => r.liquidity ?? -1,
   iv30: (r) => r.iv30 ?? -1,
   change: (r) => r.change_pct ?? -999,
   em: (r) => (r.expected_move && r.price ? r.expected_move / r.price : -1),
@@ -121,6 +123,7 @@ export default function Watchlist() {
               {th("move", "Move", "The last few sessions' move against the move implied volatility expected, in standard deviations")}
               {th("iv30", "IV30", "30-day at-the-money implied volatility")}
               {th("ivr", "IVR", "IV rank over up to a year of recorded history")}
+              {th("liq", "Liquidity", "1 to 5 stars from the at-the-money bid/ask and open interest, after tastylive")}
               <th title="IV percentile">IVP</th>
               <th title="Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. High after a drop means puts are especially expensive, part of the scanner's drop signal.">
                 Skew
@@ -225,6 +228,15 @@ export default function Watchlist() {
                   {r.ivr && r.ivr.source === "recorded" && r.ivr.days < 252 ? (
                     <span className="sub"> ({r.ivr.days}d)</span>
                   ) : null}
+                </td>
+                <td>
+                  <Stars
+                    n={r.liquidity ?? null}
+                    title={liquidityTitle(
+                      { stars: r.liquidity ?? null, spread_pct: r.spread_pct, width: r.spread_width ?? null, oi: r.atm_oi },
+                      r.expiration,
+                    )}
+                  />
                 </td>
                 <td>{r.ivr?.percentile !== null && r.ivr?.percentile !== undefined ? Math.round(r.ivr.percentile) : "–"}</td>
                 <td>{r.skew === null || r.skew === undefined ? "–" : num(r.skew, 1)}</td>

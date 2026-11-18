@@ -107,3 +107,38 @@ def beta(closes: list[tuple[date, float]], bench: list[tuple[date, float]]) -> f
     cov = sum((x - ma) * (y - mb) for x, y in zip(ra, rb, strict=True))
     var = sum((y - mb) ** 2 for y in rb)
     return None if var == 0 else cov / var
+
+
+# Liquidity stars, after tastylive: a tight market is a penny to a nickel wide, and open
+# interest runs in the thousands. 1 to 5 stars: 1 + spread points (0-2) + open interest
+# points (0-2). tastytrade's own 1-4 star rating does not publish its formula.
+TIGHT_WIDTH = 0.05  # dollars
+TIGHT_PCT = 0.01
+FAIR_PCT = 0.03
+DEEP_OI = 10_000
+FAIR_OI = 1_000
+
+
+def liquidity_stars(spread_pct: float | None, width: float | None, oi: float | None) -> int | None:
+    """1 (wide and thin) to 5 (tight and deep) from the at-the-money market; None when
+    neither the spread nor open interest is known. One missing counts the other twice."""
+    spread = None
+    if spread_pct is not None or width is not None:
+        if (width is not None and width <= TIGHT_WIDTH + 1e-9) or (
+            spread_pct is not None and spread_pct <= TIGHT_PCT
+        ):
+            spread = 2
+        elif spread_pct is not None and spread_pct <= FAIR_PCT:
+            spread = 1
+        else:
+            spread = 0
+    depth = None
+    if oi is not None:
+        depth = 2 if oi >= DEEP_OI else 1 if oi >= FAIR_OI else 0
+    if spread is None and depth is None:
+        return None
+    if spread is None:
+        spread = depth
+    if depth is None:
+        depth = spread
+    return 1 + spread + depth

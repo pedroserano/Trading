@@ -44,6 +44,7 @@ from . import dashboard as dash
 from . import scanner as scan_mod
 from .accounts import AccountRegistry
 from .analysis import TradeLeg, analyze
+from .analytics import liquidity_stars
 from .automation import (
     AUTO_STEPS,
     LEVELS,
@@ -1265,6 +1266,9 @@ def create_app(
             raise _schwab_errors(e) from e
         out = chain_mod.chain_rows(raw or {})
         out.update({"symbol": symbol, "expiration": expiration.isoformat()})
+        liq = chain_mod.atm_liquidity(out.get("rows") or [], out.get("underlying_price"))
+        liq["stars"] = liquidity_stars(liq["spread_pct"], liq["width"], liq["oi"])
+        out["liquidity"] = liq
         held = next(
             (u for u in portfolio.snapshot.get("underlyings", []) if u["symbol"] == symbol), None
         )

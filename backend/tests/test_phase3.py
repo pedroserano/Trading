@@ -999,3 +999,9 @@ def test_liquidity_warnings_never_block_the_order(client):
     pv = client.post("/api/orders/preview", json=body).json()
     assert any(w.endswith("has low liquidity") for w in pv["warnings"])
     assert not any("liquidity" in e for e in pv["errors"])
+
+
+def test_watchlist_and_chain_carry_the_liquidity_rating(client):
+    exps = client.get("/api/trade/SPY/expirations").json()
+    ch = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()
+    assert 1 <= ch["liquidity"]["stars"] <= 5 and ch["liquidity"]["oi"] > 0

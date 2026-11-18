@@ -11,7 +11,7 @@ import time
 from datetime import date, timedelta
 
 from . import analytics
-from .chain import chain_rows, default_expiration, expirations
+from .chain import atm_liquidity, chain_rows, default_expiration, expirations
 from .portfolio import BENCH, MIN_IVR_DAYS
 from .schwab_service import SchwabError, SchwabNotConnected
 from .signals import skew
@@ -77,17 +77,10 @@ class WatchlistService:
             stats["dte"] = rows["dte"]
             stats["expected_move"] = rows["expected_move"]
             stats["skew"] = skew(rows["rows"])
-            spot = rows["underlying_price"]
-            if spot and rows["rows"]:
-                atm = min(rows["rows"], key=lambda r: abs(r["strike"] - spot))
-                spreads, ois = [], []
-                for c in (atm["call"], atm["put"]):
-                    if c and c["bid"] is not None and c["ask"] and c["mark"]:
-                        spreads.append((c["ask"] - c["bid"]) / c["mark"])
-                    if c and c["oi"] is not None:
-                        ois.append(c["oi"])
-                stats["spread_pct"] = round(sum(spreads) / len(spreads), 4) if spreads else None
-                stats["atm_oi"] = int(sum(ois)) if ois else None
+            liq = atm_liquidity(rows["rows"], rows["underlying_price"])
+            stats["spread_pct"] = liq["spread_pct"]
+            stats["spread_width"] = liq["width"]
+            stats["atm_oi"] = liq["oi"]
         return stats
 
     async def rows(self) -> list[dict]:
@@ -128,6 +121,10 @@ class WatchlistService:
                     "dte": c.get("dte"),
                     "spread_pct": c.get("spread_pct"),
                     "atm_oi": c.get("atm_oi"),
+                    "spread_width": c.get("spread_width"),
+                    "liquidity": analytics.liquidity_stars(
+                        c.get("spread_pct"), c.get("spread_width"), c.get("atm_oi")
+                    ),
                     "earnings": self.earnings(sym) if self.earnings else None,
                     "extreme": ext,
                     "skew": c.get("skew"),

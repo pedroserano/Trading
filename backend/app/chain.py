@@ -111,3 +111,25 @@ def chain_rows(raw: dict) -> dict:
         "expected_move": None if em is None else round(em, 2),
         "rows": out,
     }
+
+
+def atm_liquidity(rows: list[dict], spot: float | None) -> dict:
+    """The at-the-money call and put's market: bid/ask as a share of the mark and in dollars
+    (their average), and open interest (their sum). None where the chain has no figure."""
+    out = {"spread_pct": None, "width": None, "oi": None}
+    if not spot or not rows:
+        return out
+    atm = min(rows, key=lambda r: abs(r["strike"] - spot))
+    pcts, widths, ois = [], [], []
+    for c in (atm.get("call"), atm.get("put")):
+        if c and c.get("bid") is not None and c.get("ask") and c.get("mark"):
+            pcts.append((c["ask"] - c["bid"]) / c["mark"])
+            widths.append(c["ask"] - c["bid"])
+        if c and c.get("oi") is not None:
+            ois.append(c["oi"])
+    if pcts:
+        out["spread_pct"] = round(sum(pcts) / len(pcts), 4)
+        out["width"] = round(sum(widths) / len(widths), 2)
+    if ois:
+        out["oi"] = int(sum(ois))
+    return out

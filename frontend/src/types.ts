@@ -163,6 +163,9 @@ export interface WatchRow {
   dte: number | null;
   spread_pct: number | null;
   atm_oi: number | null;
+  spread_width?: number | null;
+  /** 1 to 5 stars from the at-the-money spread and open interest. */
+  liquidity?: number | null;
   earnings?: EarningsInfo | null;
   extreme?: PriceExtreme | null;
   error: string | null;
@@ -206,6 +209,7 @@ export interface Chain {
   expected_move: number | null;
   ivr: IvRank | null;
   rows: ChainRow[];
+  liquidity?: { stars: number | null; spread_pct: number | null; width: number | null; oi: number | null };
 }
 
 export interface BuildLeg {

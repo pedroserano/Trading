@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import Stars, { liquidityTitle } from "./Stars";
 import { useMediaQuery } from "./useMediaQuery";
 
 import { AccountContext, TicketContext } from "./context";
@@ -437,6 +438,9 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
           </span>
           <span title={chain?.ivr ? `Over ${chain.ivr.days} days` : "No IV history yet"}>
             IVR {chain?.ivr && chain.ivr.rank !== null ? Math.round(chain.ivr.rank) : "–"}
+          </span>
+          <span className="liq">
+            Liquidity <Stars n={chain?.liquidity?.stars ?? null} title={liquidityTitle(chain?.liquidity, exp)} />
           </span>
           <span>
             Exp. move ±{num(chain?.expected_move ?? null, 2)}

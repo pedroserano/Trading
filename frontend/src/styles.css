@@ -791,3 +791,7 @@ td > .view-select { margin-left: 0; }
 .ticket-sum .pop-seal polygon { fill: var(--ok); }
 .ticket-sum .pop-seal circle { fill: none; stroke: #ffffff59; stroke-width: 0.8; }
 .ticket-sum .pop-seal path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Liquidity stars: filled in gold, the rest dim. */
+.stars { color: #e3b341; letter-spacing: 1px; white-space: nowrap; cursor: help; }
+.stars .stars-off { color: var(--line); }
