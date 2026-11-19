@@ -755,3 +755,11 @@ entered in Settings.
   "scanning 47 of 231" until it is done (a failed scan says why). The scan reads price history
   as stored (the price-history service keeps it fresh) instead of fetching a year of closes
   per symbol from Schwab, which made scans after the earnings fix take minutes.
+- The scan works from the app's own data and asks Schwab only for what it can't have: quotes
+  from the portfolio's streamed copy (Schwab only for any it lacks), expirations from the
+  watchlist's last read (when it is from today and the DTE window is inside 5-75 days), the
+  at-the-money spread and open interest from the watchlist's read of the same expiration, the
+  float as last read, IV rank, IV30, earnings and price history as stored. Every local check
+  runs before the one Schwab request left: the full chain (the watchlist keeps six strikes,
+  not the wings) for a symbol that passed all of them. The earnings play and post-earnings
+  fade (opt-in) still read the expiration after a report from Schwab.

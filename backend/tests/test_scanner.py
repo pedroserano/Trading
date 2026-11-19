@@ -619,14 +619,14 @@ async def test_a_low_float_means_defined_risk_at_half_size():
     scanner.earnings = Earnings({"AAPL": "2027-01-28"})
     asked = []
 
-    async def float_of(sym):
+    def float_cached(sym):  # the float as the watchlist last read it: never fetched
         asked.append(sym)
         return {"shares": 7.2e6, "low": True} if sym == "AAPL" else None
 
     r = await scanner.scan("sim", act=False)
     c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
     assert c["strategy"] == "Strangle"
-    scanner.watchlist.float_of = float_of
+    scanner.watchlist.float_cached = float_cached
     r = await scanner.scan("sim", act=False)
     c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
     assert c["strategy"] == "Iron condor"
@@ -859,3 +859,46 @@ async def test_the_scan_reads_stored_price_history_without_asking_schwab():
     h = PriceHistory(store, NoSchwab(), None, clock=lambda: today)
     assert await h.cached("AAPL") == [(date(2026, 11, 17), 230.0), (date(2026, 11, 18), 231.0)]
     assert await h.cached("MSFT") is None
+
+
+@pytest.mark.anyio
+async def test_the_scan_uses_what_the_app_already_holds():
+    """Quotes, expirations, liquidity and float from the app's own reads; Schwab is asked only
+    for the full chain of a symbol that passed everything else."""
+    scanner, _, _ = harness()
+    scanner.earnings = Earnings({"AAPL": "2027-01-28"})
+    calls = []
+    src = scanner.source
+
+    class Counting:
+        async def quotes(self, symbols):
+            calls.append(("quotes", tuple(symbols)))
+            return await src.quotes(symbols)
+
+        async def expirations(self, symbol):
+            calls.append(("expirations", symbol))
+            return await src.expirations(symbol)
+
+        async def option_chain(self, symbol, *a, **k):
+            calls.append(("chain", symbol))
+            return await src.option_chain(symbol, *a, **k)
+
+    scanner.source = Counting()
+    held = await src.quotes(["SPY", "AAPL", "XLE"])
+    for q in held.values():
+        q["quote"] = {"mark": 100.0}
+    scanner.portfolios["sim"].quotes = held
+    at = NOW.timestamp()
+    scanner.watchlist.cache = {
+        sym: {"at": at, "exp_dates": [EXP.isoformat(), WEEKLY.isoformat()]}
+        for sym in ("SPY", "AAPL", "XLE")
+    }
+    # AAPL too thin by the watchlist's own read of the same expiration: never fetched.
+    scanner.watchlist.cache["AAPL"].update(
+        {"expiration": EXP.isoformat(), "spread_pct": 0.2, "atm_oi": 5000}
+    )
+    r = await scanner.scan("sim", act=False)
+    reasons = {x["symbol"]: x["reason"] for x in r["skipped"]}
+    assert "spread 20.0% is too wide" in reasons["AAPL"]
+    # Only SPY, which passed every local check, needed Schwab: its full chain.
+    assert calls == [("chain", "SPY")]

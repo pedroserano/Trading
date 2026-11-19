@@ -935,11 +935,7 @@ class Scanner:
             symbol_views = await views_of() if views_of else {}
             candidates, skipped = [], []
             symbols = await self.symbols(account)
-            try:
-                quotes = await self.source.quotes(symbols)
-            except Exception as e:
-                quotes = {}
-                log.warning("Scanner quotes failed: %s", e)
+            quotes = await self._quotes(account, symbols)
             self.progress[account] = {"done": 0, "total": len(symbols)}
             for i, sym in enumerate(symbols):
                 self.progress[account] = {"done": i, "total": len(symbols)}
@@ -1295,6 +1291,50 @@ class Scanner:
             await self.store.set_setting(STATE_KEY, st)
             return result
 
+    async def _quotes(self, account: str, symbols: list[str]) -> dict:
+        """Quotes as the app already holds them (streamed for the watchlist and positions);
+        only the symbols it has none for are asked of Schwab."""
+        pf = self.portfolios.get(account) or self.portfolios.get("live")
+        held = dict(getattr(pf, "quotes", None) or {}) if pf is not None else {}
+        have = {s: held[s] for s in symbols if (held.get(s) or {}).get("quote")}
+        missing = [s for s in symbols if s not in have]
+        if missing:
+            try:
+                have.update(await self.source.quotes(missing) or {})
+            except Exception as e:
+                log.warning("Scanner quotes failed: %s", e)
+        return have
+
+    def _local(self, sym: str) -> dict:
+        """What the watchlist last read for a symbol's options, if anything."""
+        return (getattr(self.watchlist, "cache", {}) or {}).get(sym) or {}
+
+    async def _expirations(self, sym: str, today: date, s: dict) -> list[dict]:
+        """The expirations, from the watchlist's last read when it covers the DTE window
+        (5 to 75 days) and is from today; otherwise from Schwab."""
+        c = self._local(sym)
+        at = c.get("at")
+        fresh = (
+            at is not None and datetime.fromtimestamp(at, ET).date() == today and c.get("exp_dates")
+        )
+        if fresh and s["min_dte"] >= 5 and s["max_dte"] <= 75:
+            raw = {"expirationList": [{"expirationDate": d} for d in c["exp_dates"]]}
+            return chain_mod.expirations(raw, today)
+        return chain_mod.expirations(await self.source.expirations(sym), today)
+
+    def _local_liquidity(self, sym: str, exp: dict, s: dict) -> str | None:
+        """The at-the-money spread and open interest as the watchlist last read them, when
+        it read the same expiration: a symbol too thin is skipped without asking Schwab."""
+        c = self._local(sym)
+        if c.get("expiration") != exp["date"]:
+            return None
+        spread, oi = c.get("spread_pct"), c.get("atm_oi")
+        if spread is not None and spread > s["max_spread"]:
+            return f"at-the-money spread {spread:.1%} is too wide"
+        if oi is not None and oi < s["min_oi"]:
+            return f"at-the-money open interest {oi:,.0f}, under {s['min_oi']:,}"
+        return None
+
     async def _closes(self, sym: str):
         """A year of closes, as stored: a scan never waits on Schwab for price history."""
         read = getattr(self.history, "cached", None) or self.history.ensure
@@ -1504,7 +1544,7 @@ class Scanner:
         else:
             report = quiet = None
         today = self.clock().astimezone(ET).date()
-        exps = chain_mod.expirations(await self.source.expirations(sym), today)
+        exps = await self._expirations(sym, today, s)
         exp = pick_expiration(exps, s)
         if exp is None:
             return (
@@ -1528,6 +1568,11 @@ class Scanner:
             if s.get("earnings_inside", "skip") == "skip":
                 return why_e
             caution.append(why_e)
+        # Last, and only for what passed everything else: the full chain, from Schwab (the
+        # watchlist keeps a few strikes around the money, not the wings a trade needs).
+        thin = self._local_liquidity(sym, exp, s)
+        if thin:
+            return thin
         chain = await self._chain(sym, exp, s)
         if isinstance(chain, str):
             return chain
@@ -1555,12 +1600,8 @@ class Scanner:
         if shocked:
             caution.append(shocked)
         # A low float can gap on news or a squeeze: defined risk and half size, like a shock.
-        if not fund and hasattr(self.watchlist, "float_of"):
-            try:
-                fl = await self.watchlist.float_of(sym)
-            except Exception as e:  # a refinement, never a block
-                log.warning("Scanner float for %s failed: %s", sym, e)
-                fl = None
+        if not fund and hasattr(self.watchlist, "float_cached"):
+            fl = self.watchlist.float_cached(sym)
             if fl and fl.get("low"):
                 caution.append(f"low float ({fl['shares'] / 1e6:.1f} million shares)")
         return (

@@ -101,6 +101,10 @@ class WatchlistService:
         for sym in due:
             self.fundamentals[sym] = {"at": now, "float": float_info(raw.get(sym))}
 
+    def float_cached(self, sym: str) -> dict | None:
+        """The float as last read, however old (it changes rarely): for the scanner."""
+        return (self.fundamentals.get(sym) or {}).get("float")
+
     async def float_of(self, sym: str) -> dict | None:
         """One symbol's float, from the daily cache or fetched now: for the order ticket,
         which can trade symbols not on the watchlist. None when Schwab has none or fails."""
@@ -127,7 +131,12 @@ class WatchlistService:
         dates = sorted({k.split(":")[0] for k in (raw or {}).get("putExpDateMap", {})})
         exps = expirations({"expirationList": [{"expirationDate": d} for d in dates]}, today)
         target = default_expiration(exps)
-        stats = {"iv30": None if iv30 is None else round(iv30, 2), "expiration": target}
+        stats = {
+            "iv30": None if iv30 is None else round(iv30, 2),
+            "expiration": target,
+            # Every expiration listed 5 to 75 days out, for the scanner.
+            "exp_dates": dates,
+        }
         if target:
             sub = {
                 "underlyingPrice": (raw or {}).get("underlyingPrice"),
