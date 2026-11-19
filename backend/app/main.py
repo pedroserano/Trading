@@ -1161,6 +1161,20 @@ def create_app(
             "database": {"ok": db_error is None, "error": db_error},
         }
 
+    # Schwab's raw fundamentals for a few symbols, unchanged, to see which fields it fills
+    # in (float, short interest). Read-only.
+    @app.get("/api/research/fundamentals", dependencies=[Depends(require_login)])
+    async def api_research_fundamentals(symbols: str = "AAPL,GME,AMC"):
+        if demo:
+            raise HTTPException(400, "Not available in demo mode.")
+        wanted = [x.strip().upper() for x in symbols.split(",") if x.strip()][:10]
+        if not wanted:
+            raise HTTPException(400, "Give at least one symbol.")
+        c = schwab.client()
+        return await schwab.call(
+            "get_instruments", wanted, projection=c.Instrument.Projection.FUNDAMENTAL
+        )
+
     @app.get("/api/accounts", dependencies=[Depends(require_login)])
     async def api_accounts():
         try:
