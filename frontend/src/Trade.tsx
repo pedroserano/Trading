@@ -6,7 +6,7 @@ import { AccountContext, TicketContext } from "./context";
 import { MAX_LEGS } from "./OrderTicket";
 import { usePolling } from "./usePolling";
 import { getJson, postJson } from "./api";
-import { money, num, pct, shortDate, signed, strike, tone } from "./format";
+import { ivrTitle, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import PayoffChart from "./PayoffChart";
 import type { Analysis, BuildLeg, Chain, ChainRow, Contract, Cover, Expiration, SideCover } from "./types";
 
@@ -432,7 +432,7 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
             IV {num(chain?.atm_iv ?? null, 1)}
             <span className="sub"> at {exp ? shortDate(exp) : "–"}</span>
           </span>
-          <span title={chain?.ivr ? `Over ${chain.ivr.days} days` : "No IV history yet"}>
+          <span title={ivrTitle(chain?.ivr)}>
             IVR {chain?.ivr && chain.ivr.rank !== null ? Math.round(chain.ivr.rank) : "–"}
           </span>
           <span className="liq">

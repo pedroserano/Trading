@@ -10,7 +10,7 @@ import math
 import time
 from datetime import date, timedelta
 
-from . import analytics
+from . import analytics, ivref
 from .chain import atm_liquidity, chain_rows, default_expiration, expirations
 from .portfolio import BENCH, MIN_IVR_DAYS
 from .schwab_service import SchwabError, SchwabNotConnected
@@ -39,6 +39,7 @@ class WatchlistService:
         self.earnings = None  # symbol -> next earnings report, set by the app
         self.extremes = None  # async (symbol, price, change %, iv30) -> price extremes
         self.shock = None  # async (symbol, change %) -> why it may have had a shock, or None
+        self.ivref = None  # symbol -> DoltHub's IV rank, until our own history spans a year
 
     async def run(self) -> None:
         while True:
@@ -174,13 +175,16 @@ class WatchlistService:
         if sym == BENCH:
             ivr = (p.snapshot.get("ivr") or {}).get("SPY")
         else:
-            hist = [v for _, v in await self.store.iv_history(sym, since)]
+            dated = await self.store.iv_history(sym, since)
+            hist = [v for _, v in dated]
             current = c.get("iv30") or (hist[-1] if hist else None)
             ivr = analytics.iv_rank(current, hist) if hist else None
             if ivr:
                 ivr["source"] = "recorded"
                 if ivr["days"] < MIN_IVR_DAYS:
                     ivr["rank"] = ivr["percentile"] = None
+            ref = self.ivref(sym) if self.ivref else None
+            ivr = ivref.choose(ivr, dated[0][0] if dated else None, ref, p.clock().date())
         u = held.get(sym)
         change = _num(q.get("netPercentChange"))
         iv30 = c.get("iv30")

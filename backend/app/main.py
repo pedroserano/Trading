@@ -70,6 +70,7 @@ from .earnings import EarningsService
 from .extremes import PriceHistory
 from .extremes import compute as compute_extreme
 from .history_service import PriceHistoryService, export_rows, export_xlsx
+from .ivref import IvReference
 from .jobs import DailyJobs
 from .live import LiveBroker
 from .market import MARKETS, MarketService
@@ -507,6 +508,8 @@ def create_app(
         demo=demo,
     )
     portfolio.earnings = sim_portfolio.earnings = watchlist.earnings = earnings.info
+    iv_reference = IvReference(store, earnings_symbols, clock=lambda: portfolio.clock(), demo=demo)
+    portfolio.ivref = sim_portfolio.ivref = watchlist.ivref = iv_reference.rank
     history = PriceHistory(store, source, earnings_symbols, clock=lambda: portfolio.clock())
     market = MarketService(source, clock=lambda: portfolio.clock())
 
@@ -539,6 +542,7 @@ def create_app(
         await store.open()
         await broker.load()
         await earnings.load()
+        await iv_reference.load()
         schwab.load()
         await registry.load()
         registry.sheet_labels = sorted(await store.sheet_accounts())
@@ -563,6 +567,7 @@ def create_app(
                 "simulated account": sim_portfolio.run,
                 "trade chains": chain_service.run,
                 "earnings dates": earnings.run,
+                "IV ranks from DoltHub": iv_reference.run,
                 "price extremes": history.run,
                 "market strip": market.run,
                 "order check": order_check.run,
@@ -1890,6 +1895,7 @@ def create_app(
         )
         pf.stream = stream
         pf.earnings = earnings.info
+        pf.ivref = iv_reference.rank
         cs = ChainService(
             source, store, pf, resolve, account=key, sheet_label=lambda: registry.sheet_label(key)
         )
