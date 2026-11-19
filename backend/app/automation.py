@@ -33,6 +33,7 @@ SETTINGS_KEY = "automation_settings"
 LEVELS = ("off", "notify", "propose", "auto")
 RULES = {
     "profit": "Profit target",
+    "quick": "Quick profit in low IV",
     "dte": "Manage at DTE",
     "tested": "Tested short strike",
     "loss": "Loss at a multiple of credit",
@@ -43,6 +44,7 @@ RULES = {
 DEFAULT_SETTINGS = {
     "levels": {
         "profit": "auto",
+        "quick": "propose",
         "dte": "propose",
         "tested": "notify",
         "loss": "notify",
@@ -53,6 +55,7 @@ DEFAULT_SETTINGS = {
     # The Schwab account's own levels: Auto is offered only with LIVE_AUTO=true in .env.
     "levels_live": {
         "profit": "propose",
+        "quick": "notify",
         "dte": "propose",
         "tested": "notify",
         "loss": "notify",
@@ -67,6 +70,15 @@ DEFAULT_SETTINGS = {
     "roll_target_dte": 45,
     # tastytrade keeps rolling for a credit while premium is worth selling; IV rank decides.
     "min_roll_ivr": 25,
+    # Quick profit: with IV rank at most quick_max_ivr there is little premium left to
+    # collapse, so a fast gain is taken early: quick_pct_1 of max profit within quick_days_1
+    # days of opening (or the last roll), or quick_pct_2 within quick_days_2 (0%: that step
+    # off).
+    "quick_max_ivr": 30,
+    "quick_days_1": 1,
+    "quick_pct_1": 0.15,
+    "quick_days_2": 7,
+    "quick_pct_2": 0.30,
     "max_rolls": 0,  # 0: no limit
     "allow_inverted": False,  # rolling the untested side past the tested strike
     # A tested side, the tastytrade way: roll the untested side closer for a credit.
@@ -114,6 +126,11 @@ DEFAULT_SETTINGS = {
 }
 # Adjustable on the Settings page: (key, label, low, high, kind, unit).
 SETTING_FIELDS = [
+    ("quick_max_ivr", "Quick profit: only while IV rank is at most", 0, 100, "int", "IVR"),
+    ("quick_days_1", "Quick profit: within", 0, 60, "int", "days"),
+    ("quick_pct_1", "Quick profit: at least", 1, 100, "percent", "% of max"),
+    ("quick_days_2", "Quick profit, later: within", 0, 60, "int", "days"),
+    ("quick_pct_2", "Quick profit, later: at least", 0, 100, "percent", "% of max"),
     ("roll_target_dte", "Roll out to about", 14, 120, "int", "DTE"),
     ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
     ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
@@ -350,6 +367,16 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             "debit verticals and long options are not tastylive trades and are left alone. "
             "Does: closes the trade. At Auto a GTC closing order rests at that price from the "
             "start; at Propose or Notify you hear once it is reached."
+        ),
+        "quick": (
+            f"When: IV rank is {settings['quick_max_ivr']} or less and a trade has made "
+            f"{pct(settings['quick_pct_1'])} of its max profit within "
+            f"{settings['quick_days_1']} day{'s' if settings['quick_days_1'] != 1 else ''} of "
+            f"opening or its last roll, or {pct(settings['quick_pct_2'])} within "
+            f"{settings['quick_days_2']} days (0%: that step off). Low IV leaves little "
+            "premium to collapse, so tastylive takes fast winners sooner and redeploys. "
+            "Measured like the profit target; trades the profit rule leaves alone are left "
+            "alone. Does: closes the trade."
         ),
         "dte": (
             f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
@@ -688,6 +715,8 @@ def decide(
             )
         else:
             out.append(Action("tested", "notify", "A short strike is tested"))
+    if levels.get("quick", "off") != "off" and (why := quick_profit(st, ivr, settings, now)):
+        out.append(Action("quick", "close", why))
     if levels.get("profit", "off") != "off" and profit_basis(st) is not None:
         if levels["profit"] == "auto":
             out.append(Action("profit", "target", "Profit target order resting at the broker"))
@@ -697,6 +726,33 @@ def decide(
 
 
 ROLLS = ("roll", "roll_calls", "roll_puts")
+
+
+def quick_profit(st: dict, ivr: float | None, settings: dict, now=None) -> str | None:
+    """Why a fast gain in low IV should be taken now, or None.
+
+    tastylive: with little premium left to collapse in low IV, taking profits sooner makes
+    sense, and quick winners closed and redeployed did best. Measured as a share of max
+    profit, like the profit target, from the last open or roll; never once the target
+    itself is reached (the profit rule closes it).
+    """
+    if ivr is None or ivr > settings.get("quick_max_ivr", 30):
+        return None
+    pct, since = st["numbers"].get("pct_max_profit"), st.get("since")
+    flags = {f["kind"] for f in st.get("flags", [])}
+    if pct is None or not since or "profit" in flags or profit_basis(st) is None:
+        return None
+    today = (now or datetime.now(ET)).astimezone(ET).date()
+    age = (today - datetime.fromtimestamp(since, ET).date()).days
+    for n in (1, 2):
+        days, want = settings.get(f"quick_days_{n}", 0), settings.get(f"quick_pct_{n}", 0)
+        if want > 0 and age <= days and pct >= want:
+            when = "today" if age == 0 else f"in {age} day{'s' if age != 1 else ''}"
+            return (
+                f"Quick profit: {pct * 100:.0f}% of max {when} with IV rank {ivr:.0f} "
+                f"(at most {settings.get('quick_max_ivr', 30)}): take it"
+            )
+    return None
 
 
 def _within_cover(st: dict, a: Action) -> Action:
@@ -823,6 +879,10 @@ AUTO_STEPS = [
             "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
             "(⟦levels:profit⟧; at Auto a closing order "
             "rests at the target from the start).",
+            "In low IV, IV rank ⟦quick_max_ivr⟧ or less, take a fast winner sooner: "
+            "⟦quick_pct_1⟧% of max within ⟦quick_days_1⟧ days of opening or the last roll, "
+            "or ⟦quick_pct_2⟧% within ⟦quick_days_2⟧ days (0%: off). Little premium is left "
+            "to collapse, so it is closed and redeployed. Acts at: ⟦levels:quick⟧",
             "Debit spreads and long options are not tastylive trades and are left alone.",
             "⟦?ticket_automanage⟧ The order ticket starts with Automanage on fill ticked.",
         ],

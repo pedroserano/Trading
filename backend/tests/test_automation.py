@@ -1003,3 +1003,46 @@ def test_a_call_or_put_on_a_zebra_is_never_rolled_past_the_zebra():
     # Covered by shares (no ZEBRA): rolls as before.
     shares = covered("Covered call", "C", "2026-12-18", None)
     assert ("dte", "roll") in kinds(decide(shares, 590, r, s, ALL))
+
+
+def test_quick_profit_takes_a_fast_winner_only_in_low_iv():
+    r, s = Rules(), merged_settings(None)
+    now = datetime(2026, 11, 19, 11, 0, tzinfo=ET)
+    day = 86400
+
+    def q(pct, age_days, flags=()):
+        st = strat(flags=flags)
+        st["numbers"].update(pct_max_profit=pct, max_profit=580.0)
+        st["since"] = now.timestamp() - age_days * day
+        return st
+
+    # 15% the day after opening, IV rank 20: take it.
+    acts = decide(q(0.16, 1), 590, r, s, ALL, ivr=20, now=now)
+    assert ("quick", "close") in kinds(acts)
+    assert "16% of max in 1 day with IV rank 20" in acts[0].reason
+    # Same gain, IV rank 45: not low, wait for the target.
+    assert ("quick", "close") not in kinds(decide(q(0.16, 1), 590, r, s, ALL, ivr=45, now=now))
+    # No IV rank known: nothing.
+    assert ("quick", "close") not in kinds(decide(q(0.16, 1), 590, r, s, ALL, now=now))
+    # 3 days in: 15% is not enough, 30% is.
+    assert ("quick", "close") not in kinds(decide(q(0.2, 3), 590, r, s, ALL, ivr=20, now=now))
+    assert ("quick", "close") in kinds(decide(q(0.31, 3), 590, r, s, ALL, ivr=20, now=now))
+    # After a week, only the profit target.
+    assert ("quick", "close") not in kinds(decide(q(0.45, 9), 590, r, s, ALL, ivr=20, now=now))
+    # Target reached: the profit rule closes it, not this one.
+    assert ("quick", "close") not in kinds(
+        decide(q(0.55, 1, flags=("profit",)), 590, r, s, ALL, ivr=20, now=now)
+    )
+    # Off, or a step turned off with 0%.
+    off = {**ALL, "quick": "off"}
+    assert ("quick", "close") not in kinds(decide(q(0.16, 1), 590, r, s, off, ivr=20, now=now))
+    s2 = {**s, "quick_pct_1": 0.0}
+    assert ("quick", "close") not in kinds(decide(q(0.16, 1), 590, r, s2, ALL, ivr=20, now=now))
+    assert ("quick", "close") in kinds(decide(q(0.31, 1), 590, r, s2, ALL, ivr=20, now=now))
+
+
+def test_quick_profit_settings_save():
+    s = parse_settings(
+        {"quick_max_ivr": "20", "quick_pct_1": "10", "quick_days_2": "5"}, merged_settings(None)
+    )
+    assert s["quick_max_ivr"] == 20 and s["quick_pct_1"] == 0.10 and s["quick_days_2"] == 5

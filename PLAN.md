@@ -603,3 +603,15 @@ entered in Settings.
 - Order ticket: a low-float warning on anything but a close.
 - Scanner: a low float on a single stock means defined risk at half size, like a possible
   shock.
+
+## Quick profit in low IV (automanage)
+- New rule "Quick profit in low IV", with its own level per account like the others
+  (default: Propose on the simulated account, Notify on Schwab accounts).
+- Only while IV rank is at most 30: a trade at 15% of max profit within 1 day of opening or
+  its last roll, or 30% within 7 days, is closed. All five numbers are set on Settings,
+  Automation, step 1; a step at 0% is off.
+- Measured like the profit target (share of max profit; a covered call on the call's credit),
+  on the trades the profit rule manages; once the target itself is reached the profit rule
+  closes it. Rationale (tastylive): low IV leaves little premium to collapse, and quick
+  winners closed and redeployed did best.
+- Trade info carries `since` (the last open or roll), shown on each strategy.

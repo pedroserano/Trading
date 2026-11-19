@@ -514,7 +514,7 @@ class PortfolioService:
                 [x.with_quantity(x.quantity) for x in legs],
                 defined,
                 open_override=t.get("net"),
-                meta={"trade_id": tid, "rolls": t.get("rolls", 0)},
+                meta={"trade_id": tid, "rolls": t.get("rolls", 0), "since": t.get("since")},
             )
             out.setdefault(legs[0].underlying, []).append(st)
         for under, strategies in group_all(loose).items():
@@ -698,6 +698,8 @@ def _strategy_json(st, today: date) -> dict:
     return {
         "trade_id": st.meta.get("trade_id"),
         "rolls": st.meta.get("rolls", 0),
+        # When the current position began (its last open or roll), epoch seconds.
+        "since": st.meta.get("since"),
         "name": st.name,
         "defined_risk": st.defined_risk,
         "numbers": st.numbers,

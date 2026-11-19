@@ -531,6 +531,11 @@ def trade_info(chains: list[dict]) -> dict:
             "net": round(sum(e["net"] for e in c["events"]), 2),
             "rolls": sum(1 for e in c["events"] if e["kind"] == "roll"),
             "opened_at": c["opened_at"],
+            # The current position's start: the last open or roll.
+            "since": max(
+                (e["at"] for e in c["events"] if e["kind"] in ("open", "roll") and e.get("at")),
+                default=c["opened_at"],
+            ),
         }
         for c in chains
         if c["status"] == "open"

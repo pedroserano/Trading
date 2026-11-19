@@ -519,6 +519,10 @@ class SimBroker:
                     "net": round(sum(e["net"] for e in tr["events"]), 2),
                     "rolls": sum(1 for e in tr["events"] if e["kind"] == "roll"),
                     "opened_at": tr["opened_at"],
+                    "since": max(
+                        (e["at"] for e in tr["events"] if e["kind"] in ("open", "roll")),
+                        default=tr["opened_at"],
+                    ),
                 }
         return out
 

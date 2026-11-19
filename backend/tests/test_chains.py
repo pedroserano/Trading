@@ -93,6 +93,8 @@ def test_open_then_roll_in_one_order_is_one_chain_with_cumulative_credit():
         "net": pytest.approx(590 - 480 + 880),
         "rolls": 1,
         "opened_at": c["opened_at"],
+        # The current position began at the roll.
+        "since": c["events"][1]["at"],
     }
     assert c["holdings"] == {sym("P", 555, NEXT): -1, sym("C", 610, NEXT): -1}
     assert r["mismatches"] == []
