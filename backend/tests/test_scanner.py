@@ -405,7 +405,8 @@ def test_realized_vol_and_the_volatility_checks():
     assert check(20, 55.0, 40.0, s) == (None, True)
     assert "under 30" in check(20, 30.0, 20.0, s)[0]
     # Options pricing less movement than the stock is making.
-    assert "less movement" in check(45, 18.0, 21.0, s)[0]
+    assert check(45, 18.0, 21.0, s) == (None, False)  # 0.86x: above the 0.8 floor
+    assert "less movement" in check(45, 16.0, 21.0, s)[0]
     # Missing data never blocks; each check can be switched off.
     assert check(45, None, None, s) == (None, False)
     off = {**s, "min_iv30": 0, "min_iv_hv": 0, "rich_iv30": 0}

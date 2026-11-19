@@ -747,3 +747,5 @@ entered in Settings.
   the field allows up to 100). It also now gets the earnings dates and price history; before,
   every single stock was
   skipped for "no earnings date".
+- Scanner defaults: no sooner than 28 DTE (was 30); IV30 over realized volatility at least
+  0.8× (was 1.0×).

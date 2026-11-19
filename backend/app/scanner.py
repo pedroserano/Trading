@@ -40,7 +40,7 @@ DEFAULTS = {
     "min_ivr": 30,
     "undefined_ivr": 50,
     "target_dte": 45,
-    "min_dte": 30,
+    "min_dte": 28,
     "max_dte": 60,
     "monthly_only": True,
     "short_delta": 0.16,
@@ -76,7 +76,7 @@ DEFAULTS = {
     # over realized volatility. 0 turns each off.
     "min_iv30": 15.0,
     "rich_iv30": 40.0,
-    "min_iv_hv": 1.0,
+    "min_iv_hv": 0.8,
     # Extreme volatility: defined risk only (margin balloons, and volatility can keep
     # expanding before it contracts). 0 turns it off.
     "defined_vix": 30.0,
