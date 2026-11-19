@@ -93,6 +93,7 @@ from .preferences import (
     MARGIN_DEFAULTS,
     MARGIN_SCALE,
     MARGIN_TYPES,
+    MAX_WATCHLIST,
     RULE_FIELDS,
     RULE_NOTES,
     Preferences,
@@ -1007,17 +1008,25 @@ def create_app(
             symbols if mode == "replace" else current + [s for s in symbols if s not in current]
         )
         await preferences.set_watchlist(merged)
-        portfolio.watchlist = await preferences.watchlist()
+        saved = await preferences.watchlist()
+        portfolio.watchlist = saved
         portfolio.refresh_soon()
-        added = [s for s in symbols if s not in current]
+        # The list holds at most MAX_WATCHLIST: say what did not fit, never claim it was added.
+        added = [s for s in symbols if s not in current and s in saved]
+        full = [s for s in symbols if s not in saved]
         if mode == "replace":
-            msg = f"Watchlist now has {len(merged)} symbols."
+            msg = f"Watchlist now has {len(saved)} symbols."
         elif added:
             msg = f"Added {', '.join(added[:12])}{'…' if len(added) > 12 else ''}."
-        elif symbols:
+        elif symbols and not full:
             msg = "Already on the watchlist."
         else:
             msg = ""
+        if full:
+            msg += (
+                f" Not added, the watchlist is full at {MAX_WATCHLIST} symbols (remove some "
+                f"first): {', '.join(full[:12])}{'…' if len(full) > 12 else ''}."
+            )
         if skipped:
             msg += f" Skipped (not stocks, ETFs or indexes): {', '.join(skipped[:12])}."
         if unknown:
