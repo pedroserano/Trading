@@ -104,6 +104,15 @@ def login(client):
     assert r.status_code == 303
 
 
+def test_scanner_gets_earnings_and_history(settings):
+    """The scanner reads earnings dates (and the quiet window after a report) and price
+    history from the app's own services: without them every stock is skipped."""
+    with make_client(settings, FakeSchwab()) as c:
+        sc = c.app.state.scanner
+        assert sc.earnings is not None and hasattr(sc.earnings, "quiet_until")
+        assert sc.history is not None and hasattr(sc.history, "ensure")
+
+
 def test_healthz_is_open(settings):
     with make_client(settings, FakeSchwab()) as c:
         assert c.get("/healthz").json() == {"ok": True}

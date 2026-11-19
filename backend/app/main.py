@@ -2249,7 +2249,10 @@ def create_app(
         preferences,
         brokers,
         clock=lambda: portfolio.clock(),
+        earnings=earnings,
+        history=history,
     )
+    app.state.scanner = scanner
 
     @app.get("/api/scanner", dependencies=[Depends(require_login)])
     async def api_scanner(account: Acct = "sim"):
