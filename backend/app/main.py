@@ -1,7 +1,9 @@
 import asyncio
 import copy
+import functools
 import hmac
 import logging
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager, suppress
@@ -86,6 +88,7 @@ from .orders import (
     validate_shape,
 )
 from .orders import strategy_name as ticket_strategy
+from .pacing import run_in_background
 from .portfolio import BENCH, PortfolioService
 from .preferences import (
     _SYMBOL,
@@ -266,6 +269,29 @@ def _check_symbol(symbol: str) -> str:
     if not _SYMBOL.match(symbol):
         raise HTTPException(status_code=400, detail="Not a valid symbol")
     return symbol
+
+
+# Built files carry a content hash in their names (index-3S7LdCXx.js), so a name never
+# changes content: the browser keeps them instead of asking again on every launch.
+_HASHED = re.compile(r"-[A-Za-z0-9_-]{8}\.(js|css)$")
+
+
+class HashedStatic(StaticFiles):
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        resp = super().file_response(full_path, stat_result, scope, status_code)
+        if _HASHED.search(str(full_path)):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
+BACKGROUND = (
+    "daily jobs",
+    "watchlist",
+    "earnings dates",
+    "price extremes",
+    "price history",
+    "scanner",
+)
 
 
 async def supervise(name: str, fn, health: dict, restart_delay: float = 10.0) -> None:
@@ -575,6 +601,10 @@ def create_app(
             }
             if stream is not None:
                 services["streaming"] = stream.run
+            # Bulk market-data work, paced so it never runs into Schwab's limit.
+            for name in BACKGROUND:
+                if name in services:
+                    services[name] = functools.partial(run_in_background, services[name])
             tasks = [
                 asyncio.create_task(supervise(name, fn, health), name=name)
                 for name, fn in services.items()
@@ -705,7 +735,7 @@ def create_app(
         return RedirectResponse("/connect", status_code=303)
 
     if (static_dir / "assets").is_dir():
-        app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+        app.mount("/assets", HashedStatic(directory=static_dir / "assets"), name="assets")
 
     # Where phones and browsers look for an icon without reading the page (an iPhone's
     # home-screen icon among them); no sign-in, like the rest of /assets.

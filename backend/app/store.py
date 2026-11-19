@@ -101,6 +101,8 @@ class PgStore:
         self._settings: dict[str, str | None] = {}  # JSON text, as stored; None: no row
         self._iv: dict[str, tuple[date, list[tuple[date, float]]]] = {}  # rows since a day
         self._betas: dict[str, tuple[float, date] | None] = {}
+        # Notification keys known to be sent: flags are checked on every refresh.
+        self._notified: set[str] = set()
 
     async def open(self):
         await self._pool.open(wait=True, timeout=30)
@@ -165,11 +167,14 @@ class PgStore:
         self._settings[key] = text
 
     async def mark_notified(self, key: str) -> bool:
+        if key in self._notified:
+            return False
         async with self._pool.connection() as conn:
             cur = await conn.execute(
                 "INSERT INTO notifications_sent (key) VALUES (%s) ON CONFLICT DO NOTHING", (key,)
             )
-            return cur.rowcount == 1
+        self._notified.add(key)
+        return cur.rowcount == 1
 
     async def upsert_iv(self, symbol: str, day: date, iv30: float, source: str) -> None:
         async with self._pool.connection() as conn:

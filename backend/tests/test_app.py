@@ -153,7 +153,9 @@ def test_root_serves_frontend_build(settings, tmp_path):
     (static / "index.html").write_text("<div id=root></div>")
     (static / "assets" / "app.js").write_text("console.log(1)")
     with make_client(settings, FakeSchwab(connected=True), static_dir=static) as c:
-        assert c.get("/assets/app.js").status_code == 200  # public, no secrets in the bundle
+        r = c.get("/assets/app.js")
+        assert r.status_code == 200  # public, no secrets in the bundle
+        assert "immutable" not in r.headers.get("cache-control", "")  # no hash in its name
         assert c.get("/").status_code == 303  # the page itself needs the app login
         login(c)
         assert "id=root" in c.get("/").text
@@ -729,3 +731,14 @@ def test_two_schwab_accounts_each_keep_their_own_positions_and_history(tmp_path)
         assert store.transactions_raw and all(a == "live" for a, _ in store.transactions_raw)
         assert "transactions_synced_to:live-5678" in store.settings
         assert acc["brokers"]["live-5678"].config_key == "live_trading:live-5678"
+
+
+def test_hashed_assets_are_kept_by_the_browser(settings, tmp_path):
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<div id=root></div>")
+    (static / "assets" / "index-3S7LdCXx.js").write_text("console.log(1)")
+    with make_client(settings, FakeSchwab(connected=True), static_dir=static) as c:
+        r = c.get("/assets/index-3S7LdCXx.js")
+        assert r.status_code == 200
+        assert r.headers["cache-control"] == "public, max-age=31536000, immutable"

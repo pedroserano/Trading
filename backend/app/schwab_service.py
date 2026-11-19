@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from authlib.integrations.httpx_client import OAuthError
 from schwab import auth
 
+from .pacing import Pacer, is_background
 from .token_store import TokenStore, TokenStoreError
 
 log = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class SchwabService:
         # token itself (only a new sign-in helps); otherwise it clears on the next good call.
         self._auth_failure: str | None = None
         self._auth_permanent = False
+        self._pacer = Pacer()
         # 401s in a row that a forced token renewal did not cure.
         self._soft_401s = 0
 
@@ -245,6 +247,10 @@ class SchwabService:
         """Calls a schwab-py client method and returns the checked HTTP response."""
         if not self._usable():
             raise SchwabNotConnected()
+        if is_background() and _market_data(method):
+            await self._pacer.acquire()
+            if not self._usable():  # signed out while waiting
+                raise SchwabNotConnected()
         resp = await self._send(method, *args, **kwargs)
         if resp.status_code == 401:
             # Schwab sometimes answers 401 while the sign-in is still good (around a token
@@ -299,12 +305,31 @@ class SchwabService:
         return self._client
 
     async def accounts(self) -> list[AccountSummary]:
+        if self._client is None:
+            raise SchwabNotConnected()
         raw = await self.call("get_accounts", fields=[self._client.Account.Fields.POSITIONS])
         return [summarize_account(a) for a in raw]
 
     async def close(self) -> None:
         if self._client is not None:
             await self._client.close_async_session()
+
+
+def _market_data(method: str) -> bool:
+    """Schwab's market-data endpoints, the ones its ~120 a minute limit counts."""
+    return method in MARKET_DATA or method.startswith("get_price_history")
+
+
+MARKET_DATA = {
+    "get_quote",
+    "get_quotes",
+    "get_option_chain",
+    "get_option_expiration_chain",
+    "get_instruments",
+    "get_instrument_by_cusip",
+    "get_movers",
+    "get_market_hours",
+}
 
 
 def _order_id(resp) -> str:

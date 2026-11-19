@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
 from .options import bs, option_symbol, parse_option_symbol
+from .pacing import is_background
 from .schwab_service import SchwabService
 
 VIX = "$VIX"
@@ -32,6 +33,12 @@ class DataSource(Protocol):
 # Quotes fetched within this many seconds are reused: every account's portfolio asks for
 # SPY, VIX and the watchlist on the same few-second cycle.
 QUOTE_TTL_S = 2.0
+# Background chains (the scanner, the watchlist) are shared for this long: each account's scan
+# asks for the same symbols minutes apart. Anything a person or automanage asks for is fresh.
+CHAIN_TTL_S = 180.0
+CHAIN_CACHE_MAX = 150
+# Expirations change at most once a day (new weeklies are listed overnight).
+EXPIRATIONS_TTL_S = 1800.0
 
 
 class SchwabDataSource:
@@ -39,6 +46,8 @@ class SchwabDataSource:
         self.schwab = schwab
         self._quotes: dict[str, tuple[float, dict]] = {}
         self._quotes_lock = asyncio.Lock()
+        self._chains: dict[tuple, tuple[float, dict]] = {}
+        self._expirations: dict[str, tuple[float, dict]] = {}
 
     async def account_numbers(self) -> list[dict]:
         return await self.schwab.call("get_account_numbers") or []
@@ -117,9 +126,16 @@ class SchwabDataSource:
     async def option_chain(
         self, symbol: str, from_date: date, to_date: date, strike_count: int | None = 6
     ) -> dict:
-        """strike_count None returns every strike."""
+        """strike_count None returns every strike. Callers only read the answer."""
+        shared = is_background()
+        key = (symbol, from_date, to_date, strike_count)
+        now = time.monotonic()
+        if shared:
+            hit = self._chains.get(key)
+            if hit is not None and now - hit[0] <= CHAIN_TTL_S:
+                return hit[1]
         c = self.schwab.client()
-        return await self.schwab.call(
+        got = await self.schwab.call(
             "get_option_chain",
             symbol,
             contract_type=c.Options.ContractType.ALL,
@@ -127,9 +143,26 @@ class SchwabDataSource:
             from_date=from_date,
             to_date=to_date,
         )
+        if shared and got:
+            self._chains = {k: v for k, v in self._chains.items() if now - v[0] <= CHAIN_TTL_S}
+            if len(self._chains) >= CHAIN_CACHE_MAX:
+                self._chains.pop(min(self._chains, key=lambda k: self._chains[k][0]))
+            self._chains[key] = (now, got)
+        return got
 
     async def expirations(self, symbol: str) -> dict:
-        return await self.schwab.call("get_option_expiration_chain", symbol)
+        now = time.monotonic()
+        hit = self._expirations.get(symbol)
+        if hit is not None and now - hit[0] <= EXPIRATIONS_TTL_S:
+            return hit[1]
+        got = await self.schwab.call("get_option_expiration_chain", symbol)
+        if got:
+            if len(self._expirations) > 2000:
+                self._expirations = {
+                    k: v for k, v in self._expirations.items() if now - v[0] <= EXPIRATIONS_TTL_S
+                }
+            self._expirations[symbol] = (now, got)
+        return got
 
     async def fundamentals(self, symbols: list[str]) -> dict:
         """Schwab's fundamentals by symbol (shares outstanding, float, average volume).
