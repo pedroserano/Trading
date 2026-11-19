@@ -743,5 +743,7 @@ entered in Settings.
   "Hide the simulated account": starting cash, type RESET, Reset.
 - Watchlist: the View column sits between Earnings and Position; columns are tighter (5px a
   side, 3px on phones; a shorter 52-week bar on phones).
-- Scanner: it now gets the earnings dates and price history; before, every single stock was
+- Scanner: just-reported stocks are now taken as clear for 80 days after the report (was 60;
+  the field allows up to 100). It also now gets the earnings dates and price history; before,
+  every single stock was
   skipped for "no earnings date".

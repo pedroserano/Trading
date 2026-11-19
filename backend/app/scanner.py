@@ -67,9 +67,9 @@ DEFAULTS = {
     # A single stock's trade never holds through its next report.
     "avoid_through_earnings": True,
     # No coming report known, but one in the last quiet_recent_days: none is expected until
-    # quiet_gap_days after it (the quarterly cycle's least gap). 0 turns this off.
+    # quiet_gap_days after it (reports come about 90 days apart). 0 turns this off.
     "quiet_recent_days": 30,
-    "quiet_gap_days": 60,
+    "quiet_gap_days": 80,
     "min_pop": 0.55,  # probability of profit at entry, at least
     # Absolute IV, alongside IV rank (which alone selects and ranks): a floor for quiet
     # markets, premium rich enough to sell at any IV rank (iron condors only), and implied
@@ -146,7 +146,7 @@ FIELDS = [
         "quiet_gap_days",
         "Just reported: no next report assumed for",
         30,
-        80,
+        100,
         "int",
         "days after it",
     ),
