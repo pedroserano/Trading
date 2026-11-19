@@ -72,7 +72,7 @@ from .extremes import compute as compute_extreme
 from .history_service import PriceHistoryService, export_rows, export_xlsx
 from .jobs import DailyJobs
 from .live import LiveBroker
-from .market import MarketService
+from .market import MARKETS, MarketService
 from .notify import PushoverNotifier, ReminderService
 from .options import parse_option_symbol
 from .order_check import OrderCheckService
@@ -1278,6 +1278,36 @@ def create_app(
             "candles": [{**c, "date": c["date"].isoformat()} for c in candles],
             "strikes": strikes,
             "earnings": earnings.info(symbol),
+            "high52": max(closes) if closes else None,
+            "low52": min(closes) if closes else None,
+        }
+
+    @app.get("/api/market/chart", dependencies=[Depends(require_login)])
+    async def api_market_chart(label: str):
+        """A year of daily candles for one market on the strip. Futures roll from contract
+        to contract, so the chart is of the index, or the fund that stands in for it."""
+        entry = next((m for m in MARKETS if m[0] == label), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Unknown market")
+        symbol = entry[2] or entry[1]
+        today = portfolio.clock().date()
+        key = (symbol, today)
+        if key not in candle_cache:
+            try:
+                candles = await source.daily_candles(symbol, 370)
+            except SchwabError as e:
+                raise _schwab_errors(e) from e
+            if len(candle_cache) > 200:
+                candle_cache.clear()
+            candle_cache[key] = candles
+        candles = candle_cache[key]
+        closes = [c["close"] for c in candles]
+        return {
+            "label": label,
+            "symbol": symbol,
+            "candles": [{**c, "date": c["date"].isoformat()} for c in candles],
+            "strikes": [],
+            "earnings": None,
             "high52": max(closes) if closes else None,
             "low52": min(closes) if closes else None,
         }

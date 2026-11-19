@@ -424,7 +424,6 @@ function Nav({ route }: { route: Route }) {
   return (
     <nav className="tabs">
       {tab("positions", "#/", "Positions")}
-      {tab("portfolio", "#/portfolio", "Portfolio")}
       {tab("watchlist", "#/watchlist", "Watchlist")}
       {tab(
         "trade",
@@ -432,6 +431,7 @@ function Nav({ route }: { route: Route }) {
         "Trade",
       )}
       {tab("activity", "#/activity", "Activity")}
+      {tab("portfolio", "#/portfolio", "Portfolio")}
       {tab("dashboard", "#/dashboard", "Dashboard")}
       {tab("settings", "#/settings", "Settings")}
     </nav>
