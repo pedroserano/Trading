@@ -322,12 +322,6 @@ export default function Watchlist() {
           <thead>
             <tr>
               {th("symbol", "Symbol")}
-              <th
-                className="l"
-                title="Your view for the scanner: its new trades here lean this way, selling one side outside the expected move (puts when bullish, calls when bearish), and keep leaning that way through their rolls. Would own: you would be glad to buy the shares, so it sells cash-secured puts and, on expiration day, lets an in-the-money put be assigned if your cash and sweep cover it (never margin). Auto follows the portfolio bias and price extremes."
-              >
-                View
-              </th>
               <th>Last</th>
               {th("change", "Chg")}
               {th("range", "52w", "Where the price sits in its 52-week range of closes, 0% at the low")}
@@ -345,6 +339,12 @@ export default function Watchlist() {
               <th title="Open interest at the money, call plus put">ATM OI</th>
               {th("float", "Float", "Shares free to trade, from Schwab, with how much of the float trades on an average day (10 days). Under 20 million shares is a low float, highlighted: it can move sharply. Funds and indexes have none. Schwab gives no short interest")}
               {th("earnings", "Earnings", "Next earnings report: date, and before the open or after the close. Sorts soonest first, by day and side of the bell; no date last")}
+              <th
+                className="l"
+                title="Your view for the scanner: its new trades here lean this way, selling one side outside the expected move (puts when bullish, calls when bearish), and keep leaning that way through their rolls. Would own: you would be glad to buy the shares, so it sells cash-secured puts and, on expiration day, lets an in-the-money put be assigned if your cash and sweep cover it (never margin). Auto follows the portfolio bias and price extremes."
+              >
+                View
+              </th>
               <th title="Your position delta and theta in this underlying">Position</th>
               <th className="rm-col" aria-label="Remove" />
             </tr>
@@ -394,30 +394,6 @@ export default function Watchlist() {
                       no options data
                     </span>
                   ) : null}
-                </td>
-                <td className="l" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                  <select
-                    className={`view-select ${views[r.symbol] ? "set" : ""}`}
-                    value={views[r.symbol] ?? "auto"}
-                    aria-label={`Your view on ${r.symbol}`}
-                    onChange={async (e) => {
-                      try {
-                        const out = await postJson<{ views: Record<string, string> }>("/api/watchlist/view", {
-                          symbol: r.symbol,
-                          view: e.target.value,
-                        });
-                        setViews(out.views);
-                      } catch (err) {
-                        setError(String((err as Error).message));
-                      }
-                    }}
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="neutral">Neutral</option>
-                    <option value="bullish">Bullish</option>
-                    <option value="bearish">Bearish</option>
-                    <option value="would_own">Would own</option>
-                  </select>
                 </td>
                 <td>{num(r.price, 2)}</td>
                 <td className={tone(r.change_pct)}>
@@ -519,6 +495,30 @@ export default function Watchlist() {
                   ) : (
                     <span className="warn-text">No date · set</span>
                   )}
+                </td>
+                <td className="l" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <select
+                    className={`view-select ${views[r.symbol] ? "set" : ""}`}
+                    value={views[r.symbol] ?? "auto"}
+                    aria-label={`Your view on ${r.symbol}`}
+                    onChange={async (e) => {
+                      try {
+                        const out = await postJson<{ views: Record<string, string> }>("/api/watchlist/view", {
+                          symbol: r.symbol,
+                          view: e.target.value,
+                        });
+                        setViews(out.views);
+                      } catch (err) {
+                        setError(String((err as Error).message));
+                      }
+                    }}
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="neutral">Neutral</option>
+                    <option value="bullish">Bullish</option>
+                    <option value="bearish">Bearish</option>
+                    <option value="would_own">Would own</option>
+                  </select>
                 </td>
                 <td>
                   {r.held ? (

@@ -730,3 +730,18 @@ entered in Settings.
   with a warning to check the deliverable in thinkorswim.
 - Option chains (Trade screen, scanner, watchlist) never list one: Schwab's nonStandard
   flag, a multiplier other than 100, or a numbered root.
+
+## Demo mode removed; simulated account reset in Settings
+
+- Demo mode (`DEMO_MODE`, simulated prices without Schwab) is gone: the Simulated account is
+  the place to try trades. Schwab's keys are always required; a leftover `DEMO_MODE` in `.env`
+  is ignored. The simulated market the tests use moved to `backend/tests/fake_source.py`.
+- Found on the way: an opening order on the Simulated account was previewed by Schwab against
+  an account called "sim", which does not exist, so its preview failed. It is now previewed
+  against the first Schwab account.
+- Reset the simulated account moved from Activity to Settings → Connection → Accounts, under
+  "Hide the simulated account": starting cash, type RESET, Reset.
+- Watchlist: the View column sits between Earnings and Position; columns are tighter (5px a
+  side, 3px on phones; a shorter 52-week bar on phones).
+- Scanner: it now gets the earnings dates and price history; before, every single stock was
+  skipped for "no earnings date".

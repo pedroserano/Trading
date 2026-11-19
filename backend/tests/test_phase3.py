@@ -2,11 +2,11 @@ import asyncio
 from datetime import date, datetime
 
 import pytest
+from fake_source import ConnectedSchwab, DemoDataSource
 from fastapi.testclient import TestClient
 
 from app import guards
 from app.config import Settings
-from app.datasource import DemoDataSource
 from app.main import create_app, summarize_preview
 from app.notify import ET
 from app.options import option_symbol
@@ -431,12 +431,14 @@ def client(tmp_path):
         _env_file=None,
         app_password=PASSWORD,
         secret_key="s" * 32,
-        demo_mode=True,
+        schwab_app_key="k",
+        schwab_app_secret="s",
         cookie_secure=False,
         data_dir=tmp_path,
     )
     app = create_app(
         s,
+        ConnectedSchwab(),
         store=MemoryStore(),
         start_background=False,
         static_dir=tmp_path / "none",
@@ -467,7 +469,7 @@ def test_api_preview_place_activity_cancel(client):
     pv = client.post("/api/orders/preview", json=body).json()
     assert pv["errors"] == [] and pv["limit_net"] == pv["prices"]["mid"]
     assert pv["schwab_json"]["orderLegCollection"][0]["instruction"] == "SELL_TO_OPEN"
-    assert pv["schwab_preview"]["simulated"] is True and pv["bp_effect"] > 0
+    assert pv["schwab_preview"]["ok"] is True and pv["bp_effect"] > 0, pv["schwab_preview"]
     # A far-away limit rests; then cancel it.
     order = client.post("/api/orders", json={**body, "limit_net": pv["prices"]["far"]}).json()
     assert order["status"] == "WORKING"
@@ -487,7 +489,7 @@ def test_api_preview_place_activity_cancel(client):
     live = client.post(
         "/api/orders", json={**body, "account": "live", "limit_net": pv["limit_net"]}
     )
-    assert live.status_code == 403 and "Demo mode" in live.json()["detail"]
+    assert live.status_code == 403 and "LIVE_TRADING" in live.json()["detail"]
 
 
 def test_api_close_needs_trade_and_reset(client):
@@ -519,7 +521,13 @@ async def test_sim_positions_grouped_by_trade_with_credit_including_rolls():
     store = MemoryStore()
     demo = DemoDataSource(today=TODAY)
     b = SimBroker(store, 10_000, clock=clock())
-    s = Settings(_env_file=None, app_password=PASSWORD, secret_key="s" * 32, demo_mode=True)
+    s = Settings(
+        _env_file=None,
+        app_password=PASSWORD,
+        secret_key="s" * 32,
+        schwab_app_key="k",
+        schwab_app_secret="s",
+    )
     src = SimDataSource(demo, b)
 
     async def resolver():
@@ -1002,6 +1010,20 @@ def test_the_simulated_account_can_be_hidden_from_the_picker(client):
     assert client.get("/api/accounts/in-use").json()["hide_sim"] is True
     client.post("/accounts/hide-sim", data={}, follow_redirects=False)
     assert client.get("/api/accounts/in-use").json()["hide_sim"] is False
+
+
+def test_the_simulated_account_resets_from_settings(client):
+    def post(**data):
+        return client.post("/accounts/reset-sim", data=data, follow_redirects=False)
+
+    assert post(start_cash="25000", confirm="nope").status_code == 303
+    assert client.get("/api/activity?account=sim").json()["cash"] != 25000
+    assert post(start_cash="-5", confirm="RESET").status_code == 303
+    assert client.get("/api/activity?account=sim").json()["cash"] != -5
+    assert post(start_cash="25000", confirm="RESET").status_code == 303
+    assert client.get("/api/activity?account=sim").json()["cash"] == 25000
+    page = client.get("/connect").text
+    assert 'action="/accounts/reset-sim"' in page and 'value="25000"' in page
 
 
 def test_the_ticket_shows_probability_of_profit_at_its_limit(client):

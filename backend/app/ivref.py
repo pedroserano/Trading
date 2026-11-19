@@ -67,12 +67,11 @@ def choose(own: dict | None, own_since: date | None, ref: dict | None, today: da
 
 
 class IvReference:
-    def __init__(self, store, symbols, clock=None, client=None, demo: bool = False):
+    def __init__(self, store, symbols, clock=None, client=None):
         self.store = store
         self.symbols = symbols  # async () -> iterable of symbols
         self.clock = clock or (lambda: datetime.now(ET))
         self.client = client  # an httpx.AsyncClient, injected by tests
-        self.demo = demo
         self.data: dict[str, dict] = {}
         self.refreshed_at: float | None = None
         self.error: str | None = None
@@ -141,8 +140,6 @@ class IvReference:
     async def refresh(self) -> int:
         """Reads the latest day's IV and year range for every symbol covered. Returns how many
         were found."""
-        if self.demo:
-            return 0
         wanted = sorted({s for s in await self.symbols() if s and not s.startswith(("$", "/"))})
         if not wanted:
             return 0

@@ -45,7 +45,6 @@ header.top {
 .brand { display: flex; align-items: baseline; gap: 8px; }
 .acct { color: var(--dim); font-size: 13px; }
 .badge { font-size: 11px; font-weight: 600; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px; }
-.badge.demo { background: var(--warn); color: #000; }
 .stats { display: flex; gap: 8px 16px; flex-wrap: nowrap; flex: 1; }
 /* Too narrow for the stats beside the menu bar: they take a line of their own below it. */
 header.top.stacked .stats { order: 3; flex-basis: 100%; flex-wrap: wrap; }
@@ -154,7 +153,20 @@ tr.under a.sym:hover { color: var(--accent); }
 .toolbar-link { margin-left: auto; font-size: 13px; }
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--text); }
-table.watch { min-width: 900px; }
+table.watch { min-width: 0; }
+/* The Watchlist has many columns: tighter than other tables, tighter still on phones. */
+table.watch th, table.watch td { padding-left: 5px; padding-right: 5px; }
+table.watch th:first-child, table.watch td:first-child { padding-left: 8px; }
+@media (max-width: 700px) {
+  table.watch th, table.watch td { padding: 4px 3px; }
+  table.watch th:first-child, table.watch td:first-child { padding-left: 6px; }
+  table.watch th { letter-spacing: 0; }
+  table.watch .view-select { padding: 1px 2px; }
+  table.watch .range { gap: 4px; }
+  table.watch .range-track { width: 40px; }
+  table.watch .range-pct { min-width: 0; }
+  table.watch .sym-inline { margin-right: 4px; }
+}
 td.hi { color: var(--warn); font-weight: 600; }
 
 /* Trade screen */
@@ -316,7 +328,6 @@ details.json.inline pre { position: absolute; right: 16px; z-index: 3; max-width
 /* Activity */
 .activity h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 22px 0 8px; }
 .sim-summary { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
-.sim-summary .reset { margin-left: auto; background: none; border: 0; color: var(--dim); cursor: pointer; }
 table.orders { min-width: 820px; }
 td.legs-cell { font-size: 12px; line-height: 1.5; }
 td.status.filled { color: var(--ok); }
@@ -903,3 +914,8 @@ table.watch tr.edit-row td { text-transform: none; letter-spacing: 0; font-weigh
 form.earn-edit { position: sticky; left: 10px; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: calc(100vw - 52px); }
 .earn-status { margin: 0 0 8px; font-size: 13px; }
 .earn-status button.link, form.earn-edit button.link { background: none; border: 0; color: var(--accent); padding: 0 4px; cursor: pointer; font: inherit; }
+.settings-page .reset-sim { margin-top: 10px; }
+.settings-page .reset-sim .reset-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.settings-page .reset-sim input[type="number"] { width: 110px; }
+.settings-page .reset-sim input[name="confirm"] { width: 100px; }
+.settings-page .reset-sim button.danger { background: var(--bad); border: 1px solid var(--bad); color: #fff; border-radius: 6px; padding: 4px 12px; }

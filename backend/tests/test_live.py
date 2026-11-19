@@ -91,10 +91,10 @@ async def account():
     return "HASH"
 
 
-def broker(allowed=True, demo=False):
+def broker(allowed=True):
     schwab = FakeSchwab()
     store = MemoryStore()
-    b = LiveBroker(store, schwab, Source(schwab), account, allowed, Notifier(), demo=demo)
+    b = LiveBroker(store, schwab, Source(schwab), account, allowed, Notifier())
     return b, schwab, store
 
 
@@ -119,8 +119,6 @@ async def test_the_env_the_allowlist_and_limits_gate_live_orders():
     assert any("net liq" in r for r in await b.gate(t, 9000, 100_000))
     qqq = ticket([(option_symbol("QQQ", EXP, "P", 480), -1, "open")], limit_net=2.0)
     assert any("not on the live list" in r for r in await b.gate(qqq, 1000, 100_000))
-    demo, _, _ = broker(demo=True)
-    assert any("Demo mode" in r for r in await demo.gate(t, 2000, 100_000))
     with pytest.raises(ValueError, match="between 1 and 50"):
         await b.set_config({"max_contracts": "0"})
     # An empty list is allowed: no underlying may be traded live.

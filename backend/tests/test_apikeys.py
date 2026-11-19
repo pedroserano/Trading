@@ -3,12 +3,12 @@ import json
 import re
 
 import pytest
+from fake_source import ConnectedSchwab, DemoDataSource
 from fastapi.testclient import TestClient
 from test_phase3 import PASSWORD, TODAY, first_put
 
 from app import apikeys
 from app.config import Settings
-from app.datasource import DemoDataSource
 from app.main import create_app
 from app.store import MemoryStore
 
@@ -29,7 +29,8 @@ def env(tmp_path):
         _env_file=None,
         app_password=PASSWORD,
         secret_key="s" * 32,
-        demo_mode=True,
+        schwab_app_key="k",
+        schwab_app_secret="s",
         cookie_secure=False,
         data_dir=tmp_path,
     )
@@ -37,6 +38,7 @@ def env(tmp_path):
     notifier = Notifier()
     app = create_app(
         s,
+        ConnectedSchwab(),
         store=store,
         notifier=notifier,
         start_background=False,

@@ -13,9 +13,6 @@ class Settings(BaseSettings):
     # Signs session cookies and encrypts the Schwab token at rest.
     secret_key: str = Field(min_length=32)
 
-    # Simulated account and prices instead of Schwab. For previews and development.
-    demo_mode: bool = False
-
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
     # Must match a callback registered on the Schwab app character for character.
@@ -64,9 +61,9 @@ class Settings(BaseSettings):
     positions_interval_s: float = Field(60.0, ge=15.0)
 
     @model_validator(mode="after")
-    def _schwab_keys_unless_demo(self):
-        if not self.demo_mode and not (self.schwab_app_key and self.schwab_app_secret):
-            raise ValueError("SCHWAB_APP_KEY and SCHWAB_APP_SECRET are required unless DEMO_MODE")
+    def _schwab_keys(self):
+        if not (self.schwab_app_key and self.schwab_app_secret):
+            raise ValueError("SCHWAB_APP_KEY and SCHWAB_APP_SECRET are required")
         return self
 
     @property

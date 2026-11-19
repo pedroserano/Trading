@@ -6,11 +6,11 @@ from datetime import UTC, date, datetime
 
 import openpyxl
 import pytest
+from fake_source import ConnectedSchwab, DemoDataSource, _demo_txn
 from fastapi.testclient import TestClient
 
 from app import chains, dashboard, sheet_import
 from app.config import Settings
-from app.datasource import DemoDataSource, _demo_txn
 from app.history_service import HEADER, export_rows, export_xlsx
 from app.main import create_app
 from app.options import option_symbol
@@ -402,13 +402,15 @@ def client(tmp_path):
         _env_file=None,
         app_password="p" * 12,
         secret_key="s" * 32,
-        demo_mode=True,
+        schwab_app_key="k",
+        schwab_app_secret="s",
         cookie_secure=False,
         data_dir=tmp_path,
     )
     store = MemoryStore()
     app = create_app(
         s,
+        ConnectedSchwab(),
         store=store,
         start_background=False,
         static_dir=tmp_path / "x",

@@ -170,7 +170,6 @@ so the container picks them up.
 | `PUSHOVER_USER_KEY`, `PUSHOVER_APP_TOKEN` | Turn on notifications. The user key is on the Pushover dashboard; the token comes from creating an application there. |
 | `REMINDER_WEEKDAY`, `REMINDER_HOUR` | When the weekly Schwab sign-in reminder goes out, US Eastern. Default Sunday 18:00. |
 | `WATCHLIST` | Starting watchlist, e.g. `SPY,QQQ,IWM`. Used only until the watchlist is edited on the Settings page, which also imports thinkorswim exports. |
-| `DEMO_MODE` | `true` shows a simulated account. Leave `false` for real use. |
 | `SIM_START_CASH` | Starting cash of the simulated account. Default 100000. Resetting the simulated account from the Activity page can set a different amount. |
 | `SIM_COMMISSION` | Commission per contract for the simulated account. Default 0.45. |
 | `LIVE_TRADING` | `true` lets the app send live orders to Schwab. Live orders also need Settings, Live trading, Schwab orders set to Manual only or Manual and automatic. Leave unset (off) to keep the app preview-only for the Schwab account. |

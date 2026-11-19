@@ -1,12 +1,12 @@
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from fake_source import ConnectedSchwab, DemoDataSource, _demo_history, _demo_txn
 from fastapi.testclient import TestClient
 
 from app import chains
 from app.chain_service import ChainService
 from app.config import Settings
-from app.datasource import DemoDataSource, _demo_history, _demo_txn
 from app.main import create_app
 from app.notify import ET
 from app.options import option_symbol
@@ -258,7 +258,13 @@ def anyio_backend():
 def demo_setup():
     store = MemoryStore()
     demo = DemoDataSource(today=TODAY)
-    s = Settings(_env_file=None, app_password="p" * 12, secret_key="s" * 32, demo_mode=True)
+    s = Settings(
+        _env_file=None,
+        app_password="p" * 12,
+        secret_key="s" * 32,
+        schwab_app_key="k",
+        schwab_app_secret="s",
+    )
 
     async def resolver():
         return DemoDataSource.HASH
@@ -311,12 +317,14 @@ def test_chain_api_link_split_and_activity(tmp_path):
         _env_file=None,
         app_password="p" * 12,
         secret_key="s" * 32,
-        demo_mode=True,
+        schwab_app_key="k",
+        schwab_app_secret="s",
         cookie_secure=False,
         data_dir=tmp_path,
     )
     app = create_app(
         s,
+        ConnectedSchwab(),
         store=MemoryStore(),
         start_background=False,
         static_dir=tmp_path / "x",

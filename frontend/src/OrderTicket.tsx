@@ -533,9 +533,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
             ) : null}
             {sp ? (
               <div className={`ticket-status ${sp.error || !sp.ok ? (live ? "bad" : "warn") : "ok"}`}>
-                {sp.simulated
-                  ? "Demo mode: Schwab preview skipped"
-                  : sp.error
+                {sp.error
                     ? `Schwab preview failed: ${sp.error}`
                     : `Schwab preview ${sp.ok ? "accepted" : "rejected"}${
                         sp.fields.projectedCommission !== undefined ? ` · commission ${money(sp.fields.projectedCommission, 2)}` : ""

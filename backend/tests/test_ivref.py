@@ -104,17 +104,6 @@ def test_refresh_reads_the_latest_day_in_batches_and_fills_gaps():
     assert asked == {"2026-11-19", "2026-11-18", "2026-11-17", "2026-11-16"}
 
 
-def test_refresh_does_nothing_in_demo():
-    async def symbols():
-        return ["SPY"]
-
-    async def go():
-        ref = IvReference(MemoryStore(), symbols, clock=clock, demo=True)
-        assert await ref.refresh() == 0 and ref.rank("SPY") is None
-
-    asyncio.run(go())
-
-
 def test_a_symbol_with_a_year_of_its_own_is_not_asked_for():
     queries: list[str] = []
     store = MemoryStore()

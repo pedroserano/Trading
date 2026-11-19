@@ -89,17 +89,14 @@ def due_reminders(
 
 
 class ReminderService:
-    def __init__(self, notifier, store, connection_status, settings, demo: bool):
+    def __init__(self, notifier, store, connection_status, settings):
         self.notifier = notifier
         self.store = store
         self.connection_status = connection_status
         self.settings = settings
-        self.demo = demo
         self.last_error: str | None = None
 
     async def run(self) -> None:
-        if self.demo:
-            return
         while True:
             try:
                 await self.check()

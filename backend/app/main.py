@@ -24,7 +24,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import (
@@ -67,7 +67,7 @@ from .automation import (
 )
 from .chain_service import ChainService
 from .config import Settings, get_settings
-from .datasource import DemoDataSource, SchwabDataSource
+from .datasource import SchwabDataSource
 from .earnings import EarningsService
 from .extremes import PriceHistory
 from .extremes import compute as compute_extreme
@@ -441,7 +441,6 @@ def create_app(
     static_dir: Path = STATIC_DIR,
 ) -> FastAPI:
     settings = settings or get_settings()
-    demo = settings.demo_mode
     if schwab is None:
         schwab = SchwabService(
             settings.schwab_app_key,
@@ -458,12 +457,10 @@ def create_app(
             settings.db_password,
         )
     if source is None:
-        source = DemoDataSource() if demo else SchwabDataSource(schwab)
+        source = SchwabDataSource(schwab)
     notifier = notifier or PushoverNotifier(settings.pushover_user_key, settings.pushover_app_token)
 
     def connection_status() -> ConnectionStatus:
-        if demo:
-            return ConnectionStatus(connected=True, token_age_s=86400.0, created_at=0)
         return schwab.status()
 
     # Every Schwab account ticked at the sign-in, each by its key ("live" for the first).
@@ -485,16 +482,14 @@ def create_app(
         settings,
         connection_json,
         registry.resolver("live"),
-        mode="demo" if demo else "live",
+        mode="live",
         preferences=preferences,
         notifier=notifier,
     )
-    stream = None
-    if not demo:
-        stream = StreamService(
-            schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
-        )
-        portfolio.stream = stream
+    stream = StreamService(
+        schwab, portfolio.wanted_symbols, portfolio.on_stream_quotes, portfolio.refresh_soon
+    )
+    portfolio.stream = stream
     chain_service = ChainService(
         source,
         store,
@@ -513,7 +508,6 @@ def create_app(
         server_allowed=settings.live_trading,
         notifier=notifier,
         app_url=settings.app_url,
-        demo=demo,
         server_auto=settings.live_auto,
         name=lambda: registry.name("live"),
     )
@@ -599,11 +593,10 @@ def create_app(
         source,
         earnings_symbols,
         clock=lambda: portfolio.clock(),
-        demo=demo,
         nasdaq=True,
     )
     portfolio.earnings = sim_portfolio.earnings = watchlist.earnings = earnings.info
-    iv_reference = IvReference(store, earnings_symbols, clock=lambda: portfolio.clock(), demo=demo)
+    iv_reference = IvReference(store, earnings_symbols, clock=lambda: portfolio.clock())
     portfolio.ivref = sim_portfolio.ivref = watchlist.ivref = iv_reference.rank
     history = PriceHistory(store, source, earnings_symbols, clock=lambda: portfolio.clock())
     market = MarketService(source, clock=lambda: portfolio.clock())
@@ -630,7 +623,7 @@ def create_app(
     watchlist.shock = watch_shock
     health: dict[str, str | None] = {}
     jobs = DailyJobs(source, store, portfolio, settings)
-    reminders = ReminderService(notifier, store, connection_status, settings, demo)
+    reminders = ReminderService(notifier, store, connection_status, settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -650,7 +643,7 @@ def create_app(
             if key not in brokers:
                 add_account(key)
         await apply_live_cap()
-        log.info("Started. Demo: %s. Schwab connected: %s", demo, schwab.status().connected)
+        log.info("Started. Schwab connected: %s", schwab.status().connected)
         tasks = []
         if start_background:
             services = {
@@ -858,11 +851,11 @@ def create_app(
             request,
             "connect_body.html" if fragment else "connect.html",
             {
-                "demo": demo,
                 "status": status,
                 "accounts": accounts,
                 "sheet_labels": registry.sheet_labels,
                 "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
+                "sim_start_cash": (await broker.snapshot())["start_cash"],
                 "new_key": new_key,
                 "here_base": here_base,
                 "api_keys": keys_now,
@@ -998,6 +991,33 @@ def create_app(
         request.session["notice"] = (
             "The simulated account is hidden." if hide else "The simulated account is shown."
         )
+        return RedirectResponse(settings_url("account"), status_code=303)
+
+    async def reset_sim(start_cash: float) -> None:
+        await broker.reset(start_cash)
+        # Order numbers start again after a reset: drop the simulated account's key marks.
+        marks = await store.get_setting(KEY_ORDERS_KEY) or {}
+        await store.set_setting(
+            KEY_ORDERS_KEY, {k: v for k, v in marks.items() if not k.startswith("sim:")}
+        )
+        sim_portfolio.refresh_soon()
+
+    @app.post("/accounts/reset-sim", dependencies=[Depends(require_login)])
+    async def account_reset_sim(
+        request: Request, start_cash: str = Form(""), confirm: str = Form("")
+    ):
+        """Starts the simulated account over: its orders, positions and journal deleted."""
+        try:
+            cash = float(start_cash)
+            ResetIn(start_cash=cash, confirm=confirm)
+        except (ValueError, ValidationError):
+            request.session["flash"] = "Starting cash must be more than 0."
+            return RedirectResponse(settings_url("account"), status_code=303)
+        if confirm.strip() != "RESET":
+            request.session["flash"] = "Not reset: type RESET to confirm."
+            return RedirectResponse(settings_url("account"), status_code=303)
+        await reset_sim(cash)
+        request.session["notice"] = f"The simulated account starts again with ${cash:,.0f}."
         return RedirectResponse(settings_url("account"), status_code=303)
 
     # A new key waits here for the one Settings page view that shows it, not in the cookie.
@@ -1795,17 +1815,19 @@ def create_app(
         preview = None
         # Schwab can only preview against the real account: opening orders, or live closes.
         if body_json and (t.intent == "open" or body.account != "sim"):
-            if demo:
-                preview = {"ok": True, "simulated": True, "fields": {}, "messages": [], "raw": None}
-            else:
-                try:
-                    preview = summarize_preview(
-                        await schwab.call(
-                            "preview_order", await registry.resolver(body.account)(), body_json
-                        )
+            try:
+                preview = summarize_preview(
+                    await schwab.call(
+                        "preview_order",
+                        # A simulated order is previewed against the first Schwab account.
+                        await registry.resolver(
+                            "live" if body.account == "sim" else body.account
+                        )(),
+                        body_json,
                     )
-                except Exception as e:
-                    preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
+                )
+            except Exception as e:
+                preview = {"ok": False, "error": str(e)[:300], "fields": {}, "messages": []}
         contracts = sum(abs(x.quantity) for x in t.legs if not x.equity)
         live_blocks = []
         if body.account != "sim":
@@ -2003,7 +2025,7 @@ def create_app(
             settings,
             connection_json,
             resolve,
-            mode="demo" if demo else "live",
+            mode="live",
             preferences=preferences,
             notifier=notifier,
             account=key,
@@ -2031,7 +2053,6 @@ def create_app(
             server_allowed=settings.live_trading,
             notifier=notifier,
             app_url=settings.app_url,
-            demo=demo,
             server_auto=settings.live_auto,
             account=key,
             name=lambda: registry.name(key),
@@ -2159,9 +2180,7 @@ def create_app(
             else:
                 parts.append("Auto on (header)")
             if acct != "sim":
-                if live.get("demo"):
-                    parts.append("demo mode: no Schwab orders")
-                elif not live["on"]:
+                if not live["on"]:
                     parts.append(
                         "Schwab orders not allowed: add LIVE_TRADING=true to .env and restart"
                     )
@@ -2562,13 +2581,7 @@ def create_app(
     async def api_sim_reset(body: ResetIn):
         if body.confirm != "RESET":
             raise HTTPException(status_code=400, detail="Type RESET to confirm")
-        await broker.reset(body.start_cash)
-        # Order numbers start again after a reset: drop the simulated account's key marks.
-        marks = await store.get_setting(KEY_ORDERS_KEY) or {}
-        await store.set_setting(
-            KEY_ORDERS_KEY, {k: v for k, v in marks.items() if not k.startswith("sim:")}
-        )
-        sim_portfolio.refresh_soon()
+        await reset_sim(body.start_cash)
         return {"ok": True}
 
     @app.get("/api/events", dependencies=[Depends(require_login)])

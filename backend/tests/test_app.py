@@ -252,11 +252,19 @@ def test_api_accounts_status_and_snapshot(settings):
         assert c.get("/api/snapshot").json() == {"pending": True}
 
 
-def test_demo_mode_needs_no_schwab_keys():
-    s = Settings(_env_file=None, app_password=PASSWORD, secret_key=SECRET, demo_mode=True)
-    assert s.demo_mode
+def test_schwab_keys_are_required():
     with pytest.raises(ValueError, match="SCHWAB_APP_KEY"):
         Settings(_env_file=None, app_password=PASSWORD, secret_key=SECRET)
+    # A DEMO_MODE left in an old .env is ignored.
+    s = Settings(
+        _env_file=None,
+        app_password=PASSWORD,
+        secret_key=SECRET,
+        schwab_app_key="k",
+        schwab_app_secret="s",
+        demo_mode=True,
+    )
+    assert not hasattr(s, "demo_mode")
 
 
 def test_token_store_roundtrip_and_encryption(tmp_path):
@@ -704,10 +712,15 @@ def test_the_header_auto_switch_on_schwab_follows_the_env_only(settings):
 def test_two_schwab_accounts_each_keep_their_own_positions_and_history(tmp_path):
     import asyncio
 
-    from app.datasource import DemoDataSource
+    from fake_source import DemoDataSource
 
     s = Settings(
-        _env_file=None, app_password=PASSWORD, secret_key=SECRET, demo_mode=True, data_dir=tmp_path
+        _env_file=None,
+        app_password=PASSWORD,
+        secret_key=SECRET,
+        schwab_app_key="k",
+        schwab_app_secret="s",
+        data_dir=tmp_path,
     )
     store = MemoryStore()
     app = create_app(

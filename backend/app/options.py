@@ -190,7 +190,7 @@ def day_pl(leg: Leg) -> float | None:
     return pl * leg.multiplier
 
 
-# Black-Scholes, used for demo prices and as a cross-check. Volatility as a fraction.
+# Black-Scholes, used for simulated prices and as a cross-check. Volatility as a fraction.
 
 
 def _ncdf(x: float) -> float:

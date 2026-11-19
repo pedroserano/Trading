@@ -154,7 +154,6 @@ class LiveBroker:
         server_allowed: bool,
         notifier=None,
         app_url: str = "",
-        demo: bool = False,
         server_auto: bool = False,
         account: str = "live",
         name=None,
@@ -168,9 +167,8 @@ class LiveBroker:
         self.schwab = schwab
         self.source = source
         self.resolve_account = resolve_account
-        self.server_allowed = server_allowed and not demo
+        self.server_allowed = server_allowed
         self.server_auto = server_auto and self.server_allowed
-        self.demo = demo
         self.notifier = notifier
         self.app_url = app_url
         # The automation reads state["orders"], as it does the simulator's.
@@ -225,7 +223,6 @@ class LiveBroker:
         return {
             **c,
             "server_allowed": self.server_allowed,
-            "demo": self.demo,
             "on": self.server_allowed,
             "server_auto": self.server_auto,
             "auto_cap": self.auto_cap(),
@@ -242,9 +239,7 @@ class LiveBroker:
         """Reasons a live order may not go out. Empty when it may."""
         c = await self.config()
         out = []
-        if self.demo:
-            out.append("Demo mode: there is no real Schwab account to send orders to")
-        elif not self.server_allowed:
+        if not self.server_allowed:
             out.append("Live trading is not allowed on this server: set LIVE_TRADING=true in .env")
         if not c.get("all_symbols") and not c["symbols"]:
             out.append(
@@ -456,7 +451,7 @@ class LiveBroker:
         while True:
             self._wake.clear()
             busy = False
-            if self.server_allowed and not self.demo:
+            if self.server_allowed:
                 try:
                     async with self.lock:
                         orders = await self.refresh()

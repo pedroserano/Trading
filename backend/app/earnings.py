@@ -181,7 +181,6 @@ class EarningsService:
         symbols,
         clock=lambda: datetime.now(ET),
         client=None,
-        demo: bool = False,
         nasdaq: bool = False,
     ):
         self.store = store
@@ -189,8 +188,7 @@ class EarningsService:
         self.symbols = symbols  # async () -> set of symbols to cover
         self.clock = clock
         self.client = client  # an httpx.AsyncClient, injected by tests
-        self.demo = demo
-        self.use_nasdaq = nasdaq and not demo
+        self.use_nasdaq = nasdaq
         self.nasdaq: dict = {}  # Nasdaq: stock -> next report in its window
         self.nasdaq_done: set[str] = set()  # past days already read (ISO)
         self.manual: dict = {}
@@ -207,8 +205,6 @@ class EarningsService:
 
     @property
     def provider(self) -> str:
-        if self.demo:
-            return "demo"
         return "Nasdaq" if self.use_nasdaq else "manual"
 
     async def load(self) -> None:
@@ -355,8 +351,6 @@ class EarningsService:
             finally:
                 if own:
                     await client.aclose()
-        elif self.demo:
-            self.nasdaq = self._demo(stocks)
         self.refreshed_at = time.time()
         if self.partial:
             errors.append(self.partial)
@@ -476,10 +470,3 @@ class EarningsService:
         r.raise_for_status()
         self.industries.update(parse_screener(r.json()))
         self.industries_at = time.time()
-
-    def _demo(self, stocks: set[str]) -> dict:
-        """Demo mode: a report about three weeks out, after the close."""
-        d = self.today() + timedelta(days=21)
-        while d.weekday() >= 5:
-            d += timedelta(days=1)
-        return {s: {"date": d.isoformat(), "time": "amc", "source": "demo"} for s in stocks}

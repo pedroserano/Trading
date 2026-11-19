@@ -1,10 +1,10 @@
 from datetime import date, datetime
 
 import pytest
+from fake_source import DemoDataSource
 
 from app.accounts import AccountRegistry
 from app.config import Settings
-from app.datasource import DemoDataSource
 from app.jobs import DailyJobs
 from app.notify import ET, ReminderService
 from app.portfolio import NeedsSetup, PortfolioService, market_session
@@ -21,7 +21,12 @@ def anyio_backend():
 
 def settings(**kw):
     return Settings(
-        _env_file=None, app_password="p" * 12, secret_key="s" * 32, demo_mode=True, **kw
+        _env_file=None,
+        app_password="p" * 12,
+        secret_key="s" * 32,
+        schwab_app_key="k",
+        schwab_app_secret="s",
+        **kw,
     )
 
 
@@ -35,7 +40,7 @@ def demo_portfolio(store=None, resolver=None):
             return DemoDataSource.HASH
 
     p = PortfolioService(
-        source, store, settings(), lambda: {"connected": True}, resolver, "demo", clock=clock
+        source, store, settings(), lambda: {"connected": True}, resolver, "live", clock=clock
     )
     return p, source, store
 
@@ -179,7 +184,7 @@ class Notifier:
 async def test_reminders_are_sent_once():
     store, n = MemoryStore(), Notifier()
     st = ConnectionStatus(True, token_age_s=6.2 * 86400, created_at=1)
-    svc = ReminderService(n, store, lambda: st, settings(), demo=False)
+    svc = ReminderService(n, store, lambda: st, settings())
     now = datetime(2026, 11, 16, 10, tzinfo=ET)
     assert await svc.check(now) == ["exp24:1"]
     assert await svc.check(now) == []

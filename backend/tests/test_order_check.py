@@ -1,9 +1,9 @@
 from datetime import date
 
 import pytest
+from fake_source import DemoDataSource
 
 from app import order_check as oc
-from app.datasource import DemoDataSource
 from app.options import option_symbol
 from app.orders import Ticket, TicketLeg, schwab_order
 from app.store import MemoryStore

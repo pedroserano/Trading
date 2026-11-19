@@ -523,7 +523,6 @@ function Header(props: {
     >
       <div className="brand">
         <strong>Trading</strong>
-        {s.mode === "demo" ? <span className="badge demo">DEMO</span> : null}
         <div className="seg acct-switch" role="group" aria-label="Account">
           {(props.accounts.length
             ? props.accounts

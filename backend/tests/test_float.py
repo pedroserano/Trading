@@ -1,6 +1,7 @@
 import asyncio
 
-from app.datasource import DemoDataSource
+from fake_source import DemoDataSource
+
 from app.schwab_service import SchwabError
 from app.watchlist import FUNDAMENTALS_REFRESH_S, WatchlistService, float_info
 

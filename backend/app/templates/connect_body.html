@@ -55,16 +55,22 @@
 
 {% set levels = [] %}{% for lv in auto_levels %}{% set _ = levels.append((lv, lv|capitalize)) %}{% endfor %}
 
+{% macro reset_sim_form() %}
+<form method="post" action="/accounts/reset-sim" class="small reset-sim"
+      onsubmit="return confirm('Delete every simulated order, position and journal entry and start again?')">
+  <b>Reset the simulated account</b>: its orders, positions and journal are deleted.
+  <span class="reset-row">
+    <label>Starting cash $<input type="number" name="start_cash" min="1" step="1000"
+      value="{{ '%d'|format(sim_start_cash) }}" required></label>
+    <input type="text" name="confirm" placeholder="Type RESET" autocomplete="off"
+      aria-label="Type RESET to confirm" pattern="RESET" required>
+    <button type="submit" class="danger">Reset</button>
+  </span>
+</form>
+{% endmacro %}
 {% if error %}<section class="error">{{ error }}</section>{% endif %}
 {% if notice %}<section style="border-color:var(--ok)">{{ notice }}</section>{% endif %}
 
-{% if demo %}
-<section style="border-color:var(--warn)">
-  <h2>Demo mode</h2>
-  <p>The app is showing a simulated account with simulated prices. Schwab is not used.
-     Turn off <code>DEMO_MODE</code> in the settings file to connect to Schwab.</p>
-</section>
-{% endif %}
 
 {# ------------------------------------------------------------------------------------ #}
 <div class="tab-panel" data-tab="rules" data-label="Rules">
@@ -261,7 +267,6 @@
 <div class="tab-panel" data-tab="connection" data-label="Connection">
 <section id="connection">
   <h2>Status</h2>
-  {% if not demo %}
   <p>
     {% if status.connected %}
       <span class="dot {{ 'warn' if status.expires_in_days < 2 else 'ok' }}"></span>
@@ -270,7 +275,6 @@
       <span class="dot bad"></span>Schwab not connected{% if status.detail %}: {{ status.detail }}{% endif %}.
     {% endif %}
   </p>
-  {% endif %}
   <p>
     {% if db_error %}<span class="dot bad"></span>Database unreachable: <span class="dim">{{ db_error }}</span>
     {% else %}<span class="dot ok"></span>Database connected.{% endif %}
@@ -301,7 +305,6 @@
   {% endif %}
 </section>
 
-{% if not demo %}
 <section id="signin">
   <h2>{{ "Renew Schwab sign-in" if status.connected else "Connect to Schwab" }}</h2>
   {% if one_tap %}
@@ -338,7 +341,6 @@
   </form>
   {% endif %}
 </section>
-{% endif %}
 
 {% if status.connected %}
 <section id="account">
@@ -371,6 +373,7 @@
     <span class="dim">: it leaves the account picker; its positions and history are kept,
       and its automation and scanner run as set.</span>
   </form>
+  {{ reset_sim_form() }}
   <p class="dim small">Every account ticked on Schwab's consent screen at sign-in is used, by the
      name it has in Schwab. To add or drop one, sign in again and tick or untick it.</p>
   <form method="post" action="/history/import" enctype="multipart/form-data" class="small">

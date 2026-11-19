@@ -104,19 +104,6 @@ export default function Activity() {
     }
   };
 
-  const reset = async () => {
-    const amount = window.prompt("Reset the simulated account. Starting cash:", String(data?.start_cash ?? 100000));
-    if (amount === null) return;
-    const confirm = window.prompt("This deletes all simulated orders, positions and the journal. Type RESET to confirm.");
-    if (confirm !== "RESET") return;
-    try {
-      await postJson("/api/sim/reset", { start_cash: Number(amount), confirm });
-      load();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
   if (!data) return error ? <div className="banner warn">{error}</div> : <div className="empty">Loading…</div>;
   const live = data.account !== "sim";
   const working = data.orders.filter((o) => o.status === "WORKING");
@@ -155,9 +142,6 @@ export default function Activity() {
           <span>
             <span className="lbl">Realized</span> <span className={tone(realized)}>{signed(realized)}</span>
           </span>
-          <button type="button" className="link reset" onClick={reset}>
-            Reset simulated account
-          </button>
         </div>
       )}
 
@@ -167,9 +151,7 @@ export default function Activity() {
           Live trading is <b>{data.live.on ? "on" : "off"}</b>
           {data.live.on
             ? `: ${data.live.all_symbols ? "any underlying" : data.live.symbols.length ? data.live.symbols.join(", ") : "no underlyings allowed"}, up to ${data.live.max_contracts} contract${data.live.max_contracts > 1 ? "s" : ""} per leg.`
-            : data.live.demo
-              ? " (demo mode)."
-              : ": LIVE_TRADING=true is not set in the server's .env file."}{" "}
+            : ": LIVE_TRADING=true is not set in the server's .env file."}{" "}
           <a href="#/settings/live">Schwab limits</a>
           {data.live.error ? <span className="sub"> Reading orders from Schwab: {data.live.error}</span> : null}
         </div>

@@ -67,6 +67,6 @@ npm ci
 npm run build
 ```
 
-For a local preview without Schwab, set `DEMO_MODE=true`: the app then shows a simulated
-account with demo prices. During frontend work, run the backend on port 8000 and `npm run
+The app always runs against Schwab; to try trades without real money, use the Simulated
+account. During frontend work, run the backend on port 8000 and `npm run
 dev`; Vite proxies the API calls.

@@ -115,7 +115,7 @@ export interface UnderlyingView {
 export interface Snapshot {
   pending?: boolean;
   generated_at: number;
-  mode: "demo" | "live" | "sim";
+  mode: "live" | "sim";
   connection: {
     connected: boolean;
     expires_in_days: number | null;
@@ -339,7 +339,6 @@ export interface Preview {
   schwab_json: unknown;
   schwab_preview: {
     ok: boolean;
-    simulated?: boolean;
     error?: string;
     fields: Record<string, number>;
     messages: { level: string; text: string }[];
@@ -490,7 +489,6 @@ export interface LiveStatus {
   max_contracts: number;
   max_bp_share: number;
   server_allowed: boolean;
-  demo: boolean;
   on: boolean;
   refreshed_at: number | null;
   error: string | null;

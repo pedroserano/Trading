@@ -2,12 +2,12 @@ import asyncio
 from datetime import date, datetime
 
 import pytest
+from fake_source import ConnectedSchwab, DemoDataSource
 from fastapi.testclient import TestClient
 
 from app import chain
 from app.analysis import TradeLeg, analyze
 from app.config import Settings
-from app.datasource import DemoDataSource
 from app.main import create_app
 from app.notify import ET
 from app.portfolio import PortfolioService
@@ -30,7 +30,8 @@ def settings(**kw):
         _env_file=None,
         app_password=PASSWORD,
         secret_key="s" * 32,
-        demo_mode=True,
+        schwab_app_key="k",
+        schwab_app_secret="s",
         cookie_secure=False,
         **kw,
     )
@@ -304,6 +305,7 @@ def client(tmp_path):
     s = settings(data_dir=tmp_path)
     app = create_app(
         s,
+        ConnectedSchwab(),
         store=MemoryStore(),
         start_background=False,
         static_dir=tmp_path / "none",
