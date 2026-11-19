@@ -77,6 +77,7 @@
       {{ num("r", rule_map.profit_target_straddle, rules.profit_target_straddle, rule_defaults.profit_target_straddle, "%", "Straddles and iron flies carry more credit and more risk; tastytrade manages them at 25%.", true) }}
       {{ num("r", rule_map.profit_target_ratio, rules.profit_target_ratio, rule_defaults.profit_target_ratio, "%", rule_notes.profit_target_ratio, true) }}
       {{ num("r", rule_map.profit_target_calendar, rules.profit_target_calendar, rule_defaults.profit_target_calendar, "%", rule_notes.profit_target_calendar, true) }}
+      {{ num("r", rule_map.profit_target_fly, rules.profit_target_fly, rule_defaults.profit_target_fly, "%", rule_notes.profit_target_fly, true) }}
       {{ num("r", rule_map.manage_dte, rules.manage_dte, rule_defaults.manage_dte, "DTE", "At or inside this many days to expiration a trade is flagged to close or roll, before gamma risk grows. tastytrade: 21.", true) }}
       {{ num("r", rule_map.tested_delta, rules.tested_delta, rule_defaults.tested_delta, "Δ", "A short strike past this delta, or in the money, counts as tested.", true) }}
       {{ num("r", rule_map.loss_multiple, rules.loss_multiple, rule_defaults.loss_multiple, "×", "Flag an undefined-risk trade once its loss reaches this multiple of the credit received.", true) }}

@@ -20,6 +20,10 @@ class Rules:
     profit_target_ratio: float = 0.10
     # Calendars and diagonals: a share of the debit paid (tastylive research: 10% did best).
     profit_target_calendar: float = 0.10
+    # Butterflies and broken-wing butterflies, debit or credit: a share of the most they can
+    # make, the near wing's width plus the credit (tastylive: 25% to 50% of max profit, as
+    # max profit needs the price at the body on expiration day).
+    profit_target_fly: float = 0.25
     manage_dte: int = 21
     tested_delta: float = 0.30
     loss_multiple: float = 2.0
@@ -134,6 +138,33 @@ def group(legs: list[Leg]) -> list[Strategy]:
                 break
             q = min(abs(x.quantity) for x in (sp, sc, lc))
             add("Jade lizard", [pool.take(x, q) for x in (sp, sc, lc)], False)
+
+        # Butterflies, equal wings or one wider (broken wing): a long, two shorts, a long, same
+        # type and expiration. Before the ratios, which would take the body and one wing.
+        for pc in ("P", "C"):
+            while True:
+                found = None
+                for s in sorted(pool.options(pc, True, exp), key=lambda x: x.strike):
+                    lo = _first(
+                        [x for x in pool.options(pc, False, exp) if x.strike < s.strike],
+                        key=lambda x: -x.strike,
+                    )
+                    hi = _first(
+                        [x for x in pool.options(pc, False, exp) if x.strike > s.strike],
+                        key=lambda x: x.strike,
+                    )
+                    if lo and hi and abs(s.quantity) >= 2:
+                        q = min(abs(lo.quantity), abs(hi.quantity), abs(s.quantity) // 2)
+                        if q > 0:
+                            found = (lo, s, hi, q)
+                            break
+                if not found:
+                    break
+                lo, s, hi, q = found
+                taken = [pool.take(lo, q), pool.take(s, 2 * q), pool.take(hi, q)]
+                kind = "Put" if pc == "P" else "Call"
+                even = abs((s.strike - lo.strike) - (hi.strike - s.strike)) < 1e-9
+                add(f"{kind} {'butterfly' if even else 'broken-wing butterfly'}", taken, True)
 
         # Front ratios (1x2): one long, two shorts further out of the money, same type.
         for pc in ("P", "C"):
@@ -370,6 +401,12 @@ def past_cover(
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
 COVERED_KINDS = ("Covered call", "Covered put")
 CALENDARS = ("Calendar", "Diagonal")
+FLIES = (
+    "Put butterfly",
+    "Call butterfly",
+    "Put broken-wing butterfly",
+    "Call broken-wing butterfly",
+)
 # Zero extrinsic back ratios (Liz and Jenny, tastylive): stock replacements, held like
 # shares. Automanage leaves them alone, as it does stock, until expiration day.
 ZEBRAS = ("Put ZEBRA", "Call ZEBRA")
@@ -384,7 +421,10 @@ def not_tasty(name: str, open_value: float) -> bool:
 
 def target_for(name: str, rules: Rules) -> float:
     """The profit target for a kind of trade, as a share of its basis: max profit for credit
-    trades and ratios, the debit for calendars, the call's credit for a covered call."""
+    trades, ratios and butterflies, the debit for calendars, the call's credit for a covered
+    call."""
+    if name in FLIES:
+        return rules.profit_target_fly
     if name in ("Straddle", "Iron fly"):
         return rules.profit_target_straddle
     if name in RATIOS:
@@ -451,6 +491,19 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         max_profit = open_value
     elif name in ("Long put", "Long call", "Calendar", "Diagonal") or name in ZEBRAS:
         max_loss = -open_value
+    elif name in FLIES:
+        # Most at the body at expiration: the near wing's width plus the credit (less the
+        # debit). A wider far wing loses its extra width beyond it (less the credit).
+        body = next(x for x in opts if x.short)
+        lo = min(x.strike for x in opts if not x.short)
+        hi = max(x.strike for x in opts if not x.short)
+        q = abs(body.quantity) / 2
+        near, far = (body.strike - lo, hi - body.strike)
+        if body.put_call == "P":
+            near, far = far, near
+        near, far = near * 100 * q, far * 100 * q
+        max_profit = near + open_value
+        max_loss = max(0.0, -open_value, far - near - open_value)
     elif name in RATIOS:
         # Most at the short strike at expiration: the width plus the credit.
         longs = [x for x in opts if not x.short]

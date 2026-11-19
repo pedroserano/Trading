@@ -660,3 +660,12 @@ entered in Settings.
   the oldest): about 60 a minute, so about 900 symbols still refresh every 15 minutes.
 - Live streaming takes at most 500 equities (held underlyings first); the rest are priced by
   the polled quotes, which already batch 200 symbols a request.
+
+## Butterflies and broken-wing butterflies
+- Grouped as one defined-risk trade (before front ratios, which would otherwise take the body
+  and one wing): "Put/Call butterfly" with equal wings, "Put/Call broken-wing butterfly" with
+  one wider. Max profit: the near wing's width plus the credit (less the debit); max loss:
+  the debit, or the wider wing's extra width less the credit, whichever is more.
+- Automanage: profit target 25% of max profit (Rules tab, profit_target_fly; tastylive aims for
+  25% to 50% of max profit, as max profit needs the price at the body on expiration day),
+  debit or credit. Closed at 21 DTE, never rolled, whatever the defined-risk DTE setting.

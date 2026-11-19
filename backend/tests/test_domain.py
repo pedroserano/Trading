@@ -549,3 +549,39 @@ def test_a_manual_roll_past_the_zebra_is_warned_about():
     alist = shares + aapl
     cover_calls(alist)
     assert past_cover(alist, {aapl[0].legs[0].symbol}, [("C", jan, -1)]) is None
+
+
+def test_butterflies_and_broken_wings_are_one_defined_risk_trade():
+    fly = [
+        opt("C", 590, 1, 6.0, mark=10.0),
+        opt("C", 600, -2, 3.0, mark=4.0),
+        opt("C", 610, 1, 1.0, mark=1.5),
+    ]
+    (st,) = group(fly)
+    assert st.name == "Call butterfly" and st.defined_risk
+    evaluate(st, TODAY, 600.0, Rules())
+    n = st.numbers
+    # Bought for 1.00: makes at most the 10-wide wing less the debit, loses at most the debit.
+    assert n["open_value"] == -100.0 and n["max_profit"] == 900.0 and n["max_loss"] == 100.0
+    # Worth 3.50 now: 250 of 900, past the 25% target.
+    assert n["pl"] == 250.0 and n["pct_max_profit"] == pytest.approx(0.2778, abs=1e-4)
+    assert "profit" in {f["kind"] for f in st.flags}
+
+    bwb = [
+        opt("P", 590, 1, 6.0),
+        opt("P", 580, -2, 3.5),
+        opt("P", 560, 1, 0.5),
+    ]
+    (st,) = group(bwb)
+    assert st.name == "Put broken-wing butterfly" and st.defined_risk
+    evaluate(st, TODAY, 600.0, Rules())
+    n = st.numbers
+    # Opened for a 0.50 credit: nothing to lose above 590; the 10 extra points of the wider
+    # wing, less the credit, below 560.
+    assert n["open_value"] == 50.0 and n["max_profit"] == 1050.0 and n["max_loss"] == 950.0
+
+    # Two of each, and a short body that is not a butterfly's stays a ratio.
+    (two,) = group([opt("C", 590, 2, 6.0), opt("C", 600, -4, 3.0), opt("C", 610, 2, 1.0)])
+    assert two.name == "Call butterfly" and [x.quantity for x in two.legs] == [2, -4, 2]
+    names = [s.name for s in group([opt("C", 590, 1, 6.0), opt("C", 600, -2, 3.0)])]
+    assert names == ["Call ratio 1×2"]

@@ -29,6 +29,13 @@ RULE_FIELDS = [
         1.0,
         "percent",
     ),
+    (
+        "profit_target_fly",
+        "Profit target, butterflies and broken-wing butterflies, of max profit",
+        0.05,
+        1.0,
+        "percent",
+    ),
     ("manage_dte", "Manage at DTE", 0, 60, "int"),
     ("tested_delta", "Tested at short delta", 0.05, 0.95, "delta"),
     ("loss_multiple", "Loss flag at multiple of credit", 0.5, 10.0, "multiple"),
@@ -66,6 +73,9 @@ RULE_NOTES = {
     "share of it: at least 10%, per Tony Battista (tastylive).",
     "profit_target_calendar": "A share of the debit paid. tastylive's calendar studies found "
     "10% the best exit for success rate and P/L per day; they aim for 10% to 25%.",
+    "profit_target_fly": "A share of the most a butterfly can make: the near wing's width "
+    "plus any credit, reached only with the price at the body on expiration day. tastylive "
+    "aims for 25% to 50% of it. Broken-wing butterflies too, debit or credit.",
     "max_underlying_bp": "Hard limit: an opening order that would take one underlying's buying "
     "power above this share of net liq is refused, for you, automanage and the scanner.",
     "max_index_bp": "The same limit for SPY, QQQ, IWM, DIA and the SPX, XSP, NDX and RUT indexes.",

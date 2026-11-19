@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import plain
-from .strategies import CALENDARS, RATIOS, ZEBRAS, not_tasty, target_for
+from .strategies import CALENDARS, FLIES, RATIOS, ZEBRAS, not_tasty, target_for
 from .targets import VIEWS
 
 UNSET = object()
@@ -370,7 +370,9 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             f"flies at {pct(rules.profit_target_straddle)}; front ratios at "
             f"{pct(rules.profit_target_ratio)} of their max profit, the width plus the credit "
             f"(Tony Battista, tastylive: at least 10%); calendars and diagonals at "
-            f"{pct(rules.profit_target_calendar)} of the debit; a covered call at "
+            f"{pct(rules.profit_target_calendar)} of the debit; butterflies and broken-wing "
+            f"butterflies at {pct(rules.profit_target_fly)} of their max profit, the near "
+            "wing's width plus any credit (tastylive: 25% to 50%); a covered call at "
             f"{pct(rules.profit_target)} of the call's credit, closing the call and keeping the "
             "shares. All set on the Rules tab. ZEBRAs are held like shares, with no target; "
             "debit verticals and long options are not tastylive trades and are left alone. "
@@ -397,9 +399,9 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
         ),
         "dte": (
             f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
-            "month). Does: calendars and diagonals are closed, never rolled; a defined-risk "
-            f"trade is {defined}; an undefined-risk trade (a covered call: the call only) "
-            "rolls out to about "
+            "month). Does: calendars, diagonals and butterflies are closed, never rolled; a "
+            f"defined-risk trade is {defined}; an undefined-risk trade (a covered call: the "
+            "call only) rolls out to about "
             f"{settings['roll_target_dte']} DTE at the same strikes for a credit, or closes "
             f"instead when {' or '.join(closes)}. Details under Rolling."
         ),
@@ -645,6 +647,8 @@ def decide(
                     "dte", "close", f"Front month at {dte} DTE: calendars are closed, not rolled"
                 )
             )
+        elif st["name"] in FLIES:
+            out.append(Action("dte", "close", f"{dte} DTE: butterflies are closed, not rolled"))
         elif st["defined_risk"] and settings["dte_defined_action"] == "close":
             out.append(Action("dte", "close", f"{dte} DTE: defined-risk trades are closed"))
         elif settings["max_rolls"] and st.get("rolls", 0) >= settings["max_rolls"]:
@@ -971,7 +975,8 @@ AUTO_STEPS = [
             "Close a credit trade at ⟦rules:profit_target⟧ of what it can make; straddles and "
             "iron flies at ⟦rules:profit_target_straddle⟧; front ratios at "
             "⟦rules:profit_target_ratio⟧ of the width plus the credit; calendars at "
-            "⟦rules:profit_target_calendar⟧ of the debit; a covered call at "
+            "⟦rules:profit_target_calendar⟧ of the debit; butterflies and broken-wing "
+            "butterflies at ⟦rules:profit_target_fly⟧ of their max profit; a covered call at "
             "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
             "(⟦levels:profit⟧; at Auto a closing order "
             "rests at the target from the start).",
@@ -995,7 +1000,8 @@ AUTO_STEPS = [
             "same strikes. Close it instead when IV rank is under ⟦min_roll_ivr⟧, after "
             "⟦max_rolls⟧ rolls (0: no limit), or when the roll pays under ⟦min_roll_credit⟧ a "
             "unit.",
-            "Defined-risk trades are ⟦dte_defined_action⟧; calendars are always closed.",
+            "Defined-risk trades are ⟦dte_defined_action⟧; calendars and butterflies are always "
+            "closed.",
             "An earnings play from the scanner is closed the session its report reaches the "
             "price, after the IV crush; the earnings, DTE, tested and low-IV rules leave it "
             "alone. Acts at: ⟦levels:eplay⟧",
@@ -1072,6 +1078,7 @@ def auto_rules_values(rules) -> dict[str, tuple[str, str]]:
         "profit_target_straddle": (pct(rules.profit_target_straddle), "r-profit_target_straddle"),
         "profit_target_ratio": (pct(rules.profit_target_ratio), "r-profit_target_ratio"),
         "profit_target_calendar": (pct(rules.profit_target_calendar), "r-profit_target_calendar"),
+        "profit_target_fly": (pct(rules.profit_target_fly), "r-profit_target_fly"),
         "manage_dte": (str(rules.manage_dte), "r-manage_dte"),
         "tested_delta": (f"{rules.tested_delta:.2f}", "r-tested_delta"),
         "loss_multiple": (f"{rules.loss_multiple:g}×", "r-loss_multiple"),
@@ -1218,6 +1225,14 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "Calendar / diagonal",
             f"{pct(rules.profit_target_calendar)} of debit",
             "Close (front month)",
+            "Notify",
+            "Notify",
+            "— (defined risk)",
+        ),
+        (
+            "Butterfly / broken-wing butterfly",
+            f"{pct(rules.profit_target_fly)} of max profit",
+            "Close, never rolled",
             "Notify",
             "Notify",
             "— (defined risk)",
@@ -1370,7 +1385,8 @@ def profit_basis(st: dict) -> tuple[float, float] | None:
     if name in CALENDARS:
         return (-opened, opened) if opened < 0 else None
     mp = n.get("max_profit")
-    if opened > 0 or (name in RATIOS and mp):
+    # Ratios and butterflies (debit or credit): a share of the most they can make.
+    if opened > 0 or ((name in RATIOS or name in FLIES) and mp):
         return (mp if mp and mp > 0 else opened, opened)
     return None
 

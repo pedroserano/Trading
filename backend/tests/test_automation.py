@@ -1119,3 +1119,17 @@ async def test_switching_on_keeps_a_valid_earnings_play_tag_only():
     h.svc._switch_on(8, "bullish", "nonsense")
     assert h.svc.state["trades"]["7"] == {"enabled": True, "play": "earnings:2026-11-12"}
     assert h.svc.state["trades"]["8"] == {"enabled": True, "view": "bullish"}
+
+
+def test_butterflies_take_a_share_of_max_profit_and_are_never_rolled():
+    r = Rules()
+    s = {**merged_settings(None), "dte_defined_action": "roll"}
+    legs = [leg("C", 590, 1, 0.6), leg("C", 600, -2, 0.4), leg("C", 610, 1, 0.2)]
+    st = strat(name="Call butterfly", legs=legs, defined=True, open_value=-100.0, dte=20)
+    st["numbers"]["max_profit"] = 900.0
+    # 25% of the 900 it can make, on top of the 100 paid: sell it for 3.25.
+    assert auto.profit_basis(st) == (900.0, -100.0)
+    assert auto.target_limit(st, r) == 3.25
+    acts = decide(st, 600, r, s, ALL)
+    assert ("dte", "close") in kinds(acts) and ("dte", "roll") not in kinds(acts)
+    assert "butterflies are closed, not rolled" in acts[0].reason
