@@ -2281,10 +2281,7 @@ def create_app(
     @app.post("/api/scanner/run", dependencies=[Depends(require_login)])
     async def api_scanner_run(account: Acct = "sim", act: bool = True):
         known(account)
-        try:
-            await scanner.scan(account, act=act)
-        except SchwabError as e:
-            raise _schwab_errors(e) from e
+        scanner.start(account, act=act)
         return await scanner.view(account)
 
     @app.post("/api/scanner/dismiss", dependencies=[Depends(require_login)])

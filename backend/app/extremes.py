@@ -107,6 +107,16 @@ class PriceHistory:
     def get(self, symbol: str) -> list[tuple[date, float]] | None:
         return self.closes.get(symbol)
 
+    async def cached(self, symbol: str) -> list[tuple[date, float]] | None:
+        """Closes without asking Schwab: what is in memory, else the stored copy. For the
+        scanner, which reads hundreds of symbols in one go; run() keeps them fresh."""
+        if symbol in self.closes:
+            return self.closes[symbol]
+        today = self.clock().astimezone(ET).date()
+        stored = (await self.store.prices([symbol])).get(symbol) or {}
+        since = today - timedelta(days=HISTORY_DAYS)
+        return sorted((d, v) for d, v in stored.items() if since <= d < today) or None
+
     async def ensure(self, symbol: str) -> list[tuple[date, float]] | None:
         """Closes for a symbol, fetched if not yet today. Falls back to the stored copy."""
         today = self.clock().astimezone(ET).date()

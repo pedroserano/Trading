@@ -735,6 +735,10 @@ class Scanner:
         self.earnings = earnings
         self.history = history
         self.lock = asyncio.Lock()
+        # A scan asked for by hand runs in the background; the screen polls its progress.
+        self.progress: dict[str, dict] = {}  # account -> {"done", "total"} while scanning
+        self.tasks: dict[str, asyncio.Task] = {}
+        self.errors: dict[str, str | None] = {}  # account -> why the last scan by hand failed
 
     async def settings(self) -> dict:
         return merged(await self.store.get_setting(SETTINGS_KEY))
@@ -768,7 +772,34 @@ class Scanner:
                 c = {**c, "proposal_id": p["id"] if p else None, "detail": _detail(c)}
                 out.append(c)
             last = {**last, "candidates": out}
-        return {"settings": s, "level": self.level(s, account), "last": last}
+        task = self.tasks.get(account)
+        running = task is not None and not task.done()
+        return {
+            "settings": s,
+            "level": self.level(s, account),
+            "last": last,
+            "running": (self.progress.get(account) or {"done": 0, "total": 0}) if running else None,
+            "error": None if running else self.errors.get(account),
+        }
+
+    def start(self, account: str, act: bool = True) -> None:
+        """Starts a scan in the background, unless one by hand is already running."""
+        task = self.tasks.get(account)
+        if task is not None and not task.done():
+            return
+        self.errors[account] = None
+        self.progress[account] = {"done": 0, "total": 0}
+
+        async def go():
+            try:
+                await self.scan(account, act=act)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.exception("Scan for %s failed", account)
+                self.errors[account] = f"{type(e).__name__}: {e}"[:300]
+
+        self.tasks[account] = asyncio.create_task(go())
 
     async def dismiss(self, account: str, symbol: str) -> None:
         """Takes a find off the list, and dismisses its proposal if one is waiting."""
@@ -909,7 +940,9 @@ class Scanner:
             except Exception as e:
                 quotes = {}
                 log.warning("Scanner quotes failed: %s", e)
-            for sym in symbols:
+            self.progress[account] = {"done": 0, "total": len(symbols)}
+            for i, sym in enumerate(symbols):
+                self.progress[account] = {"done": i, "total": len(symbols)}
                 if full:
                     skipped.append({"symbol": sym, "reason": full})
                     continue
@@ -1262,10 +1295,15 @@ class Scanner:
             await self.store.set_setting(STATE_KEY, st)
             return result
 
+    async def _closes(self, sym: str):
+        """A year of closes, as stored: a scan never waits on Schwab for price history."""
+        read = getattr(self.history, "cached", None) or self.history.ensure
+        return await read(sym)
+
     async def _extreme(self, sym: str, quotes: dict, s: dict) -> dict | None:
         if self.history is None:
             return None
-        closes = await self.history.ensure(sym)
+        closes = await self._closes(sym)
         q = (quotes.get(sym) or {}).get("quote", {})
         price = next((float(q[k]) for k in ("mark", "lastPrice") if q.get(k)), None)
         change = q.get("netPercentChange")
@@ -1404,7 +1442,7 @@ class Scanner:
         hv, closes = None, []
         if self.history is not None:
             try:
-                closes = await self.history.ensure(sym) or []
+                closes = await self._closes(sym) or []
                 hv = realized_vol(closes)
             except Exception as e:  # history is a refinement, never a block
                 log.warning("Scanner history for %s failed: %s", sym, e)

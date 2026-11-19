@@ -37,6 +37,9 @@ type ScanView = {
     skipped: { symbol: string; reason: string }[];
     acted: string[];
   } | null;
+  // A scan running in the background, and why the last one failed.
+  running?: { done: number; total: number } | null;
+  error?: string | null;
 };
 
 const DONE: Record<string, string> = {
@@ -83,6 +86,19 @@ export default function Scanner() {
     }
   };
 
+  // While a scan runs on the server, check on it every 2 seconds.
+  const running = !!view?.running;
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => {
+      getJson<ScanView>(`/api/scanner?account=${account}`).then(
+        setView,
+        () => {},
+      );
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [running, account]);
+
   const scan = async () => {
     setBusy(true);
     setError(null);
@@ -113,9 +129,16 @@ export default function Scanner() {
     propose: "Propose",
     auto: "Auto",
   }[view.level];
-  const status = last
-    ? `${new Date(last.at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · ${last.candidates.length} found`
-    : "no scan yet";
+  const progress = view.running
+    ? view.running.total
+      ? `scanning ${view.running.done} of ${view.running.total}`
+      : "scanning…"
+    : null;
+  const status = progress
+    ? progress
+    : last
+      ? `${new Date(last.at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · ${last.candidates.length} found`
+      : "no scan yet";
   return (
     <div className="scanner">
       {/* One line; tap it for the schedule, thresholds and what was skipped. */}
@@ -144,8 +167,13 @@ export default function Scanner() {
         >
           ⚙︎
         </a>
-        <button type="button" className="small" disabled={busy} onClick={scan}>
-          {busy ? (
+        <button
+          type="button"
+          className="small"
+          disabled={busy || running}
+          onClick={scan}
+        >
+          {busy || running ? (
             "Scanning…"
           ) : (
             <>
@@ -172,6 +200,9 @@ export default function Scanner() {
         </div>
       ) : null}
       {error ? <div className="msg warn">{error}</div> : null}
+      {view.error ? (
+        <div className="msg warn">The scan stopped: {view.error}</div>
+      ) : null}
       {last && last.candidates.length ? (
         <ul className="finds">
           {last.candidates.map((c) => {
@@ -209,7 +240,11 @@ export default function Scanner() {
                   <button
                     type="button"
                     className="rm"
-                    title={c.proposal_id ? "Dismiss (and its proposal on Positions)" : "Dismiss"}
+                    title={
+                      c.proposal_id
+                        ? "Dismiss (and its proposal on Positions)"
+                        : "Dismiss"
+                    }
                     aria-label={`Dismiss ${c.symbol}`}
                     onClick={() => dismiss(c.symbol)}
                   >
@@ -218,15 +253,28 @@ export default function Scanner() {
                 </div>
                 <div className="find-figs">
                   <span>
-                    {shortDate(c.expiration)} <span className="sub">{c.dte}d</span>
+                    {shortDate(c.expiration)}{" "}
+                    <span className="sub">{c.dte}d</span>
                   </span>
-                  {c.mid === null ? null : <span>{Math.abs(c.mid).toFixed(2)} cr</span>}
-                  {c.pop === null ? null : <span title="Probability of profit at entry">POP {pct(c.pop)}</span>}
-                  {c.bp === null ? null : <span title="Buying power">BP {money(c.bp)}</span>}
+                  {c.mid === null ? null : (
+                    <span>{Math.abs(c.mid).toFixed(2)} cr</span>
+                  )}
+                  {c.pop === null ? null : (
+                    <span title="Probability of profit at entry">
+                      POP {pct(c.pop)}
+                    </span>
+                  )}
+                  {c.bp === null ? null : (
+                    <span title="Buying power">BP {money(c.bp)}</span>
+                  )}
                   <span>IVR {Math.round(c.ivr)}</span>
-                  {status ? <span className="find-status">{status}</span> : null}
+                  {status ? (
+                    <span className="find-status">{status}</span>
+                  ) : null}
                 </div>
-                {c.title && c.detail ? <div className="find-detail">{c.detail}</div> : null}
+                {c.title && c.detail ? (
+                  <div className="find-detail">{c.detail}</div>
+                ) : null}
               </li>
             );
           })}

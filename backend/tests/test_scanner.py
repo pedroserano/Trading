@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import date, datetime
 
@@ -810,3 +811,51 @@ async def test_a_post_earnings_fade_is_never_proposed_under_iv_rank_20():
     assert sc.merged({})["fade_min_ivr"] == 20
     with pytest.raises(ValueError, match="between 20"):
         sc.parse_form({"fade_min_ivr": "10"}, None)
+
+
+@pytest.mark.anyio
+async def test_a_scan_by_hand_runs_in_the_background_with_progress():
+    scanner, _, _ = harness()
+    release = asyncio.Event()
+    real = scanner._check
+
+    async def slow(*a, **k):
+        await release.wait()
+        return await real(*a, **k)
+
+    scanner._check = slow
+    scanner.start("sim", act=False)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    v = await scanner.view("sim")
+    assert v["running"]["total"] >= 1 and v["running"]["done"] == 0
+    scanner.start("sim", act=False)  # a second press while running starts nothing new
+    release.set()
+    await scanner.tasks["sim"]
+    v = await scanner.view("sim")
+    assert v["running"] is None and v["error"] is None and v["last"] is not None
+
+    async def broken(*a, **k):
+        raise RuntimeError("Schwab said no")
+
+    scanner._check = broken
+    scanner.start("sim", act=False)
+    await scanner.tasks["sim"]
+    assert "Schwab said no" in (await scanner.view("sim"))["error"]
+
+
+@pytest.mark.anyio
+async def test_the_scan_reads_stored_price_history_without_asking_schwab():
+    from app.extremes import PriceHistory
+    from app.store import MemoryStore
+
+    class NoSchwab:
+        async def daily_closes(self, symbol, days):
+            raise AssertionError("the scan must not fetch price history")
+
+    store = MemoryStore()
+    today = datetime(2026, 11, 19, 12, tzinfo=sc.ET)
+    await store.upsert_prices("AAPL", [(date(2026, 11, 17), 230.0), (date(2026, 11, 18), 231.0)])
+    h = PriceHistory(store, NoSchwab(), None, clock=lambda: today)
+    assert await h.cached("AAPL") == [(date(2026, 11, 17), 230.0), (date(2026, 11, 18), 231.0)]
+    assert await h.cached("MSFT") is None

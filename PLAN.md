@@ -751,3 +751,7 @@ entered in Settings.
   0.8× (was 1.0×).
 - "Just reported: within" defaults to 80 days (was 30; up to 100), so a stock stays clear for
   the whole 80-day window instead of losing it 30 days after its report.
+- Scan by hand no longer holds the page: it runs in the background and the bar shows
+  "scanning 47 of 231" until it is done (a failed scan says why). The scan reads price history
+  as stored (the price-history service keeps it fresh) instead of fetching a year of closes
+  per symbol from Schwab, which made scans after the earnings fix take minutes.
