@@ -635,7 +635,8 @@ entered in Settings.
 ## Earnings play and post-earnings fade (scanner, both off by default)
 - Earnings play (tick in Settings, Scanner, step 4): on the last session before a single
   stock's report (time known, before the open or after the close), with IV rank at least 50,
-  sell an iron condor (or a strangle, by choice) at the usual deltas in the first expiration
+  sell an iron condor at its usual delta, or by choice a strangle with its strikes at least
+  2x (adjustable) the expected move from the price, in the first expiration
   on or after the session the report reaches the price, at half size (contracts and buying
   power cap). The trade carries a `play` tag ("earnings:<that session>") through proposals,
   the ticket (`OrderIn.play`), fills and automanage's trade state.

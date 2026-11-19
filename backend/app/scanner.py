@@ -96,6 +96,7 @@ DEFAULTS = {
     "earnings_play": False,
     "earnings_play_ivr": 50,
     "earnings_play_risk": "defined",  # "defined": iron condor; "undefined": strangle
+    "earnings_play_em": 2.0,  # the strangle's strikes, in expected moves from the price
     # Post-earnings fade: in the first sessions after a report, a move bigger than the
     # expected move (recorded before the report; else fade_day_ratio times the usual day)
     # is sold against, one side outside the expected move, at a lower IV rank than usual.
@@ -140,6 +141,7 @@ FIELDS = [
     ("shock_sessions", "Possible shock: look back and stay careful for", 1, 60, "int", "sessions"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
     ("earnings_play_ivr", "Earnings play: IV rank at least", 0, 100, "int", "IVR"),
+    ("earnings_play_em", "Earnings play: strangle strikes at least", 0.5, 5, "float", "× EM"),
     ("fade_sessions", "Post-earnings fade: within", 1, 10, "int", "sessions of the report"),
     ("fade_min_ivr", "Post-earnings fade: IV rank at least", 0, 100, "int", "IVR"),
     ("fade_move", "Post-earnings fade: a move of at least", 0.5, 5, "float", "× expected move"),
@@ -378,8 +380,10 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "half size.",
                 "⟦?earnings_play⟧ Earnings play (off unless ticked): on the last session "
                 "before a stock's report, with IV rank ⟦earnings_play_ivr⟧ or more, sell "
-                "⟦earnings_play_risk⟧ outside the expected move in the first expiration after "
-                "the report, at half size. Automanage closes it the session the report "
+                "⟦earnings_play_risk⟧ in the first expiration after the report, at half size: "
+                "a strangle with its strikes ⟦earnings_play_em⟧× the expected move from the "
+                "price, an iron condor at its usual delta. Automanage closes it the session "
+                "the report "
                 "reaches the price, after the IV crush (Settings, Automation: Earnings play).",
                 "⟦?fade⟧ Post-earnings fade (off unless ticked): within ⟦fade_sessions⟧ "
                 "sessions after a report, a move of ⟦fade_move⟧× the expected move or more "
@@ -607,16 +611,35 @@ def _delta_push(preview: dict) -> str | None:
 
 
 def build_trade(
-    rows: list[dict], strangle: bool, s: dict, tilt: str | None = None
+    rows: list[dict],
+    strangle: bool,
+    s: dict,
+    tilt: str | None = None,
+    beyond: tuple[float, float, float] | None = None,
 ) -> tuple[list[dict] | None, str]:
     """Legs (symbol, quantity per unit, effect) for one unit, or None and the reason.
 
     tilt "down" (the price has dropped too far) sells the put closer, at the tilt delta, for
-    a bullish lean; "up" does the same with the call.
+    a bullish lean; "up" does the same with the call. beyond (spot, expected move, times): a
+    strangle with its strikes at least that many expected moves from the price, instead of
+    at a delta (the earnings play).
     """
     base = s["short_delta"] if strangle else s["ic_short_delta"]
     put_d = s["tilt_delta"] if tilt == "down" else base
     call_d = s["tilt_delta"] if tilt == "up" else base
+    if strangle and beyond and beyond[0] and beyond[1]:
+        spot, em, k = beyond
+        lo, hi = spot - k * em, spot + k * em
+        puts = [r for r in rows if r.get("put") and r["put"].get("symbol") and r["strike"] <= lo]
+        calls = [r for r in rows if r.get("call") and r["call"].get("symbol") and r["strike"] >= hi]
+        if not puts or not calls:
+            return None, f"no strikes {k:g}× the ±{em:.2f} expected move away"
+        put = max(puts, key=lambda r: r["strike"])
+        call = min(calls, key=lambda r: r["strike"])
+        return [
+            {"symbol": put["put"]["symbol"], "quantity": -1, "effect": "open"},
+            {"symbol": call["call"]["symbol"], "quantity": -1, "effect": "open"},
+        ], f"Strangle {put['strike']:g}/{call['strike']:g} ({k:g}× the ±{em:.2f} expected move)"
     if strangle:
         put = nearest_delta(rows, "put", put_d)
         call = nearest_delta(rows, "call", call_d)
@@ -968,7 +991,13 @@ class Scanner:
                             _mid,
                         )
                     else:
-                        legs, label = build_trade(rows, undefined, s, tilt)
+                        legs, label = build_trade(
+                            rows,
+                            undefined,
+                            s,
+                            tilt,
+                            (vol["spot"], vol["em"], s["earnings_play_em"]) if play else None,
+                        )
                     if legs is None:
                         break
                     body = {

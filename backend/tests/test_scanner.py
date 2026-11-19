@@ -651,11 +651,14 @@ async def test_earnings_play_is_off_by_default_then_sells_into_the_report():
         "max_bp_share": 0.1,
         "earnings_play": True,
         "earnings_play_risk": "undefined",
+        # The test chain's strikes stop at 550/630: half the ±33.81 expected move away.
+        "earnings_play_em": 0.5,
     }
     c = next(
         x for x in (await scanner.scan("sim", act=False))["candidates"] if x["symbol"] == "AAPL"
     )
     assert c["strategy"] == "Strangle"
+    assert c["title"] == "Strangle 570/610 (0.5× the ±33.81 expected move)"
     # IV rank under the play's floor, or no report time: skipped, saying why.
     scanner.store.settings[sc.SETTINGS_KEY] = {"earnings_play": True, "earnings_play_ivr": 80}
     r = await scanner.scan("sim", act=False)
@@ -734,3 +737,14 @@ async def test_post_earnings_fade_sells_against_the_move_when_on():
     on.preferences.symbol_views = views
     r = await on.scan("sim", act=False)
     assert "against your bearish view" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+
+
+def test_an_earnings_strangle_sits_twice_the_expected_move_away_by_default():
+    s = sc.merged({})
+    assert s["earnings_play_em"] == 2.0
+    # Spot 590, expected move 10: strikes at or beyond 570 and 610.
+    legs, label = sc.build_trade(rows(), True, s, None, (590.0, 10.0, s["earnings_play_em"]))
+    assert label == "Strangle 570/610 (2× the ±10.00 expected move)"
+    assert [x["quantity"] for x in legs] == [-1, -1]
+    legs, label = sc.build_trade(rows(), True, s, None, (590.0, 30.0, 2.0))
+    assert legs is None and "no strikes 2× the ±30.00 expected move away" in label
