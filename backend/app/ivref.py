@@ -146,7 +146,18 @@ class IvReference:
         wanted = sorted({s for s in await self.symbols() if s and not s.startswith(("$", "/"))})
         if not wanted:
             return 0
-        names = {dolt_symbol(s): s for s in wanted if _TICKER.match(dolt_symbol(s))}
+        # A symbol with a year of our own IV no longer needs DoltHub: it is not asked for.
+        since = self.today() - timedelta(days=OWN_YEAR_DAYS + 1)
+        needed = []
+        for sym in wanted:
+            own_hist = await self.store.iv_history(sym, since)
+            if own_hist and (self.today() - own_hist[0][0]).days >= OWN_YEAR_DAYS:
+                self.data.pop(sym, None)
+                continue
+            needed.append(sym)
+        names = {dolt_symbol(s): s for s in needed if _TICKER.match(dolt_symbol(s))}
+        if not names:
+            return 0
         own = self.client is None
         client = self.client or httpx.AsyncClient(timeout=60)
         found: dict[str, dict] = {}

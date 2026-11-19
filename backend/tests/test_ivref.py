@@ -113,3 +113,27 @@ def test_refresh_does_nothing_in_demo():
         assert await ref.refresh() == 0 and ref.rank("SPY") is None
 
     asyncio.run(go())
+
+
+def test_a_symbol_with_a_year_of_its_own_is_not_asked_for():
+    queries: list[str] = []
+    store = MemoryStore()
+
+    async def symbols():
+        return ["SPY", "AAPL"]
+
+    async def go():
+        # A year of our own for AAPL; SPY has only a month.
+        await store.upsert_iv("AAPL", date(2025, 11, 18), 25.0, "schwab-chain")
+        await store.upsert_iv("AAPL", TODAY, 24.0, "schwab-chain")
+        await store.upsert_iv("SPY", date(2026, 10, 19), 18.0, "schwab-chain")
+        ref = IvReference(store, symbols, clock=clock, client=fake_dolthub(queries))
+        await ref.refresh()
+        assert ref.rank("AAPL") is None and ref.rank("SPY") is not None
+        assert not any("AAPL" in q for q in queries)
+        # Once every symbol has a year, DoltHub is not asked at all.
+        await store.upsert_iv("SPY", date(2025, 11, 18), 18.0, "schwab-chain")
+        queries.clear()
+        assert await ref.refresh() == 0 and queries == [] and ref.rank("SPY") is None
+
+    asyncio.run(go())
