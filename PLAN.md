@@ -649,6 +649,6 @@ entered in Settings.
   before it, in scanner state `pre_em`), or, with none recorded, 3x the usual day's move over
   the 20 sessions before. Sold against: one side outside the expected move, with its own IV
   rank floor (20 by default, never lower: a fade is never proposed under IV rank 20,
-  even on rich IV30) and no IV-over-realized check; a spread when IV rank is at or under
-  automanage's low-IV level. A Would own view keeps its cash-secured put; a view against the
+  even on rich IV30) and no IV-over-realized check. A naked short put or call unless VIX,
+  a shock or a low float calls for defined risk. A Would own view keeps its cash-secured put; a view against the
   fade skips the stock.

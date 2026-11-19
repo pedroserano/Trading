@@ -391,8 +391,7 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "sessions after a report, a move of ⟦fade_move⟧× the expected move or more "
                 "(recorded before the report; without it, ⟦fade_day_ratio⟧× the usual day) is "
                 "sold against: one side outside the expected move, at IV rank "
-                "⟦fade_min_ivr⟧ or more (never under 20); a spread when IV rank is at or "
-                "under the low-IV level in Settings, Automation.",
+                "⟦fade_min_ivr⟧ or more (never under 20).",
                 "Nothing opens while the portfolio's daily theta is already at its maximum "
                 "(⟦link:theta band|portfolio⟧).",
             ],
@@ -956,9 +955,8 @@ class Scanner:
                     # Would own keeps its cash-secured put; otherwise a fade.
                     own_view = view == "would_own"
                     tilt, source = fade["direction"], "view" if own_view else "fade"
-                    low = (await self.automations[account].settings()).get("low_ivr", 20)
-                    # Low IV (at or under automanage's low-IV level): a spread.
-                    strangle = ivr > low and not defined_only and not careful
+                    # Naked when allowed: a fade is never proposed under IV rank 20 at all.
+                    strangle = not defined_only and not careful
                 elif band_out and lean_on:
                     tilt, source = band_out, "band"
                 elif view in targets.VIEWS:
