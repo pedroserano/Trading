@@ -749,3 +749,5 @@ entered in Settings.
   skipped for "no earnings date".
 - Scanner defaults: no sooner than 28 DTE (was 30); IV30 over realized volatility at least
   0.8× (was 1.0×).
+- "Just reported: within" defaults to 80 days (was 30; up to 100), so a stock stays clear for
+  the whole 80-day window instead of losing it 30 days after its report.
