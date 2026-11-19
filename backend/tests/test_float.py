@@ -64,3 +64,27 @@ def test_a_failed_fetch_keeps_the_last_float():
     src.fundamentals = boom
     asyncio.run(w._refresh_fundamentals(FUNDAMENTALS_REFRESH_S, False))
     assert w.fundamentals["AAPL"]["float"] == before
+
+
+def test_a_long_watchlist_refreshes_its_chains_a_few_at_a_time():
+    from datetime import date
+
+    from app import watchlist as wl
+
+    class Many:
+        watchlist = [f"S{i:03d}" for i in range(35)]
+
+    calls = []
+
+    class Src(DemoDataSource):
+        async def option_chain(self, sym, *a, **k):
+            calls.append(sym)
+            return {}
+
+    w = WatchlistService(Src(), None, Many())
+    asyncio.run(w.refresh(date(2026, 11, 19)))
+    assert len(calls) == wl.CHAINS_PER_PASS
+    asyncio.run(w.refresh(date(2026, 11, 19)))
+    assert len(calls) == 2 * wl.CHAINS_PER_PASS and len(set(calls)) == len(calls)
+    asyncio.run(w.refresh(date(2026, 11, 19), force=True))
+    assert len(calls) == 2 * wl.CHAINS_PER_PASS + 35

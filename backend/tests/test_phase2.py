@@ -358,16 +358,13 @@ def test_watchlist_import_and_remove(client):
         "Already on the watchlist."
     )
     assert "No symbols" in client.post("/api/watchlist/add", json={"text": "  "}).json()["message"]
-    # A full list says what did not fit, never that it was added.
+    # No cap: a long list keeps every symbol.
     from itertools import product
 
-    many = [a + b + c for a, b, c in product("BCDFG", "BCDFG", "BCDFGHJK")][:200]
+    many = [a + b + c for a, b, c in product("BCDFG", "BCDFG", "BCDFGHJKLM")][:250]
     client.post("/api/watchlist/add", json={"text": " ".join(many), "mode": "replace"})
     r = client.post("/api/watchlist/add", json={"text": "ANT"}).json()
-    assert r["message"] == (
-        "Not added, the watchlist is full at 200 symbols (remove some first): ANT."
-    )
-    assert "ANT" not in r["watchlist"]
+    assert r["message"] == "Added ANT." and len(r["watchlist"]) == 251
     client.post("/api/watchlist/add", json={"text": "SPY GLD TLT BRK/B QQQ", "mode": "replace"})
     r = client.post("/api/watchlist/remove", json={"symbol": "QQQ"}).json()
     assert r["message"] == "Removed QQQ."

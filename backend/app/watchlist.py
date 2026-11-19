@@ -18,6 +18,10 @@ from .signals import skew
 
 log = logging.getLogger(__name__)
 CHAIN_REFRESH_S = 15 * 60
+# Option chains fetched per 10-second pass, at most: about 60 a minute, well inside Schwab's
+# 120 requests a minute with room for quotes and orders, however long the watchlist. A list
+# longer than about 900 symbols refreshes less often than every 15 minutes.
+CHAINS_PER_PASS = 10
 # Float and shares outstanding change rarely: fetched once a day.
 FUNDAMENTALS_REFRESH_S = 24 * 3600
 # Under this many shares in the float counts as a low float.
@@ -52,10 +56,18 @@ class WatchlistService:
     async def refresh(self, today: date, force: bool = False) -> None:
         now = time.time()
         await self._refresh_fundamentals(now, force)
-        for sym in self.portfolio.watchlist:
+        fetched = 0
+        # Never fetched first, then the oldest.
+        order = sorted(
+            self.portfolio.watchlist, key=lambda s: (self.cache.get(s) or {}).get("at", 0)
+        )
+        for sym in order:
             entry = self.cache.get(sym)
             if not force and entry and now - entry["at"] < CHAIN_REFRESH_S:
                 continue
+            if not force and fetched >= CHAINS_PER_PASS:
+                break
+            fetched += 1
             try:
                 self.cache[sym] = {"at": now, **await self.chain_stats(sym, today)}
             except SchwabError as e:

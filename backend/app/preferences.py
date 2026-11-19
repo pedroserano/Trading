@@ -8,7 +8,6 @@ from dataclasses import asdict, fields
 from .strategies import Rules
 from .targets import BIAS_BANDS, BIASES
 
-MAX_WATCHLIST = 200
 # Stocks, ETFs and indexes as Schwab spells them: SPY, BRK.B, BF/B, $SPX.
 _SYMBOL = re.compile(r"^\$?[A-Z][A-Z0-9]{0,5}([./][A-Z])?$")
 
@@ -145,7 +144,7 @@ class Preferences:
         return list(saved) if saved is not None else self.settings.watchlist_symbols
 
     async def set_watchlist(self, symbols: list[str]) -> None:
-        await self.store.set_setting("watchlist", symbols[:MAX_WATCHLIST])
+        await self.store.set_setting("watchlist", list(symbols))
 
     async def symbol_views(self) -> dict[str, str]:
         """Your view on an underlying, for the scanner: bullish, bearish or neutral. A symbol

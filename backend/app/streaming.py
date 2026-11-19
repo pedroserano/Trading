@@ -52,6 +52,10 @@ def normalise(content: dict, mapping: dict) -> dict:
     return out
 
 
+# Equities streamed at most; Schwab's streamer limits how many symbols a subscription holds.
+STREAM_EQUITIES_MAX = 500
+
+
 class StreamService:
     def __init__(
         self,
@@ -115,6 +119,11 @@ class StreamService:
         want = self.wanted()
         opts = {s for s in want if parse_option_symbol(s)}
         eqs = {s for s in want - opts if not s.startswith("$")}
+        if len(eqs) > STREAM_EQUITIES_MAX:
+            # A long watchlist: stream what is held first (the options' underlyings), then
+            # the rest in order; symbols past the limit are still priced by polled quotes.
+            held = {parse_option_symbol(s).underlying for s in opts}
+            eqs = set(sorted(eqs, key=lambda s: (s not in held, s))[:STREAM_EQUITIES_MAX])
         c = self._client
         if eqs != self._subscribed_eq:
             if eqs:

@@ -652,3 +652,11 @@ entered in Settings.
   even on rich IV30) and no IV-over-realized check. A naked short put or call unless VIX,
   a shock or a low float calls for defined risk. A Would own view keeps its cash-secured put; a view against the
   fade skips the stock.
+
+## Watchlist: no size limit
+- The 200-symbol cap is gone (it silently dropped symbols past it while saying "Added").
+- To stay inside Schwab's ~120 market-data requests a minute however long the list is, the
+  watchlist fetches at most 10 option chains per 10-second pass (never fetched first, then
+  the oldest): about 60 a minute, so about 900 symbols still refresh every 15 minutes.
+- Live streaming takes at most 500 equities (held underlyings first); the rest are priced by
+  the polled quotes, which already batch 200 symbols a request.
