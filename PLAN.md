@@ -583,3 +583,9 @@ entered in Settings.
   proposal (`/api/scanner/dismiss`), for the rest of the day.
 - A find leaves the list once its proposal is placed or dismissed anywhere, or once it was
   placed automatically.
+
+## Watchlist sorts by earnings date
+- The Earnings header sorts soonest first on the first click: by day, then before the open,
+  time not announced, after the close. Rows with no report date stay last either way.
+- Sorted that way, a heading opens each day and side of the bell ("Fri, Nov 20 · Before the
+  open"), kept in view while the table scrolls sideways on a phone.

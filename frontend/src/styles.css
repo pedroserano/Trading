@@ -862,3 +862,9 @@ td.leg-figs { color: var(--dim); }
 .covered-list button.link:hover { background: #1a2029; }
 .covered-list button.link > span:first-child { flex: 1; }
 .ticket-head button.link.back { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0 8px 0 0; }
+
+/* Watchlist sorted by earnings: a heading for each day and side of the bell. It stays in view
+   while the table scrolls sideways on a phone. */
+table.watch tr.day-row td { padding: 8px 10px 4px; border-bottom: 1px solid var(--line); background: var(--bg);
+  font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+table.watch tr.day-row td span { position: sticky; left: 10px; }

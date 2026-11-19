@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import Stars, { liquidityTitle } from "./Stars";
 import { getJson, postForm, postJson } from "./api";
 import { usePolling } from "./usePolling";
@@ -7,7 +7,7 @@ import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
 import type { PriceExtreme, WatchRow } from "./types";
 
-type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq";
+type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq" | "earnings";
 
 const sorters: Record<Key, (r: WatchRow) => number | string> = {
   symbol: (r) => r.symbol,
@@ -18,7 +18,25 @@ const sorters: Record<Key, (r: WatchRow) => number | string> = {
   em: (r) => (r.expected_move && r.price ? r.expected_move / r.price : -1),
   range: (r) => r.extreme?.range_pos ?? -1,
   move: (r) => r.extreme?.move_z ?? -999,
+  // The report's day, then before the open, unknown time, after the close. No date: "" (kept
+  // last in either direction by the sort).
+  earnings: (r) => (r.earnings?.date ? `${r.earnings.date} ${TIME_ORDER[r.earnings.time ?? ""] ?? 1}` : ""),
 };
+
+/** Ascending first, like Symbol: the soonest report on top. */
+const ASCENDING_FIRST: Key[] = ["symbol", "earnings"];
+
+const TIME_ORDER: Record<string, number> = { bmo: 0, "": 1, amc: 2 };
+
+/** "Mon, Nov 23 · Before the open": the heading over one day's reports, one side of the bell. */
+function earningsGroup(r: WatchRow): string | null {
+  const e = r.earnings;
+  if (!e?.date) return null;
+  const d = new Date(`${e.date}T12:00:00`);
+  const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const when = e.time === "bmo" ? "Before the open" : e.time === "amc" ? "After the close" : "Time not announced";
+  return `${day} · ${when}`;
+}
 
 /** Where the price sits in its 52-week range: a bar with a marker, amber near either end. */
 function RangeBar({ x }: { x: PriceExtreme | null | undefined }) {
@@ -151,6 +169,8 @@ export default function Watchlist() {
     return [...rows].sort((a, b) => {
       const x = f(a);
       const y = f(b);
+      // No earnings date: always at the bottom.
+      if (sort.key === "earnings" && (x === "" || y === "")) return x === y ? 0 : x === "" ? 1 : -1;
       const c = x < y ? -1 : x > y ? 1 : 0;
       return sort.desc ? -c : c;
     });
@@ -159,9 +179,9 @@ export default function Watchlist() {
   const th = (key: Key, label: string, title?: string) => (
     <th
       title={title}
-      className={`sortable ${key === "symbol" ? "l" : ""}`}
+      className={`sortable ${key === "symbol" || key === "earnings" ? "l" : ""}`}
       aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}
-      onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : key !== "symbol" })}
+      onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : !ASCENDING_FIRST.includes(key) })}
     >
       {label}
       {sort.key === key ? (sort.desc ? " ↓" : " ↑") : ""}
@@ -213,17 +233,26 @@ export default function Watchlist() {
               <th>Exp</th>
               <th title="At-the-money bid-ask spread as a share of the mark">Spread</th>
               <th title="Open interest at the money, call plus put">ATM OI</th>
-              <th className="l" title="Next earnings report: date, and before the open or after the close">
-                Earnings
-              </th>
+              {th("earnings", "Earnings", "Next earnings report: date, and before the open or after the close. Sorts soonest first, by day and side of the bell; no date last")}
               <th title="Your position delta and theta in this underlying">Position</th>
               <th className="rm-col" aria-label="Remove" />
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r) => (
+            {sorted.map((r, i) => {
+              // Sorted by earnings: a heading for each day and side of the bell.
+              const group = sort.key === "earnings" ? earningsGroup(r) : null;
+              const heading = group !== null && (i === 0 || earningsGroup(sorted[i - 1]) !== group);
+              return (
+              <Fragment key={r.symbol}>
+              {heading ? (
+                <tr className="day-row">
+                  <td className="l" colSpan={18}>
+                    <span>{group}</span>
+                  </td>
+                </tr>
+              ) : null}
               <tr
-                key={r.symbol}
                 className={`strat ${removing.has(r.symbol) ? "removing" : ""}`}
                 tabIndex={0}
                 onClick={() => (window.location.hash = `#/trade/${encodeURIComponent(r.symbol)}`)}
@@ -358,7 +387,9 @@ export default function Watchlist() {
                   </button>
                 </td>
               </tr>
-            ))}
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
