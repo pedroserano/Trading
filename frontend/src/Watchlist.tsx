@@ -5,7 +5,7 @@ import { usePolling } from "./usePolling";
 import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
-import type { PriceExtreme, WatchRow } from "./types";
+import type { EarningsStatus, PriceExtreme, WatchRow } from "./types";
 
 type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq" | "earnings" | "float";
 
@@ -47,6 +47,64 @@ function earningsGroup(r: WatchRow): string | null {
   return `${day} · ${when}`;
 }
 
+function shortDay(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** Your date for one stock: a date, before the open or after the close, Save. */
+function EarningsEditor({
+  row,
+  onDone,
+}: {
+  row: WatchRow;
+  onDone: (changed: boolean) => void;
+}) {
+  const e = row.earnings;
+  const [day, setDay] = useState(e?.date ?? "");
+  const [time, setTime] = useState<string>(e?.time ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (date: string | null) => {
+    setBusy(true);
+    try {
+      await postJson("/api/earnings/set", { symbol: row.symbol, date, time: time || null });
+      onDone(true);
+    } catch (x) {
+      setErr(String((x as Error).message));
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="earn-edit"
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        if (day) save(day);
+      }}
+    >
+      <b>{row.symbol} earnings</b>
+      <input type="date" value={day} onChange={(ev) => setDay(ev.target.value)} aria-label="Report date" required />
+      <select value={time} onChange={(ev) => setTime(ev.target.value)} aria-label="Before or after the bell">
+        <option value="bmo">Before the open</option>
+        <option value="amc">After the close</option>
+        <option value="">Time not given</option>
+      </select>
+      <button className="primary" type="submit" disabled={busy || !day}>
+        Save
+      </button>
+      {row.earnings_mine ? (
+        <button type="button" disabled={busy} onClick={() => save(null)} title="Remove your date; the source's date, if any, applies again">
+          Remove mine
+        </button>
+      ) : null}
+      <button type="button" className="link" onClick={() => onDone(false)}>
+        Cancel
+      </button>
+      {err ? <span className="warn-text">{err}</span> : null}
+    </form>
+  );
+}
+
 /** Where the price sits in its 52-week range: a bar with a marker, amber near either end. */
 function RangeBar({ x }: { x: PriceExtreme | null | undefined }) {
   if (!x || x.range_pos === null) return <span className="dim-text">–</span>;
@@ -68,13 +126,20 @@ export default function Watchlist() {
   const [views, setViews] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "symbol", desc: false });
+  const [earnStatus, setEarnStatus] = useState<EarningsStatus | null>(null);
+  // The stock whose earnings date is being set, its editor under its row.
+  const [editingEarn, setEditingEarn] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (current: () => boolean = () => true) => {
     try {
-      const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string> }>("/api/watchlist");
+      const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string>; earnings?: EarningsStatus }>(
+        "/api/watchlist",
+      );
       if (!current()) return;
       setRows(r.rows);
       setViews(r.views ?? {});
+      setEarnStatus(r.earnings ?? null);
       setError(null);
     } catch (e) {
       setError(String((e as Error).message));
@@ -217,6 +282,41 @@ export default function Watchlist() {
           IV and liquidity refresh every 15 minutes. Click a row to open it on the Trade screen.
         </span>
       </div>
+      {earnStatus ? (
+        <div className="earn-status dim-text">
+          <span
+            title={
+              "Where earnings dates come from: Nasdaq's calendar (dates announced, about five weeks ahead, and each stock's last report)" +
+              (earnStatus.provider.includes("Finnhub") ? ", and Finnhub's estimates further out" : "") +
+              ". Refreshed every six hours. Tap a stock's Earnings cell to set a date yourself; yours win."
+            }
+          >
+            Earnings dates: {earnStatus.provider} · {earnStatus.known} of {earnStatus.stocks} stocks
+            {earnStatus.refreshed_at
+              ? ` · ${new Date(earnStatus.refreshed_at * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
+              : ""}
+          </span>{" "}
+          <button
+            className="link"
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              try {
+                const out = await postJson<{ earnings: EarningsStatus }>("/api/earnings/refresh", {});
+                setEarnStatus(out.earnings);
+                await load();
+              } catch (x) {
+                setNote({ text: String((x as Error).message), warn: true });
+              } finally {
+                setRefreshing(false);
+              }
+            }}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+          {earnStatus.error ? <span className="warn-text"> {earnStatus.error}</span> : null}
+        </div>
+      ) : null}
       <div className="table-wrap">
         <table className="positions watch">
           <thead>
@@ -389,8 +489,32 @@ export default function Watchlist() {
                     <span className="sub"> {pct(r.float.turnover, 1)}/d</span>
                   ) : null}
                 </td>
-                <td className="l">
-                  <EarningsFlag e={r.earnings} tag={false} />
+                <td
+                  className={`l ${r.fund ? "" : "earn-cell"}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!r.fund) setEditingEarn(editingEarn === r.symbol ? null : r.symbol);
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  title={r.fund ? "A fund or index: no earnings" : "Tap to set the date yourself"}
+                >
+                  {r.earnings ? (
+                    <>
+                      <EarningsFlag e={r.earnings} tag={false} />
+                      {r.earnings_mine ? <span className="sub"> yours</span> : null}
+                    </>
+                  ) : r.fund ? (
+                    <span className="dim-text">–</span>
+                  ) : r.earnings_quiet ? (
+                    <span
+                      className="dim-text"
+                      title={`Reported ${shortDay(r.earnings_quiet.last)}; no next date out yet. Reports come about 90 days apart, so the scanner assumes none before ${shortDay(r.earnings_quiet.until)} and opens only trades that expire before then. Tap to set the date yourself.`}
+                    >
+                      Reported {shortDay(r.earnings_quiet.last)} · clear to {shortDay(r.earnings_quiet.until)}
+                    </span>
+                  ) : (
+                    <span className="warn-text">No date · set</span>
+                  )}
                 </td>
                 <td>
                   {r.held ? (
@@ -414,6 +538,19 @@ export default function Watchlist() {
                   </button>
                 </td>
               </tr>
+              {editingEarn === r.symbol ? (
+                <tr className="day-row edit-row">
+                  <td className="l" colSpan={19}>
+                    <EarningsEditor
+                      row={r}
+                      onDone={(changed) => {
+                        setEditingEarn(null);
+                        if (changed) load();
+                      }}
+                    />
+                  </td>
+                </tr>
+              ) : null}
               </Fragment>
               );
             })}

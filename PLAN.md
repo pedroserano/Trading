@@ -670,3 +670,21 @@ entered in Settings.
 - Automanage: profit target 25% of max profit (Rules tab, profit_target_fly; tastylive aims for
   25% to 50% of max profit, as max profit needs the price at the body on expiration day),
   debit or credit. Closed at 21 DTE, never rolled, whatever the defined-risk DTE setting.
+
+## Earnings dates from Nasdaq, set on the Watchlist
+- Nasdaq's earnings calendar (free, no key) is read every six hours: each weekday about five
+  weeks ahead (dates announced, before the open or after the close; about 500 companies) and
+  40 days back, each past day once, for every stock's last report. Finnhub (with its key) still
+  adds estimates further out; the earliest coming date wins, and your own date beats both.
+- Just reported: a stock with no coming date that reported in the last 30 days is taken to
+  have no report until 60 days after it (reports come about 90 days apart; the shortest
+  normal gap is about 60). The scanner then opens only a trade expiring before that day.
+  Both numbers are on Settings, Scanner, step 4 (0 turns it off). Automanage's earnings rule
+  and the flags use real dates only.
+- The Earnings tab is gone from Settings. On the Watchlist, a line above the table gives the
+  source, how many stocks have a date and when it was refreshed (with Refresh); tapping a
+  stock's Earnings cell opens a small form under its row to set the date and before/after the
+  bell, or remove yours. A cell reads the date, "Reported Oct 29 · clear to Dec 28", or
+  "No date · set" in amber (the scanner skips it). `POST /api/earnings/set`,
+  `POST /api/earnings/refresh`; `/api/watchlist` carries the status and, per row,
+  `earnings_quiet`, `earnings_mine` and `fund`.

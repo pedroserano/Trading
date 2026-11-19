@@ -258,26 +258,6 @@
 </div>
 
 {# ------------------------------------------------------------------------------------ #}
-<div class="tab-panel" data-tab="earnings" data-label="Earnings">
-<p class="dim small">The watchlist is edited on the <a href="/#/watchlist">Watchlist screen</a>.</p>
-
-<section id="earnings">
-  <h2>Earnings dates {{ tip("Used by the scanner's earnings buffer, the automanage earnings rule, and the earnings flags. Refreshed every six hours.") }}</h2>
-  <p class="dim small">Source: <b>{{ "Finnhub" if earnings.provider == "Finnhub" else "demo dates" if earnings.provider == "demo" else "only the dates below" }}</b>{% if earnings.provider == "manual" %}
-     (add <code>FINNHUB_API_KEY=...</code> to <code>.env</code> for automatic dates){% endif %}.
-     {% if earnings.refreshed_at %}Dates known for {{ earnings.known }} stocks.{% endif %}</p>
-  {% if earnings.error %}<p class="error">{{ earnings.error }}</p>{% endif %}
-  <form method="post" action="/earnings/manual">
-    <p><textarea name="text" rows="3" placeholder="AAPL 2027-01-28 amc">{{ earnings_manual }}</textarea></p>
-    <p class="dim small">Your dates win over the source. One per line: <code>SYMBOL YYYY-MM-DD bmo</code>
-       (before the open) or <code>amc</code> (after the close).</p>
-    <p><button class="primary" type="submit">Save earnings dates</button></p>
-  </form>
-  <form method="post" action="/earnings/refresh"><p><button type="submit">Refresh now</button></p></form>
-</section>
-</div>
-
-{# ------------------------------------------------------------------------------------ #}
 <div class="tab-panel" data-tab="connection" data-label="Connection">
 <section id="connection">
   <h2>Status</h2>

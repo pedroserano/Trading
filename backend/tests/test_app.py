@@ -596,7 +596,7 @@ def test_settings_tabs_show_every_setting_with_its_default(settings):
         login(c)
         page = c.get("/connect").text
         tabs = re.findall(r'class="tab-panel" data-tab="([a-z]+)"', page)
-        assert tabs == ["rules", "portfolio", "automation", "scanner", "earnings", "connection"]
+        assert tabs == ["rules", "portfolio", "automation", "scanner", "connection"]
         keys = (
             [("r", f[0]) for f in RULE_FIELDS + BAND_FIELDS]
             + [("a", f[0]) for f in SETTING_FIELDS]

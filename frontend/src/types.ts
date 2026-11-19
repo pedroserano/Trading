@@ -194,6 +194,12 @@ export interface WatchRow {
   /** 1 to 5 stars from the at-the-money spread and open interest. */
   liquidity?: number | null;
   earnings?: EarningsInfo | null;
+  /** Your own date for this stock (set on the Watchlist), which wins over the sources. */
+  earnings_mine?: boolean;
+  /** No coming date known, but a report in the last few weeks: none assumed before `until`. */
+  earnings_quiet?: { last: string; until: string } | null;
+  /** A fund or index: no earnings. */
+  fund?: boolean;
   extreme?: PriceExtreme | null;
   error: string | null;
   held: boolean;
@@ -500,4 +506,12 @@ export interface PriceExtreme {
   direction: "down" | "up" | null;
   extreme: boolean;
   reasons: string[];
+}
+
+export interface EarningsStatus {
+  provider: string;
+  refreshed_at: number | null;
+  error: string | null;
+  known: number;
+  stocks: number;
 }

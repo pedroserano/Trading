@@ -195,6 +195,12 @@ class WatchlistRemoveIn(BaseModel):
     symbol: str
 
 
+class EarningsSetIn(BaseModel):
+    symbol: str
+    date: str | None = Field(None, max_length=10)  # YYYY-MM-DD; none removes your date
+    time: str | None = Field(None, max_length=3)  # bmo, amc, or none
+
+
 class SymbolViewIn(BaseModel):
     symbol: str
     view: str  # neutral, bullish, bearish, or "auto" to follow the portfolio
@@ -531,6 +537,7 @@ def create_app(
         finnhub_key=settings.finnhub_api_key,
         clock=lambda: portfolio.clock(),
         demo=demo,
+        nasdaq=True,
     )
     portfolio.earnings = sim_portfolio.earnings = watchlist.earnings = earnings.info
     history = PriceHistory(store, source, earnings_symbols, clock=lambda: portfolio.clock())
@@ -832,8 +839,6 @@ def create_app(
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
                 "scan_steps_html": await scan_steps_html(rules_now),
                 "scan_fields": scan_mod.FIELDS,
-                "earnings": earnings.status(),
-                "earnings_manual": await earnings.manual_text(),
                 "auto_rules": RULES,
                 "auto_rule_hints": rule_hints(
                     rules_now, merged_settings(await store.get_setting(SETTINGS_KEY))
@@ -1074,30 +1079,6 @@ def create_app(
         portfolio.refresh_soon()
         return {"watchlist": portfolio.watchlist, "message": f"Removed {body.symbol}."}
 
-    @app.post("/earnings/manual", dependencies=[Depends(require_login)])
-    async def earnings_manual_save(request: Request, text: str = Form("")):
-        bad = await earnings.set_manual(text[:20000])
-        portfolio.refresh_soon()
-        sim_portfolio.refresh_soon()
-        if bad:
-            request.session["flash"] = (
-                "Could not read: "
-                + "; ".join(bad[:5])
-                + (". Use one line each: SYMBOL YYYY-MM-DD bmo|amc")
-            )
-        else:
-            request.session["notice"] = "Earnings dates saved."
-        return RedirectResponse(settings_url("earnings"), status_code=303)
-
-    @app.post("/earnings/refresh", dependencies=[Depends(require_login)])
-    async def earnings_refresh(request: Request):
-        try:
-            n = await earnings.refresh()
-            request.session["notice"] = f"Earnings dates refreshed: {n} found."
-        except Exception as e:
-            request.session["flash"] = f"Earnings refresh failed: {type(e).__name__}: {e}"
-        return RedirectResponse(settings_url("earnings"), status_code=303)
-
     @app.post("/scanner/settings", dependencies=[Depends(require_login)])
     async def scanner_settings_save(request: Request):
         form = dict(await request.form())
@@ -1236,7 +1217,39 @@ def create_app(
 
     @app.get("/api/watchlist", dependencies=[Depends(require_login)])
     async def api_watchlist():
-        return {"rows": await watchlist.rows(), "views": await preferences.symbol_views()}
+        rows = await watchlist.rows()
+        sc = await scanner.settings()
+        for r in rows:
+            sym = r["symbol"]
+            r["fund"] = earnings.is_fund(sym)
+            r["earnings_quiet"] = earnings.quiet_until(
+                sym, sc.get("quiet_recent_days", 0), sc.get("quiet_gap_days", 0)
+            )
+            r["earnings_mine"] = sym in earnings.manual
+        return {
+            "rows": rows,
+            "views": await preferences.symbol_views(),
+            "earnings": earnings.status(),
+        }
+
+    @app.post("/api/earnings/set", dependencies=[Depends(require_login)])
+    async def api_earnings_set(body: EarningsSetIn):
+        symbol = _check_symbol(body.symbol)
+        try:
+            await earnings.set_one(symbol, body.date, body.time)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Not a valid date") from None
+        portfolio.refresh_soon()
+        sim_portfolio.refresh_soon()
+        return {"earnings": earnings.info(symbol)}
+
+    @app.post("/api/earnings/refresh", dependencies=[Depends(require_login)])
+    async def api_earnings_refresh():
+        try:
+            n = await earnings.refresh()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
+        return {"found": n, "earnings": earnings.status()}
 
     @app.post("/api/watchlist/view", dependencies=[Depends(require_login)])
     async def api_watchlist_view(body: SymbolViewIn):

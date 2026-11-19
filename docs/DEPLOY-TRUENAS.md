@@ -175,7 +175,7 @@ so the container picks them up.
 | `SIM_COMMISSION` | Commission per contract for the simulated account. Default 0.45. |
 | `LIVE_TRADING` | `true` lets the app send live orders to Schwab. Live orders also need Settings, Live trading, Schwab orders set to Manual only or Manual and automatic. Leave unset (off) to keep the app preview-only for the Schwab account. |
 | `LIVE_AUTO` | `true` lets automation (automanage and the scanner) place live orders by itself at Auto levels. It needs `LIVE_TRADING=true` and Settings, Live trading, Schwab orders set to Manual and automatic, as well. Leave unset (off) and live automation only proposes; every live order waits for your tap. |
-| `FINNHUB_API_KEY` | Optional. A free key from finnhub.io lets the app look up earnings dates (date, and before the open or after the close) and the industry (for the Portfolio screen's sectors) for single stocks. Without it, only the dates you enter under Settings, Earnings dates are known, and the scanner skips stocks with no date. |
+| `FINNHUB_API_KEY` | Optional. Earnings dates come from Nasdaq's free calendar without any key. A free key from finnhub.io adds Finnhub's estimated dates further out, and each stock's industry (for the Portfolio screen's sectors). Dates you set on the Watchlist always win. |
 | `MAX_CONTRACTS_PER_LEG` | Hard limit on contracts per leg in any order, simulated or live. Default 10. |
 
 ## Tailscale (optional): a trusted certificate, and access away from home

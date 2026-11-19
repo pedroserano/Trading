@@ -66,6 +66,10 @@ DEFAULTS = {
     "band_lean": True,
     # A single stock's trade never holds through its next report.
     "avoid_through_earnings": True,
+    # No coming report known, but one in the last quiet_recent_days: none is expected until
+    # quiet_gap_days after it (the quarterly cycle's least gap). 0 turns this off.
+    "quiet_recent_days": 30,
+    "quiet_gap_days": 60,
     "min_pop": 0.55,  # probability of profit at entry, at least
     # Absolute IV, alongside IV rank (which alone selects and ranks): a floor for quiet
     # markets, premium rich enough to sell at any IV rank (iron condors only), and implied
@@ -129,6 +133,22 @@ FIELDS = [
         60,
         "int",
         "sessions away",
+    ),
+    (
+        "quiet_recent_days",
+        "Just reported: within",
+        0,
+        60,
+        "int",
+        "days of a report",
+    ),
+    (
+        "quiet_gap_days",
+        "Just reported: no next report assumed for",
+        30,
+        80,
+        "int",
+        "days after it",
     ),
     ("max_spread", "At-the-money bid/ask spread, at most", 1, 50, "percent", "% of mark"),
     ("min_oi", "At-the-money open interest, at least", 0, 1_000_000, "int", "contracts"),
@@ -371,7 +391,10 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             "4. Is now a bad time?",
             [
                 "Single stocks need a known earnings date more than ⟦earnings_days⟧ sessions "
-                "away (⟦link:earnings dates|earnings⟧). ETFs have no earnings.",
+                "away (dates from Nasdaq, or set on the Watchlist). ETFs have no earnings.",
+                "A stock that reported in the last ⟦quiet_recent_days⟧ days, with no next date "
+                "out yet, is taken to have no report until ⟦quiet_gap_days⟧ days after that "
+                "one (reports come about 90 days apart); its trade must expire before then.",
                 "⟦?avoid_through_earnings⟧ Check for a report inside the trade; if there is "
                 "one, ⟦earnings_inside⟧ at half size.",
                 "A possible shock, such as a CEO leaving or an investigation: a day's move "
@@ -1424,19 +1447,24 @@ class Scanner:
             # The earnings buffer: a stock opens only when its next report is known and far
             # enough away.
             info = self.earnings.info(sym) if self.earnings is not None else None
-            if info is None:
+            quiet = None
+            if info is None and hasattr(self.earnings, "quiet_until"):
+                quiet = self.earnings.quiet_until(
+                    sym, s.get("quiet_recent_days", 0), s.get("quiet_gap_days", 0)
+                )
+            if info is None and quiet is None:
                 return (
                     "single stock with no earnings date found, so the earnings buffer cannot "
-                    "be checked (add it under Settings, Earnings dates)"
+                    "be checked (set one on the Watchlist's Earnings column)"
                 )
-            if info["sessions_left"] <= s["earnings_days"]:
+            if info is not None and info["sessions_left"] <= s["earnings_days"]:
                 return (
                     f"earnings {info['date']} {info['label']}: within the "
                     f"{s['earnings_days']}-session buffer"
                 )
-            report = info["date"]
+            report = info["date"] if info is not None else None
         else:
-            report = None
+            report = quiet = None
         today = self.clock().astimezone(ET).date()
         exps = chain_mod.expirations(await self.source.expirations(sym), today)
         exp = pick_expiration(exps, s)
@@ -1444,6 +1472,12 @@ class Scanner:
             return (
                 f"no {'monthly ' if s['monthly_only'] else ''}expiration in "
                 f"{s['min_dte']}-{s['max_dte']} DTE"
+            )
+        if quiet and exp["date"] >= quiet["until"]:
+            # Not a known report, so no half-size trade through it: the date is a floor.
+            return (
+                f"reported {quiet['last']}, next date not out yet: none assumed before "
+                f"{quiet['until']}, and the {exp['date']} expiration is after that"
             )
         caution = []
         if report and s.get("avoid_through_earnings", True) and report <= exp["date"]:

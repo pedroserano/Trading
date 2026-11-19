@@ -289,6 +289,34 @@ async def test_single_stocks_open_when_earnings_are_known_and_far_enough():
     assert "no earnings date found" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
 
 
+class QuietEarnings(Earnings):
+    def __init__(self, until):
+        super().__init__({})
+        self.until = until
+        self.asked = []
+
+    def quiet_until(self, symbol, recent, gap):
+        self.asked.append((recent, gap))
+        return {"last": "2026-10-29", "until": self.until} if recent and gap else None
+
+
+@pytest.mark.anyio
+async def test_a_stock_that_just_reported_opens_only_if_it_expires_before_the_next():
+    scanner, _, _ = harness()
+    scanner.earnings = QuietEarnings("2027-03-01")
+    r = await scanner.scan("sim", act=False)
+    assert "AAPL" in [c["symbol"] for c in r["candidates"]]
+    assert scanner.earnings.asked[0] == (30, 60)  # the defaults
+    scanner.earnings = QuietEarnings("2026-12-01")  # before any 45 DTE expiration
+    r = await scanner.scan("sim", act=False)
+    reason = {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+    assert "reported 2026-10-29" in reason and "none assumed before 2026-12-01" in reason
+    # Off: back to needing a date.
+    scanner.store.settings[sc.SETTINGS_KEY] = {"quiet_recent_days": 0}
+    r = await scanner.scan("sim", act=False)
+    assert "no earnings date found" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+
+
 class History:
     def __init__(self, values):
         self.values = values

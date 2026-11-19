@@ -1044,3 +1044,21 @@ def test_ticket_warns_of_a_low_float(client, monkeypatch):
 
     assert any(w.startswith("Low float: only 7.2 million") for w in warnings("AAPL"))
     assert not any(w.startswith("Low float") for w in warnings("SPY"))
+
+
+def test_earnings_dates_are_set_on_the_watchlist(client):
+    r = client.post(
+        "/api/earnings/set", json={"symbol": "aapl", "date": "2027-01-28", "time": "amc"}
+    )
+    assert r.status_code == 200 and r.json()["earnings"]["source"] == "you"
+    wl = client.get("/api/watchlist").json()
+    assert "provider" in wl["earnings"] and "stocks" in wl["earnings"]
+    row = {x["symbol"]: x for x in wl["rows"]}
+    if "AAPL" in row:
+        assert row["AAPL"]["earnings_mine"] and row["AAPL"]["earnings"]["date"] == "2027-01-28"
+    assert all("earnings_quiet" in x and "fund" in x for x in wl["rows"])
+    bad = client.post("/api/earnings/set", json={"symbol": "AAPL", "date": "2027-02-30"})
+    assert bad.status_code == 400
+    r = client.post("/api/earnings/set", json={"symbol": "AAPL", "date": None})
+    assert r.status_code == 200 and (r.json()["earnings"] or {}).get("source") != "you"
+    assert client.post("/api/earnings/refresh").status_code == 200

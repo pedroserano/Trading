@@ -2,13 +2,18 @@
 the close.
 
 Sources:
-- Dates entered in Settings (one line each: SYMBOL YYYY-MM-DD bmo|amc). These win.
-- Finnhub's earnings calendar API, when FINNHUB_API_KEY is set (free key at finnhub.io).
-Without a key only the dates entered in Settings are known; a stock with no date is not
-opened by the scanner, so the earnings buffer always holds.
+- Dates you enter on the Watchlist (stored as lines: SYMBOL YYYY-MM-DD bmo|amc). These win.
+- Nasdaq's earnings calendar (free, no key): one request per weekday, about five weeks
+  ahead (dates companies have announced, with before the open or after the close), and the
+  last few weeks back, so a stock that has just reported is known to have.
+- Finnhub's earnings calendar, when FINNHUB_API_KEY is set: estimated dates further out.
+When the sources disagree, the earliest coming date is used.
 
-ETFs and indexes have no earnings and are not looked up. Refreshed every six hours for the
-stocks on the watchlist, held in either account, or allowed live.
+A stock with no coming date known but a report in the last few weeks has, by the quarterly
+cycle, none for a while: the scanner may treat it as clear until a set number of days after
+that report (quiet_until). Otherwise a stock with no date is not opened by the scanner.
+
+ETFs and indexes have no earnings and are not looked up. Refreshed every six hours.
 """
 
 import asyncio
@@ -25,6 +30,17 @@ ET = ZoneInfo("America/New_York")
 CACHE_KEY = "earnings"
 MANUAL_KEY = "earnings_manual"
 LOOKAHEAD_DAYS = 100
+NASDAQ_URL = "https://api.nasdaq.com/api/calendar/earnings"
+NASDAQ_AHEAD_DAYS = 45  # Nasdaq lists about five weeks ahead; empty beyond
+NASDAQ_BACK_DAYS = 40  # how far back the last reports are read (past days once each)
+PAST_KEEP_DAYS = 200
+NASDAQ_TIMES = {"time-pre-market": "bmo", "time-after-hours": "amc"}
+# Nasdaq answers a browser, not a bare client. Nothing about you is sent.
+NASDAQ_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+}
 REFRESH_S = 6 * 3600
 FUNDS = {"ETF", "ETN", "COLLECTIVE_INVESTMENT", "INDEX", "MUTUAL_FUND"}
 LABELS = {"bmo": "before the open", "amc": "after the close", None: "time not given"}
@@ -113,6 +129,36 @@ def parse_finnhub(payload: dict, today: date) -> dict:
     return out
 
 
+def parse_nasdaq(payload: dict) -> dict | None:
+    """One day of Nasdaq's calendar: {SYMBOL: "bmo"|"amc"|None}. None when Nasdaq has no
+    calendar for the day (too far ahead)."""
+    data = (payload or {}).get("data")
+    if data is None:
+        return None
+    out = {}
+    for r in data.get("rows") or []:
+        sym = (r.get("symbol") or "").strip().upper()
+        if sym:
+            out[sym] = NASDAQ_TIMES.get(r.get("time"))
+    return out
+
+
+def weekdays(start: date, end: date) -> list[date]:
+    out, d = [], start
+    while d <= end:
+        if d.weekday() < 5:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def manual_lines(manual: dict) -> str:
+    return "\n".join(
+        f"{sym} {info['date']}" + (f" {info['time']}" if info.get("time") else "")
+        for sym, info in sorted(manual.items())
+    )
+
+
 class EarningsService:
     def __init__(
         self,
@@ -123,6 +169,7 @@ class EarningsService:
         clock=lambda: datetime.now(ET),
         client=None,
         demo: bool = False,
+        nasdaq: bool = False,
     ):
         self.store = store
         self.source = source  # for quotes: which symbols are funds
@@ -131,11 +178,15 @@ class EarningsService:
         self.clock = clock
         self.client = client  # an httpx.AsyncClient, injected by tests
         self.demo = demo
-        self.cache: dict = {}
+        self.use_nasdaq = nasdaq and not demo
+        self.cache: dict = {}  # Finnhub: stock -> next report
+        self.nasdaq: dict = {}  # Nasdaq: stock -> next report in its window
+        self.nasdaq_done: set[str] = set()  # past days already read (ISO)
         self.manual: dict = {}
         self.funds: set[str] = set()
         self.industries: dict[str, str] = {}  # stock -> Finnhub industry, for the Portfolio screen
         self.past: dict[str, str] = {}  # stock -> its last report date, once past
+        self.stocks: set[str] = set()  # the stocks covered on the last refresh
         self.refreshed_at: float | None = None
         self.error: str | None = None
         self._wake = asyncio.Event()
@@ -143,7 +194,10 @@ class EarningsService:
 
     @property
     def provider(self) -> str:
-        return "demo" if self.demo else "Finnhub" if self.finnhub_key else "manual"
+        if self.demo:
+            return "demo"
+        names = [n for n, on in (("Nasdaq", self.use_nasdaq), ("Finnhub", self.finnhub_key)) if on]
+        return " and ".join(names) or "manual"
 
     async def load(self) -> None:
         saved = await self.store.get_setting(CACHE_KEY) or {}
@@ -151,6 +205,8 @@ class EarningsService:
         self.funds = set(saved.get("funds", []))
         self.industries = saved.get("industries", {})
         self.past = saved.get("past", {})
+        self.nasdaq = saved.get("nasdaq", {})
+        self.nasdaq_done = set(saved.get("nasdaq_done", []))
         self.refreshed_at = saved.get("refreshed_at")
         self.manual, _ = parse_manual(await self.store.get_setting(MANUAL_KEY) or "", self.today())
 
@@ -159,10 +215,16 @@ class EarningsService:
 
     def raw(self, symbol: str) -> dict | None:
         today = self.today().isoformat()
-        for info in (self.manual.get(symbol), self.cache.get(symbol)):
-            if info and info["date"] >= today:
-                return info
-        return None
+        mine = self.manual.get(symbol)
+        if mine and mine["date"] >= today:
+            return mine
+        found = [
+            info
+            for info in (self.nasdaq.get(symbol), self.cache.get(symbol))
+            if info and info["date"] >= today
+        ]
+        # The earliest: a report is avoided, never assumed later than a source says.
+        return min(found, key=lambda i: i["date"]) if found else None
 
     def info(self, symbol: str) -> dict | None:
         """The next report for a stock, described for screens and rules; None for funds,
@@ -181,6 +243,20 @@ class EarningsService:
         dates = [d for d in dates if d]
         return max(dates) if dates else None
 
+    def quiet_until(self, symbol: str, recent_days: int, gap_days: int) -> dict | None:
+        """For a stock with no coming report known that reported in the last `recent_days`:
+        {"last": that report, "until": the report plus `gap_days`}, the quarterly cycle's
+        least gap to the next. None otherwise, or when either is 0 (off)."""
+        if not recent_days or not gap_days or self.is_fund(symbol) or self.raw(symbol):
+            return None
+        last = self.last_report(symbol)
+        if not last:
+            return None
+        d = date.fromisoformat(last)
+        if (self.today() - d).days > recent_days:
+            return None
+        return {"last": last, "until": (d + timedelta(days=gap_days)).isoformat()}
+
     def is_fund(self, symbol: str) -> bool:
         return symbol in self.funds or symbol.startswith("$")
 
@@ -193,6 +269,20 @@ class EarningsService:
         self.manual = manual
         return bad
 
+    async def set_one(self, symbol: str, day: str | None, time_: str | None) -> None:
+        """Sets (or with no day, removes) your date for one stock."""
+        manual, _ = parse_manual(await self.manual_text(), self.today())
+        if day:
+            date.fromisoformat(day)  # ValueError for a bad date
+            manual[symbol] = {
+                "date": day,
+                "time": time_ if time_ in ("bmo", "amc") else None,
+                "source": "you",
+            }
+        else:
+            manual.pop(symbol, None)
+        await self.set_manual(manual_lines(manual))
+
     async def manual_text(self) -> str:
         return await self.store.get_setting(MANUAL_KEY) or ""
 
@@ -201,7 +291,8 @@ class EarningsService:
             "provider": self.provider,
             "refreshed_at": self.refreshed_at,
             "error": self.error,
-            "known": len([s for s in self.cache if self.raw(s)]),
+            "known": len([s for s in self.stocks if self.raw(s)]),
+            "stocks": len(self.stocks),
         }
 
     def refresh_soon(self) -> None:
@@ -235,13 +326,22 @@ class EarningsService:
         except Exception as e:
             log.warning("Earnings: could not tell funds from stocks: %s", e)
         stocks = wanted - self.funds
+        self.stocks = stocks
         found: dict = {}
-        if stocks and self.finnhub_key and not self.demo:
+        errors = []
+        if stocks and (self.use_nasdaq or self.finnhub_key) and not self.demo:
             own = self.client is None
             client = self.client or httpx.AsyncClient(timeout=20)
             try:
-                found = await self._finnhub(client, stocks)
-                await self._industries(client, stocks - set(self.industries))
+                try:
+                    if self.use_nasdaq:
+                        await self._nasdaq(client)
+                except Exception as e:  # keeps what it had; Finnhub may still answer
+                    log.warning("Earnings: Nasdaq calendar failed: %s", e)
+                    errors.append(f"Nasdaq: {type(e).__name__}: {e}"[:200])
+                if self.finnhub_key:
+                    found = await self._finnhub(client, stocks)
+                    await self._industries(client, stocks - set(self.industries))
             finally:
                 if own:
                     await client.aclose()
@@ -256,18 +356,59 @@ class EarningsService:
                 del self.cache[sym]
         self.cache.update(found)
         self.refreshed_at = time.time()
-        self.error = None
+        self.error = "; ".join(errors) or None
         await self.store.set_setting(
             CACHE_KEY,
             {
                 "symbols": self.cache,
+                "nasdaq": self.nasdaq,
+                "nasdaq_done": sorted(self.nasdaq_done),
                 "funds": sorted(self.funds),
                 "industries": self.industries,
                 "past": self.past,
                 "refreshed_at": self.refreshed_at,
             },
         )
-        return len(found)
+        return len([s for s in stocks if self.raw(s)])
+
+    async def _nasdaq_day(self, client, d: date) -> dict | None:
+        r = await client.get(NASDAQ_URL, params={"date": d.isoformat()}, headers=NASDAQ_HEADERS)
+        r.raise_for_status()
+        return parse_nasdaq(r.json())
+
+    async def _nasdaq(self, client) -> None:
+        """Nasdaq's calendar, every listed company: the weeks ahead (read again each time,
+        dates move) and the weeks back, for each stock's last report (each day read once)."""
+        today = self.today()
+        ahead: dict = {}
+        empty = 0
+        for d in weekdays(today, today + timedelta(days=NASDAQ_AHEAD_DAYS)):
+            day = await self._nasdaq_day(client, d)
+            await asyncio.sleep(0.5 * self.pace)
+            if day is None:
+                empty += 1
+                if empty >= 3:  # past the end of what Nasdaq lists
+                    break
+                continue
+            empty = 0
+            for sym, t in day.items():
+                if sym not in ahead:
+                    ahead[sym] = {"date": d.isoformat(), "time": t, "source": "Nasdaq"}
+        self.nasdaq = ahead
+        for d in weekdays(today - timedelta(days=NASDAQ_BACK_DAYS), today - timedelta(days=1)):
+            if d.isoformat() in self.nasdaq_done:
+                continue
+            day = await self._nasdaq_day(client, d)
+            await asyncio.sleep(0.5 * self.pace)
+            if day is None:
+                continue
+            for sym in day:
+                if self.past.get(sym, "") < d.isoformat():
+                    self.past[sym] = d.isoformat()
+            self.nasdaq_done.add(d.isoformat())
+        oldest = (today - timedelta(days=PAST_KEEP_DAYS)).isoformat()
+        self.nasdaq_done = {x for x in self.nasdaq_done if x >= oldest}
+        self.past = {k: v for k, v in self.past.items() if v >= oldest}
 
     async def _finnhub(self, client, stocks: set[str]) -> dict:
         today = self.today()
