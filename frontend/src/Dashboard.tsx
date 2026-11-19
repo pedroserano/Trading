@@ -376,7 +376,7 @@ function StatsTable({ rows, label }: { rows: Bucket[]; label: string }) {
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.avg ?? 0)));
   return (
     <div className="table-wrap">
-      <table className="positions statstable fit ph-h4 ph-h6 ph-h7">
+      <table className="positions statstable fit oneline ph-h4 ph-h6 ph-h7">
         <thead>
           <tr>
             <th className="l">{label}</th>

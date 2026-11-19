@@ -139,16 +139,16 @@ export default function Activity() {
       {live && data.sheet?.error ? <div className="msg warn">{data.sheet.error}</div> : null}
       {data.trades.length ? (
         <div className="table-wrap">
-          <table className="positions fit ph-h2 ph-h3 ph-h4">
+          <table className="positions fit oneline">
             <thead>
               <tr>
                 <th className="l">Trade</th>
-                <th>Opened</th>
-                <th>Closed</th>
-                <th>Rolls</th>
                 <th>Net so far</th>
                 <th>Realized P/L</th>
                 <th className="l">Status</th>
+                <th>Opened</th>
+                <th>Closed</th>
+                <th>Rolls</th>
               </tr>
             </thead>
             <tbody>
@@ -187,7 +187,7 @@ export default function Activity() {
       <h3>Results by strategy</h3>
       {data.stats.length ? (
         <div className="table-wrap">
-          <table className="positions fit ph-h5 ph-h6 ph-h7">
+          <table className="positions fit oneline">
             <thead>
               <tr>
                 <th className="l">Strategy</th>
@@ -229,23 +229,22 @@ export default function Activity() {
 function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: SimOrder) => void }) {
   return (
     <div className="table-wrap">
-      <table className="positions orders fit ph-h1">
+      <table className="positions orders fit oneline ph-h1">
         <thead>
           <tr>
             <th className="l">#</th>
-            <th className="l">Placed</th>
             <th className="l">Order</th>
-            <th className="l">Legs</th>
             <th>Limit</th>
             <th className="l">Status</th>
             <th />
+            <th className="l">Legs</th>
+            <th className="l">Placed</th>
           </tr>
         </thead>
         <tbody>
           {orders.map((o) => (
             <tr key={o.id}>
               <td className="l">{o.id}</td>
-              <td className="l">{when(o.created_at)}</td>
               <td className="l">
                 <span className="sym-inline">{o.underlying}</span>
                 {[o.intent, o.strategy, o.duration].filter(Boolean).join(" · ")}
@@ -256,12 +255,7 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
                 ) : o.placed_by_app ? (
                   <span className="sub"> · placed by the app</span>
                 ) : null}
-                {o.reason ? <div className="sub">{o.reason}</div> : null}
-              </td>
-              <td className="l legs-cell">
-                {o.legs.map((l) => (
-                  <div key={l.symbol}>{legText(l.symbol, l.quantity)}</div>
-                ))}
+                {o.reason ? <div className="sub reason">{o.reason}</div> : null}
               </td>
               <td>{net(o.limit_net)}</td>
               <td className={`l status ${o.status.toLowerCase()}`}>
@@ -280,6 +274,12 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
                   </details>
                 )}
               </td>
+              <td className="l legs-cell">
+                {o.legs.map((l) => (
+                  <div key={l.symbol}>{legText(l.symbol, l.quantity)}</div>
+                ))}
+              </td>
+              <td className="l">{when(o.created_at)}</td>
             </tr>
           ))}
         </tbody>
@@ -305,12 +305,12 @@ function TradeRows(props: { t: SimTrade; account: string; open: boolean; toggle:
             </span>
           ) : null}
         </td>
-        <td>{t.carried_in ? `before ${when(t.opened_at)}` : when(t.opened_at)}</td>
-        <td>{when(t.closed_at)}</td>
-        <td>{sum.rolls}</td>
         <td className={tone(sum.net)}>{signed(sum.net)}</td>
         <td className={tone(t.realized_pl)}>{t.realized_pl === null ? "" : signed(t.realized_pl)}</td>
         <td className="l">{t.status}</td>
+        <td>{t.carried_in ? `before ${when(t.opened_at)}` : when(t.opened_at)}</td>
+        <td>{when(t.closed_at)}</td>
+        <td>{sum.rolls}</td>
       </tr>
       {open ? (
         <tr className="leg">

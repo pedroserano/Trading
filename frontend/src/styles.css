@@ -728,9 +728,12 @@ td > .view-select { margin-left: 0; }
   table.fit td { white-space: normal; overflow-wrap: break-word; }
   table.fit td .bar { max-width: 100%; }
   table.fit tr.leg td { white-space: normal; }
-  /* Breakdowns: one line a row; the table scrolls sideways instead. */
-  .table-wrap > table.fit.statstable { table-layout: auto; width: auto; min-width: 100%; }
-  table.fit.statstable td { white-space: nowrap; }
+  /* One line a row (headers too); the table scrolls sideways instead of wrapping. An
+     order's legs stay one per line; its reason wraps under it. */
+  .table-wrap > table.fit.oneline { table-layout: auto; width: auto; min-width: 100%; }
+  table.fit.oneline th, table.fit.oneline td { white-space: nowrap; }
+  table.fit.oneline thead th:first-child { width: auto; }
+  table.fit.oneline td .reason { white-space: normal; min-width: 240px; max-width: 320px; }
   table.fit.ph-h1 thead th:nth-child(1), table.fit.ph-h1 tbody tr:not(.leg) > td:nth-child(1) { display: none; }
   table.fit.ph-h2 thead th:nth-child(2), table.fit.ph-h2 tbody tr:not(.leg) > td:nth-child(2) { display: none; }
   table.fit.ph-h3 thead th:nth-child(3), table.fit.ph-h3 tbody tr:not(.leg) > td:nth-child(3) { display: none; }
