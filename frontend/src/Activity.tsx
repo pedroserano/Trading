@@ -2,6 +2,7 @@ import OrderCheck from "./OrderCheck";
 import { useCallback, useContext, useEffect, useState } from "react";
 import { getJson, postJson } from "./api";
 import { usePolling } from "./usePolling";
+import { useMediaQuery } from "./useMediaQuery";
 import { ChainTimeline, chainSummary, legText, when } from "./ChainHistory";
 import { AccountContext } from "./context";
 import { money, pct, signed, tone } from "./format";
@@ -12,7 +13,64 @@ function net(v: number | null): string {
   return `${Math.abs(v).toFixed(2)} ${v > 0 ? "cr" : v < 0 ? "db" : ""}`;
 }
 
+/** An order's legs in one short line: "Jan 15 '27: −660P +665P +765C −770C". */
+function legsLine(legs: { symbol: string; quantity: number }[]): string {
+  const byExp = new Map<string, string[]>();
+  for (const l of legs) {
+    const m = l.symbol.match(/^(.{1,6}?)\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/);
+    const q = Math.abs(l.quantity);
+    const sign = l.quantity < 0 ? "−" : "+";
+    if (!m) {
+      const k = "";
+      byExp.set(k, [...(byExp.get(k) ?? []), `${sign}${q} sh`]);
+      continue;
+    }
+    const exp = new Date(`20${m[2]}-${m[3]}-${m[4]}T12:00:00`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "2-digit",
+    });
+    const k = exp.replace(/, (\d{2})$/, " '$1");
+    const strike = Number(m[6]) / 1000;
+    byExp.set(k, [...(byExp.get(k) ?? []), `${sign}${q > 1 ? `${q}×` : ""}${strike}${m[5]}`]);
+  }
+  return [...byExp.entries()].map(([k, v]) => (k ? `${k}: ${v.join(" ")}` : v.join(" "))).join(" · ");
+}
+
+/** "pending activation" → "pending"; the full status stays in the tooltip. */
+function shortStatus(o: SimOrder): string {
+  const s = (o.schwab_status ?? o.status).toLowerCase().replace(/_/g, " ");
+  return s.split(" ")[0];
+}
+
+/** Working orders on a phone: each fits the screen, Cancel in reach without scrolling. */
+function WorkingCompact({ orders, onCancel }: { orders: SimOrder[]; onCancel: (o: SimOrder) => void }) {
+  return (
+    <ul className="work-list">
+      {orders.map((o) => (
+        <li key={o.id}>
+          <div className="work-line">
+            <span className="sym-inline">{o.underlying}</span>
+            <span className="work-what">{o.intent}</span>
+            <span className="work-limit">{net(o.limit_net)}</span>
+            <span className={`work-status status ${o.status.toLowerCase()}`} title={(o.schwab_status ?? o.status).toLowerCase().replace(/_/g, " ")}>
+              {shortStatus(o)}
+            </span>
+            <button type="button" className="small" onClick={() => onCancel(o)}>
+              Cancel
+            </button>
+          </div>
+          <div className="work-legs">
+            {legsLine(o.legs)} · {o.duration}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function Activity() {
+  const compact = useMediaQuery("(max-width: 700px)");
   const account = useContext(AccountContext);
   const [data, setData] = useState<ActivityData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +176,11 @@ export default function Activity() {
       ) : null}
       <h3>{live ? "Working orders at Schwab" : "Working orders"}</h3>
       {working.length ? (
-        <OrderTable orders={working} onCancel={cancel} />
+        compact ? (
+          <WorkingCompact orders={working} onCancel={cancel} />
+        ) : (
+          <OrderTable orders={working} onCancel={cancel} />
+        )
       ) : (
         <p className="dim-text">
           {live

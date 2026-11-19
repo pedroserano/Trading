@@ -884,3 +884,13 @@ td.leg-figs { color: var(--dim); }
 table.watch tr.day-row td { padding: 8px 10px 4px; border-bottom: 1px solid var(--line); background: var(--bg);
   font-size: 12px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
 table.watch tr.day-row td span { position: sticky; left: 10px; }
+
+/* Working orders on a phone: one order a card, Cancel on its first line. */
+ul.work-list { list-style: none; margin: 0 0 12px; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+ul.work-list li { padding: 8px 10px; border-top: 1px solid var(--line); }
+ul.work-list li:first-child { border-top: 0; }
+.work-line { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.work-line .work-what { color: var(--dim); }
+.work-line .work-limit { margin-left: auto; font-variant-numeric: tabular-nums; }
+.work-line button { flex: none; }
+.work-legs { font-size: 12px; color: var(--dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
