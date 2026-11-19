@@ -29,20 +29,22 @@ def test_before_the_open_means_out_the_session_before():
     assert d["label"] == "before the open" and d["days"] == 5 and d["sessions_left"] == 2
 
 
-def test_parsers_read_finnhub_and_your_dates():
-    fin = {
-        "earningsCalendar": [
-            {"date": "2027-01-28", "hour": "amc", "symbol": "AAPL"},
-            {"date": "2026-10-30", "hour": "amc", "symbol": "AAPL"},  # past: ignored
-            {"date": "2026-12-04", "hour": "", "symbol": "ORCL"},
-        ]
-    }
-    out = er.parse_finnhub(fin, TODAY)
-    assert out["AAPL"] == {"date": "2027-01-28", "time": "amc", "source": "Finnhub"}
-    assert out["ORCL"]["time"] is None
+def test_parsers_read_your_dates_and_nasdaq_industries():
     manual, bad = er.parse_manual("aapl 2027-01-28 AMC\n# note\nTSLA 2027-01-21\nnope", TODAY)
     assert manual["AAPL"]["time"] == "amc" and manual["TSLA"]["time"] is None
     assert bad == ["nope"]
+    screener = {
+        "data": {
+            "rows": [
+                {"symbol": "NVDA", "industry": "Semiconductors"},
+                {"symbol": "BRK/B", "industry": "Major Insurers"},
+                {"symbol": "XYZ", "industry": ""},
+            ]
+        }
+    }
+    out = er.parse_screener(screener)
+    assert out == {"NVDA": "Semiconductors", "BRK/B": "Major Insurers", "BRK.B": "Major Insurers"}
+    assert er.parse_screener({"data": None}) == {}
 
 
 class Quotes:
@@ -54,16 +56,18 @@ class Quotes:
 
 
 @pytest.mark.anyio
-async def test_refresh_with_finnhub_and_your_dates_win():
+async def test_industries_from_nasdaq_once_a_day_and_your_dates_win():
+    asked = []
+
     def handler(request: httpx.Request):
-        assert request.url.host == "finnhub.io"
-        assert request.headers["X-Finnhub-Token"] == "KEY" and "token" not in request.url.params
-        sym = request.url.params["symbol"]
-        if request.url.path.endswith("/profile2"):
-            return httpx.Response(200, json={"finnhubIndustry": "Semiconductors"})
-        return httpx.Response(
-            200, json={"earningsCalendar": [{"date": "2026-11-19", "hour": "amc", "symbol": sym}]}
-        )
+        assert request.url.host == "api.nasdaq.com"
+        asked.append(request.url.path)
+        if request.url.path.endswith("/screener/stocks"):
+            rows = [{"symbol": "NVDA", "industry": "Semiconductors"}]
+            return httpx.Response(200, json={"data": {"rows": rows}})
+        d = request.url.params["date"]
+        rows = [{"symbol": "NVDA", "time": "time-after-hours"}] if d == "2026-11-19" else []
+        return httpx.Response(200, json={"data": {"rows": rows}})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
@@ -71,20 +75,22 @@ async def test_refresh_with_finnhub_and_your_dates_win():
         return {"SPY", "NVDA", "$SPX"}
 
     clock = lambda: datetime(2026, 11, 11, 12, tzinfo=ET)  # noqa: E731
-    fin = er.EarningsService(MemoryStore(), Quotes(), symbols, "KEY", clock, client)
-    fin.pace = 0
-    assert await fin.refresh() == 1
-    assert fin.info("NVDA")["source"] == "Finnhub" and fin.info("SPY") is None
-    assert fin.is_fund("SPY") and fin.is_fund("$SPX")
-    assert fin.industries == {"NVDA": "Semiconductors"}  # stocks only, for the Portfolio screen
-    # Without a key: only dates entered in Settings.
-    manual = er.EarningsService(MemoryStore(), Quotes(), symbols, "", clock, client)
+    store = MemoryStore()
+    e = er.EarningsService(store, Quotes(), symbols, clock=clock, client=client, nasdaq=True)
+    e.pace = 0
+    assert await e.refresh() == 1
+    assert e.info("NVDA")["source"] == "Nasdaq" and e.info("SPY") is None
+    assert e.is_fund("SPY") and e.is_fund("$SPX")
+    assert e.industries == {"NVDA": "Semiconductors"}  # for the Portfolio screen's sectors
+    assert asked.count("/api/screener/stocks") == 1
+    await e.refresh()
+    assert asked.count("/api/screener/stocks") == 1  # once a day
+    await e.set_manual("NVDA 2026-11-20 bmo")
+    assert e.info("NVDA")["source"] == "you"  # yours win over the source
+    # Without Nasdaq (tests, or no network): only your dates.
+    manual = er.EarningsService(MemoryStore(), Quotes(), symbols, clock=clock)
     assert await manual.refresh() == 0 and manual.info("NVDA") is None
     assert manual.provider == "manual"
-    await manual.set_manual("NVDA 2026-11-20 bmo")
-    assert manual.info("NVDA")["source"] == "you" and manual.info("NVDA")["date"] == "2026-11-20"
-    await fin.set_manual("NVDA 2026-11-20 bmo")
-    assert fin.info("NVDA")["source"] == "you"  # yours win over the source
 
 
 def strat(exp="2026-12-18"):
@@ -184,7 +190,7 @@ async def test_nasdaq_gives_coming_and_last_reports_and_reads_past_days_once():
 
     clock = lambda: datetime(2026, 11, 11, 12, tzinfo=ET)  # noqa: E731
     store = MemoryStore()
-    e = er.EarningsService(store, Quotes(), symbols, "", clock, client, nasdaq=True)
+    e = er.EarningsService(store, Quotes(), symbols, clock=clock, client=client, nasdaq=True)
     e.pace = 0
     assert await e.refresh() == 2
     assert e.provider == "Nasdaq"
@@ -206,23 +212,20 @@ async def test_nasdaq_gives_coming_and_last_reports_and_reads_past_days_once():
     await e.refresh()
     assert back and not [d for d in seen if d < "2026-11-11"]
     # Kept across a restart.
-    again = er.EarningsService(store, Quotes(), symbols, "", clock, client, nasdaq=True)
+    again = er.EarningsService(store, Quotes(), symbols, clock=clock, client=client, nasdaq=True)
     await again.load()
     assert again.info("NVDA")["date"] == "2026-11-24" and again.last_report("AAPL") == "2026-10-29"
 
 
 @pytest.mark.anyio
-async def test_earliest_source_wins_and_yours_beat_both():
+async def test_your_dates_beat_nasdaq_and_can_be_removed():
     clock = lambda: datetime(2026, 11, 11, 12, tzinfo=ET)  # noqa: E731
 
     async def symbols():
         return set()
 
-    e = er.EarningsService(MemoryStore(), Quotes(), symbols, "", clock)
+    e = er.EarningsService(MemoryStore(), Quotes(), symbols, clock=clock)
     e.nasdaq = {"X": {"date": "2026-12-03", "time": "amc", "source": "Nasdaq"}}
-    e.cache = {"X": {"date": "2026-12-01", "time": None, "source": "Finnhub"}}
-    assert e.info("X")["source"] == "Finnhub"  # earlier
-    e.cache = {"X": {"date": "2026-12-10", "time": None, "source": "Finnhub"}}
     assert e.info("X")["source"] == "Nasdaq"
     await e.set_one("X", "2026-12-20", "bmo")
     await e.set_one("Y", "2026-12-21", None)
@@ -245,7 +248,8 @@ async def test_a_failing_nasdaq_keeps_what_it_had():
         return {"NVDA"}
 
     clock = lambda: datetime(2026, 11, 11, 12, tzinfo=ET)  # noqa: E731
-    e = er.EarningsService(MemoryStore(), Quotes(), symbols, "", clock, client, nasdaq=True)
+    store = MemoryStore()
+    e = er.EarningsService(store, Quotes(), symbols, clock=clock, client=client, nasdaq=True)
     e.pace = 0
     e.nasdaq = {"NVDA": {"date": "2026-11-24", "time": "amc", "source": "Nasdaq"}}
     assert await e.refresh() == 1

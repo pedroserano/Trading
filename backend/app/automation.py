@@ -450,8 +450,8 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
                 else f"{sessions} session{'s' if sessions != 1 else ''} before the last "
                 "session ahead of it"
             )
-            + ". Does: closes the trade. Dates come from Finnhub or the dates entered under "
-            "Earnings; ETFs and indexes have none."
+            + ". Does: closes the trade. Dates come from Nasdaq's calendar or the dates set on "
+            "the Watchlist; ETFs and indexes have none."
         ),
         "eplay": (
             "When: a trade the scanner opened as an earnings play (Settings, Scanner), from "

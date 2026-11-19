@@ -535,7 +535,6 @@ def create_app(
         store,
         source,
         earnings_symbols,
-        finnhub_key=settings.finnhub_api_key,
         clock=lambda: portfolio.clock(),
         demo=demo,
         nasdaq=True,

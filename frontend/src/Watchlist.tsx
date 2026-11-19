@@ -288,7 +288,6 @@ export default function Watchlist() {
           <span
             title={
               "Where earnings dates come from: Nasdaq's calendar (dates announced, about five weeks ahead, and each stock's last report)" +
-              (earnStatus.provider.includes("Finnhub") ? ", and Finnhub's estimates further out" : "") +
               ". Refreshed every six hours. Tap a stock's Earnings cell to set a date yourself; yours win."
             }
           >

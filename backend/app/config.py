@@ -59,9 +59,6 @@ class Settings(BaseSettings):
     # LIVE_TRADING, and Schwab orders set to Manual and automatic in Settings; without it,
     # live automation proposes.
     live_auto: bool = False
-    # Optional: earnings dates from Finnhub (free key at finnhub.io). Without it only the
-    # dates entered in Settings are known.
-    finnhub_api_key: str = ""
 
     quote_interval_s: float = Field(5.0, ge=2.0)
     positions_interval_s: float = Field(60.0, ge=15.0)

@@ -688,3 +688,11 @@ entered in Settings.
   "No date · set" in amber (the scanner skips it). `POST /api/earnings/set`,
   `POST /api/earnings/refresh`; `/api/watchlist` carries the status and, per row,
   `earnings_quiet`, `earnings_mine` and `fund`.
+
+## Finnhub removed
+- Earnings dates come only from Nasdaq's calendar and the dates you set on the Watchlist;
+  FINNHUB_API_KEY is no longer read (left in .env it is ignored). Stocks' industries, for the
+  Portfolio screen's sectors and the scanner's per-sector cap, come from Nasdaq's stock
+  screener instead: one request for every listed company (about 6,500 with an industry), at
+  most once a day and only while a covered stock has none. Industries already saved from
+  Finnhub stay until Nasdaq's replace them; its old saved dates are no longer used.

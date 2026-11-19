@@ -10,8 +10,8 @@ from datetime import date, timedelta
 from . import indexweights
 from .analysis import TradeLeg, bp_estimate
 
-# Broad groups for funds and indexes; single stocks take their industry from Finnhub's
-# company profile when FINNHUB_API_KEY is set.
+# Broad groups for funds and indexes; single stocks take their industry from Nasdaq's
+# stock screener (earnings.py).
 GROUPS = {
     "Broad index": "SPY SPX XSP $SPX $XSP QQQ NDX $NDX IWM RUT $RUT DIA $DJX VOO IVV VTI EFA EEM",
     "Energy": "XLE XOP OIH USO UNG",
