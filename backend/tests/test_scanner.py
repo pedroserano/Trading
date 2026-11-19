@@ -306,7 +306,7 @@ async def test_a_stock_that_just_reported_opens_only_if_it_expires_before_the_ne
     scanner.earnings = QuietEarnings("2027-03-01")
     r = await scanner.scan("sim", act=False)
     assert "AAPL" in [c["symbol"] for c in r["candidates"]]
-    assert scanner.earnings.asked[0] == (30, 80)  # the defaults
+    assert scanner.earnings.asked[0] == (80, 80)  # the defaults
     scanner.earnings = QuietEarnings("2026-12-01")  # before any 45 DTE expiration
     r = await scanner.scan("sim", act=False)
     reason = {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]

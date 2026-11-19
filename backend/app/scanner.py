@@ -68,7 +68,7 @@ DEFAULTS = {
     "avoid_through_earnings": True,
     # No coming report known, but one in the last quiet_recent_days: none is expected until
     # quiet_gap_days after it (reports come about 90 days apart). 0 turns this off.
-    "quiet_recent_days": 30,
+    "quiet_recent_days": 80,
     "quiet_gap_days": 80,
     "min_pop": 0.55,  # probability of profit at entry, at least
     # Absolute IV, alongside IV rank (which alone selects and ranks): a floor for quiet
@@ -138,7 +138,7 @@ FIELDS = [
         "quiet_recent_days",
         "Just reported: within",
         0,
-        60,
+        100,
         "int",
         "days of a report",
     ),
