@@ -1060,8 +1060,10 @@ def test_low_iv_loss_cuts_losses_only_in_low_iv():
     acts = decide(lost(-600), 590, r, s, ALL, ivr=15)
     assert ("lowloss", "close") in kinds(acts)
     assert acts[0].reason.startswith("Loss of 600 is 1.0x the credit with IV rank 15")
-    # Defined risk too: the scanner opens iron condors in low IV.
-    assert ("lowloss", "close") in kinds(decide(lost(-600, defined=True), 590, r, s, ALL, ivr=15))
+    # Never defined risk: its loss is capped, and tastylive does not stop it out.
+    assert ("lowloss", "close") not in kinds(
+        decide(lost(-600, defined=True), 590, r, s, ALL, ivr=15)
+    )
     # Not low IV, not lost enough, or the 2x loss rule already acting.
     assert ("lowloss", "close") not in kinds(decide(lost(-600), 590, r, s, ALL, ivr=25))
     assert ("lowloss", "close") not in kinds(decide(lost(-500), 590, r, s, ALL, ivr=15))

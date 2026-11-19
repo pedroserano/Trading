@@ -619,7 +619,8 @@ entered in Settings.
 ## Loss in low IV, and which rule closed each trade
 - New rule "Loss in low IV" (default Notify everywhere): in the same low IV (IV rank at most
   20), a credit trade that has lost 1x its credit (adjustable; a ratio: the most it can make)
-  is closed, defined risk included since the scanner opens iron condors in low IV. Quick
+  is closed. Undefined risk only, like the loss rule: a defined-risk trade's loss is capped
+  and tastylive does not stop it out. Quick
   profits shrink the average win; this keeps the win rate needed to break even about the
   same. Not when the 2x loss rule already acts; not covered calls/puts, calendars or debit
   trades.

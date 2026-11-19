@@ -387,9 +387,10 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
         "lowloss": (
             f"When: IV rank is {settings['low_ivr']} or less and a credit trade has lost "
             f"{settings['low_iv_loss_multiple']:g}x its credit (a ratio: the most it can "
-            "make), defined risk included. Quick profits make wins smaller, so losses are "
-            "cut sooner in the same low IV to keep the win rate needed to break even about "
-            "the same. Does: closes the trade."
+            "make). Undefined risk only, like the loss rule: a defined-risk trade's loss is "
+            "already capped and tastylive does not stop it out. Quick profits make wins "
+            "smaller, so losses are cut sooner in the same low IV to keep the win rate "
+            "needed to break even about the same. Does: closes the trade."
         ),
         "dte": (
             f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
@@ -748,9 +749,10 @@ def low_iv_loss(st: dict, ivr: float | None, settings: dict) -> str | None:
 
     Quick profits make the average win smaller; to keep the win rate needed to break even
     where it was, losses are cut sooner in the same low IV. Against the credit (a ratio:
-    the most it can make), like the loss rule, but on defined-risk trades too, since the
-    scanner opens iron condors in low IV. Not once the loss rule's own multiple is reached
-    (it acts), nor on covered calls and puts, calendars or debit trades.
+    the most it can make), on the same trades as the loss rule: undefined risk only, as
+    tastylive does not stop out a defined-risk trade (its loss is already capped). Not once
+    the loss rule's own multiple is reached (it acts), nor on covered calls and puts,
+    calendars or debit trades.
     """
     if ivr is None or ivr > settings.get("low_ivr", 20):
         return None
@@ -758,7 +760,12 @@ def low_iv_loss(st: dict, ivr: float | None, settings: dict) -> str | None:
     n = st["numbers"]
     pl = n.get("pl")
     name = st["name"]
-    if "loss" in flags or pl is None or name in ("Covered call", "Covered put"):
+    if (
+        st.get("defined_risk")
+        or "loss" in flags
+        or pl is None
+        or name in ("Covered call", "Covered put")
+    ):
         return None
     basis = profit_basis(st)
     if basis is None or name in CALENDARS:
@@ -928,8 +935,9 @@ AUTO_STEPS = [
             "or ⟦quick_pct_2⟧% within ⟦quick_days_2⟧ days (0%: off). Little premium is left "
             "to collapse, so it is closed and redeployed. Acts at: ⟦levels:quick⟧",
             "Smaller wins need smaller losses, or the win rate needed to break even climbs: "
-            "in the same low IV, close a credit trade once it has lost ⟦low_iv_loss_multiple⟧"
-            "× its credit, defined risk included. Acts at: ⟦levels:lowloss⟧",
+            "in the same low IV, close an undefined-risk trade once it has lost "
+            "⟦low_iv_loss_multiple⟧× its credit (defined risk is never stopped out: its loss "
+            "is capped). Acts at: ⟦levels:lowloss⟧",
             "Debit spreads and long options are not tastylive trades and are left alone.",
             "⟦?ticket_automanage⟧ The order ticket starts with Automanage on fill ticked.",
         ],
