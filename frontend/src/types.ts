@@ -78,11 +78,19 @@ export interface StrategyView {
 export interface IvRank {
   /** Null while fewer than 20 days of history exist. */
   rank: number | null;
-  percentile: number;
-  days: number;
+  /** Null from DoltHub, which gives the year's range but not each day. */
+  percentile: number | null;
+  /** Days of history; null from DoltHub. */
+  days: number | null;
   low: number;
   high: number;
-  source: "VIX" | "recorded";
+  /** DoltHub: its IV against its own 52-week range, until our recorded history spans a year. */
+  source: "VIX" | "recorded" | "DoltHub";
+  /** DoltHub: the close it is as of, and its IV then. */
+  as_of?: string;
+  iv?: number;
+  /** DoltHub: how many days of our own IV are recorded so far. */
+  recorded_days?: number | null;
 }
 
 export interface UnderlyingView {

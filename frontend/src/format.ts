@@ -1,3 +1,4 @@
+import type { IvRank } from "./types";
 const DASH = "–";
 
 export function money(v: number | null | undefined, digits = 0): string {
@@ -51,4 +52,17 @@ export function clock(epochSeconds: number | null): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+/** Where an IV rank comes from, for its tooltip. */
+export function ivrTitle(v: IvRank | null | undefined): string {
+  if (!v) return "No IV rank yet";
+  if (v.source === "DoltHub")
+    return (
+      `IV rank from DoltHub as of ${v.as_of}: IV ${v.iv}% in a 52-week range of ${v.low}–${v.high}%. ` +
+      `Used until this app has a year of its own IV` +
+      (v.recorded_days ? ` (${v.recorded_days} days so far).` : ".")
+    );
+  if (v.source === "VIX") return `IV rank over ${v.days} days of VIX; percentile ${v.percentile}`;
+  return `IV rank over ${v.days} days of recorded IV` + (v.percentile !== null ? `; percentile ${v.percentile}` : "");
 }

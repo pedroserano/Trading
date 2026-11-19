@@ -6,6 +6,7 @@ import EarningsFlag from "./Earnings";
 import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
 import type { EarningsStatus, PriceExtreme, WatchRow } from "./types";
+import { ivrTitle } from "./format";
 
 type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq" | "earnings" | "float";
 
@@ -333,7 +334,7 @@ export default function Watchlist() {
               {th("range", "52w", "Where the price sits in its 52-week range of closes, 0% at the low")}
               {th("move", "Move", "The last few sessions' move against the move implied volatility expected, in standard deviations")}
               {th("iv30", "IV30", "30-day at-the-money implied volatility")}
-              {th("ivr", "IVR", "IV rank over up to a year of recorded history")}
+              {th("ivr", "IVR", "IV rank over a year: from DoltHub (D) until this app has recorded a year of its own")}
               <th title="IV percentile">IVP</th>
               <th title="Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. High after a drop means puts are especially expensive, part of the scanner's drop signal.">
                 Skew
@@ -445,11 +446,15 @@ export default function Watchlist() {
                   ) : null}
                 </td>
                 <td>{num(r.iv30, 1)}</td>
-                <td className={r.ivr?.rank !== null && r.ivr?.rank !== undefined && r.ivr.rank >= 50 ? "hi" : ""}>
+                <td
+                  className={r.ivr?.rank !== null && r.ivr?.rank !== undefined && r.ivr.rank >= 50 ? "hi" : ""}
+                  title={ivrTitle(r.ivr)}
+                >
                   {r.ivr?.rank !== null && r.ivr?.rank !== undefined ? Math.round(r.ivr.rank) : "–"}
-                  {r.ivr && r.ivr.source === "recorded" && r.ivr.days < 252 ? (
+                  {r.ivr && r.ivr.source === "recorded" && r.ivr.days !== null && r.ivr.days < 252 ? (
                     <span className="sub"> ({r.ivr.days}d)</span>
                   ) : null}
+                  {r.ivr?.source === "DoltHub" ? <span className="sub"> D</span> : null}
                 </td>
                 <td>{r.ivr?.percentile !== null && r.ivr?.percentile !== undefined ? Math.round(r.ivr.percentile) : "–"}</td>
                 <td>{r.skew === null || r.skew === undefined ? "–" : num(r.skew, 1)}</td>

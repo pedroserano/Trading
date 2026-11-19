@@ -3,7 +3,7 @@ import { AutoBadge } from "./Automation";
 import EarningsFlag from "./Earnings";
 import { Actions, Flags, LotLine } from "./PositionParts";
 import { isShares, mergeShares, sharesText } from "./shares";
-import { money, num, pct, shortDate, signed, strike, tone } from "./format";
+import { ivrTitle, money, num, pct, shortDate, signed, strike, tone } from "./format";
 import type {
   EarningsInfo,
   LegView,
@@ -291,12 +291,13 @@ function UnderGroup(props: {
           {detail && u.ivr && u.ivr.rank !== null ? (
             <span
               className="ivr"
-              title={`IV rank over ${u.ivr.days} days${u.ivr.source === "VIX" ? " of VIX" : " of recorded IV"}; percentile ${u.ivr.percentile}`}
+              title={ivrTitle(u.ivr)}
             >
               IVR {Math.round(u.ivr.rank)}
-              {u.ivr.source === "recorded" && u.ivr.days < 252 ? (
+              {u.ivr.source === "recorded" && u.ivr.days !== null && u.ivr.days < 252 ? (
                 <span className="sub"> ({u.ivr.days}d)</span>
               ) : null}
+              {u.ivr.source === "DoltHub" ? <span className="sub"> D</span> : null}
             </span>
           ) : null}
           {detail && u.beta !== null ? (

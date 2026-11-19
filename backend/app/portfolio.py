@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from . import analytics, dividends, targets
 from . import cash as cash_mod
 from . import chains as chains_mod
+from . import ivref as ivref_mod
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
@@ -80,6 +81,7 @@ class PortfolioService:
         self._balances_logged = False
         self.clock = clock
         self.earnings = None  # symbol -> next earnings report, set by the app
+        self.ivref = None  # symbol -> DoltHub's IV rank, until our own history spans a year
         self.preferences = preferences
         self.notifier = notifier
         self.include_watchlist = include_watchlist
@@ -389,8 +391,12 @@ class PortfolioService:
         since = self.clock().date() - timedelta(days=366)
         for u in unders:
             b = await self.store.get_beta(u)
-            hist = [v for _, v in await self.store.iv_history(u, since)]
-            extras[u] = {"beta": 1.0 if u == BENCH else (b[0] if b else None), "iv_hist": hist}
+            dated = await self.store.iv_history(u, since)
+            extras[u] = {
+                "beta": 1.0 if u == BENCH else (b[0] if b else None),
+                "iv_hist": [v for _, v in dated],
+                "iv_since": dated[0][0] if dated else None,
+            }
         self._extras = extras
         self._build_and_publish(extras)
         await self._notify_flags()
@@ -604,6 +610,8 @@ class PortfolioService:
                     if ivr["days"] < MIN_IVR_DAYS:
                         # A rank over a few days is noise; show only how much history exists.
                         ivr["rank"] = ivr["percentile"] = None
+                ref = self.ivref(u) if self.ivref else None
+                ivr = ivref_mod.choose(ivr, ex.get("iv_since"), ref, today)
             div = dividends.info(self.quotes.get(u), today, u)
             u_tot = {
                 "pl": 0.0,
