@@ -1552,6 +1552,13 @@ def create_app(
         # A wide or thin market: advice, whatever the order does.
         watch_row = await watchlist.row(t.underlying)
         warnings.extend(guards.liquidity(t, (watch_row or {}).get("atm_oi")))
+        if t.intent != "close":
+            fl = await watchlist.float_of(t.underlying)
+            if fl and fl["low"]:
+                warnings.append(
+                    f"Low float: only {fl['shares'] / 1e6:.1f} million shares trade freely, "
+                    "so the stock can gap sharply on news or a short squeeze"
+                )
         if body.account == "sim" and t.intent in ("close", "roll") and t.trade_id is not None:
             for o in await broker.replaceable(t.trade_id, {x.symbol for x in t.legs}):
                 price = f"{abs(o['limit_net']):.2f} {'credit' if o['limit_net'] > 0 else 'debit'}"

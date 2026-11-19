@@ -7,7 +7,7 @@ import Scanner from "./Scanner";
 import { num, pct, signed, tone } from "./format";
 import type { PriceExtreme, WatchRow } from "./types";
 
-type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq" | "earnings";
+type Key = "symbol" | "ivr" | "iv30" | "change" | "em" | "range" | "move" | "liq" | "earnings" | "float";
 
 const sorters: Record<Key, (r: WatchRow) => number | string> = {
   symbol: (r) => r.symbol,
@@ -21,10 +21,19 @@ const sorters: Record<Key, (r: WatchRow) => number | string> = {
   // The report's day, then before the open, unknown time, after the close. No date: "" (kept
   // last in either direction by the sort).
   earnings: (r) => (r.earnings?.date ? `${r.earnings.date} ${TIME_ORDER[r.earnings.time ?? ""] ?? 1}` : ""),
+  // No float (funds, indexes): "" too.
+  float: (r) => r.float?.shares ?? "",
 };
 
 /** Ascending first, like Symbol: the soonest report on top. */
-const ASCENDING_FIRST: Key[] = ["symbol", "earnings"];
+const ASCENDING_FIRST: Key[] = ["symbol", "earnings", "float"];
+
+/** 14.5B, 460M, 8.2M. */
+function shares(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e8 ? 0 : 1)}M`;
+  return `${Math.round(n / 1e3)}K`;
+}
 
 const TIME_ORDER: Record<string, number> = { bmo: 0, "": 1, amc: 2 };
 
@@ -169,8 +178,9 @@ export default function Watchlist() {
     return [...rows].sort((a, b) => {
       const x = f(a);
       const y = f(b);
-      // No earnings date: always at the bottom.
-      if (sort.key === "earnings" && (x === "" || y === "")) return x === y ? 0 : x === "" ? 1 : -1;
+      // No earnings date or no float: always at the bottom.
+      if ((sort.key === "earnings" || sort.key === "float") && (x === "" || y === ""))
+        return x === y ? 0 : x === "" ? 1 : -1;
       const c = x < y ? -1 : x > y ? 1 : 0;
       return sort.desc ? -c : c;
     });
@@ -233,6 +243,7 @@ export default function Watchlist() {
               <th>Exp</th>
               <th title="At-the-money bid-ask spread as a share of the mark">Spread</th>
               <th title="Open interest at the money, call plus put">ATM OI</th>
+              {th("float", "Float", "Shares free to trade, from Schwab, with how much of the float trades on an average day (10 days). Under 20 million shares is a low float, highlighted: it can move sharply. Funds and indexes have none. Schwab gives no short interest")}
               {th("earnings", "Earnings", "Next earnings report: date, and before the open or after the close. Sorts soonest first, by day and side of the bell; no date last")}
               <th title="Your position delta and theta in this underlying">Position</th>
               <th className="rm-col" aria-label="Remove" />
@@ -247,7 +258,7 @@ export default function Watchlist() {
               <Fragment key={r.symbol}>
               {heading ? (
                 <tr className="day-row">
-                  <td className="l" colSpan={18}>
+                  <td className="l" colSpan={19}>
                     <span>{group}</span>
                   </td>
                 </tr>
@@ -362,6 +373,22 @@ export default function Watchlist() {
                   {pct(r.spread_pct, 1)}
                 </td>
                 <td>{r.atm_oi === null ? "–" : r.atm_oi.toLocaleString("en-US")}</td>
+                <td
+                  className={r.float?.low ? "hi" : ""}
+                  title={
+                    r.float
+                      ? `${r.float.shares.toLocaleString("en-US", { maximumFractionDigits: 0 })} shares in the float` +
+                        (r.float.pct_of_outstanding !== null ? `, ${pct(r.float.pct_of_outstanding, 0)} of all shares` : "") +
+                        (r.float.turnover !== null ? `. ${pct(r.float.turnover, 1)} of it trades on an average day` : "") +
+                        (r.float.low ? ". Low float" : "")
+                      : undefined
+                  }
+                >
+                  {r.float ? shares(r.float.shares) : "–"}
+                  {r.float?.turnover !== null && r.float?.turnover !== undefined ? (
+                    <span className="sub"> {pct(r.float.turnover, 1)}/d</span>
+                  ) : null}
+                </td>
                 <td className="l">
                   <EarningsFlag e={r.earnings} tag={false} />
                 </td>

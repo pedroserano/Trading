@@ -581,3 +581,25 @@ async def test_dismissing_a_find_dismisses_its_proposal_and_survives_a_rescan():
     assert (await auto.view())["proposals"] == []
     await scanner.scan("sim")
     assert (await scanner.view("sim"))["last"]["candidates"] == []
+
+
+@pytest.mark.anyio
+async def test_a_low_float_means_defined_risk_at_half_size():
+    scanner, _, _ = harness({"min_ic_credit": 0.15, "max_bp_share": 0.1})
+    scanner.earnings = Earnings({"AAPL": "2027-01-28"})
+    asked = []
+
+    async def float_of(sym):
+        asked.append(sym)
+        return {"shares": 7.2e6, "low": True} if sym == "AAPL" else None
+
+    r = await scanner.scan("sim", act=False)
+    c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
+    assert c["strategy"] == "Strangle"
+    scanner.watchlist.float_of = float_of
+    r = await scanner.scan("sim", act=False)
+    c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
+    assert c["strategy"] == "Iron condor"
+    assert "Defined risk, half size: low float (7.2 million shares)" in c["label"]
+    # Funds have no float to check.
+    assert "XLE" not in asked and "SPY" not in asked

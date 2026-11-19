@@ -1005,3 +1005,32 @@ def test_watchlist_and_chain_carry_the_liquidity_rating(client):
     exps = client.get("/api/trade/SPY/expirations").json()
     ch = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()
     assert 1 <= ch["liquidity"]["stars"] <= 5 and ch["liquidity"]["oi"] > 0
+
+
+def test_ticket_warns_of_a_low_float(client, monkeypatch):
+    async def small_aapl(self, symbols):
+        return {
+            s: {"marketCapFloat": 7.2e6, "sharesOutstanding": 8e6} for s in symbols if s == "AAPL"
+        }
+
+    monkeypatch.setattr(DemoDataSource, "fundamentals", small_aapl)
+
+    def put_on(sym):
+        exps = client.get(f"/api/trade/{sym}/expirations").json()
+        ch = client.get(f"/api/trade/{sym}/chain?expiration={exps['default']}").json()
+        row = min(
+            (r for r in ch["rows"] if r["put"]["delta"]),
+            key=lambda r: abs(abs(r["put"]["delta"]) - 0.3),
+        )
+        return row["put"]["symbol"]
+
+    def warnings(sym, intent="open"):
+        body = {
+            "account": "sim",
+            "intent": intent,
+            "legs": [{"symbol": put_on(sym), "quantity": -1, "effect": "open"}],
+        }
+        return client.post("/api/orders/preview", json=body).json()["warnings"]
+
+    assert any(w.startswith("Low float: only 7.2 million") for w in warnings("AAPL"))
+    assert not any(w.startswith("Low float") for w in warnings("SPY"))

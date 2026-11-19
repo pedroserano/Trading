@@ -332,6 +332,9 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "⟦shock_day_ratio⟧× the usual, or implied volatility up ⟦shock_iv_jump⟧% in 5 "
                 "sessions, with no earnings report behind it. Then only defined-risk spreads "
                 "at half size, for ⟦shock_sessions⟧ sessions.",
+                "A low float, under 20 million shares free to trade (Schwab's figure): the "
+                "stock can gap on news or a short squeeze, so only defined-risk spreads at "
+                "half size.",
                 "Nothing opens while the portfolio's daily theta is already at its maximum "
                 "(⟦link:theta band|portfolio⟧).",
             ],
@@ -1187,6 +1190,15 @@ class Scanner:
         )
         if shocked:
             caution.append(shocked)
+        # A low float can gap on news or a squeeze: defined risk and half size, like a shock.
+        if not fund and hasattr(self.watchlist, "float_of"):
+            try:
+                fl = await self.watchlist.float_of(sym)
+            except Exception as e:  # a refinement, never a block
+                log.warning("Scanner float for %s failed: %s", sym, e)
+                fl = None
+            if fl and fl.get("low"):
+                caution.append(f"low float ({fl['shares'] / 1e6:.1f} million shares)")
         return (
             ivr,
             exp,

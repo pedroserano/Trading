@@ -589,3 +589,17 @@ entered in Settings.
   time not announced, after the close. Rows with no report date stay last either way.
 - Sorted that way, a heading opens each day and side of the bell ("Fri, Nov 20 · Before the
   open"), kept in view while the table scrolls sideways on a phone.
+
+## Float (Schwab fundamentals)
+- Schwab's instruments lookup (fundamental projection) gives the float as `marketCapFloat`,
+  which is a share count, not dollars (checked against a live response: GME 460M of 505M
+  shares). Its short-interest fields (`shortIntToFloat`, `shortIntDayToCover`) come back as
+  zero, so short interest needs another source and is not shown.
+- Fetched once a day per watchlist symbol (indexes skipped); the ticket fetches a symbol not
+  on the watchlist on demand.
+- Watchlist Float column: shares in the float, with average daily volume (10 days) as a share
+  of it. Under 20 million shares is a low float, highlighted. Sorts smallest first; funds and
+  indexes (no float) last.
+- Order ticket: a low-float warning on anything but a close.
+- Scanner: a low float on a single stock means defined risk at half size, like a possible
+  shock.

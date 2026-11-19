@@ -26,6 +26,7 @@ class DataSource(Protocol):
     async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list: ...
     async def market_open(self, day: date) -> bool | None: ...
     async def orders(self, account_hash: str, start: datetime, end: datetime) -> list: ...
+    async def fundamentals(self, symbols: list[str]) -> dict: ...
 
 
 # Quotes fetched within this many seconds are reused: every account's portfolio asks for
@@ -129,6 +130,27 @@ class SchwabDataSource:
 
     async def expirations(self, symbol: str) -> dict:
         return await self.schwab.call("get_option_expiration_chain", symbol)
+
+    async def fundamentals(self, symbols: list[str]) -> dict:
+        """Schwab's fundamentals by symbol (shares outstanding, float, average volume).
+
+        Its `marketCapFloat` is the float in shares, not dollars. Its short-interest fields
+        come back as zero, so they are not used.
+        """
+        c = self.schwab.client()
+        out = {}
+        for i in range(0, len(symbols), 50):
+            raw = await self.schwab.call(
+                "get_instruments",
+                symbols[i : i + 50],
+                projection=c.Instrument.Projection.FUNDAMENTAL,
+            )
+            for inst in (raw or {}).get("instruments") or []:
+                f = inst.get("fundamental") or {}
+                sym = inst.get("symbol") or f.get("symbol")
+                if sym:
+                    out[sym] = f
+        return out
 
     async def transactions(self, account_hash: str, start: datetime, end: datetime) -> list:
         c = self.schwab.client()
@@ -467,6 +489,20 @@ class DemoDataSource:
         while d <= until:
             out.append(d)
             d += timedelta(days=7)
+        return out
+
+    async def fundamentals(self, symbols: list[str]) -> dict:
+        # Plausible floats; one small one so the low-float flag shows in demo mode.
+        demo = {"SPY": 0, "QQQ": 0, "IWM": 0, "AAPL": 14_800_000_000}
+        out = {}
+        for sym in symbols:
+            shares = demo.get(sym, 8_000_000 + 30_000_000 * (len(sym) % 3))
+            out[sym] = {
+                "symbol": sym,
+                "sharesOutstanding": float(shares),
+                "marketCapFloat": shares * 0.9,
+                "avg10DaysVolume": int(shares * 0.012),
+            }
         return out
 
     async def expirations(self, symbol: str) -> dict:

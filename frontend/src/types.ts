@@ -162,7 +162,20 @@ export interface Bands {
   theta: Band;
 }
 
+/** The float from Schwab's fundamentals: shares free to trade. */
+export interface FloatInfo {
+  shares: number;
+  /** The float as a share of all shares outstanding. */
+  pct_of_outstanding: number | null;
+  /** Average daily volume (10 days) as a share of the float. */
+  turnover: number | null;
+  /** Under 20 million shares. */
+  low: boolean;
+}
+
 export interface WatchRow {
+  /** None for funds and indexes. */
+  float?: FloatInfo | null;
   /** Put skew in vol points: the 25-delta put's IV less the 25-delta call's. */
   skew?: number | null;
   /** Why the stock may have had an unscheduled shock lately (the scanner then uses defined risk, half size). */

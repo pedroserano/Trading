@@ -18,6 +18,10 @@ from .signals import skew
 
 log = logging.getLogger(__name__)
 CHAIN_REFRESH_S = 15 * 60
+# Float and shares outstanding change rarely: fetched once a day.
+FUNDAMENTALS_REFRESH_S = 24 * 3600
+# Under this many shares in the float counts as a low float.
+LOW_FLOAT_SHARES = 20_000_000
 
 
 class WatchlistService:
@@ -27,6 +31,7 @@ class WatchlistService:
         self.store = store
         self.portfolio = portfolio
         self.cache: dict[str, dict] = {}
+        self.fundamentals: dict[str, dict] = {}  # symbol -> {"at", "float": {...} or None}
         self.earnings = None  # symbol -> next earnings report, set by the app
         self.extremes = None  # async (symbol, price, change %, iv30) -> price extremes
         self.shock = None  # async (symbol, change %) -> why it may have had a shock, or None
@@ -46,6 +51,7 @@ class WatchlistService:
 
     async def refresh(self, today: date, force: bool = False) -> None:
         now = time.time()
+        await self._refresh_fundamentals(now, force)
         for sym in self.portfolio.watchlist:
             entry = self.cache.get(sym)
             if not force and entry and now - entry["at"] < CHAIN_REFRESH_S:
@@ -54,6 +60,50 @@ class WatchlistService:
                 self.cache[sym] = {"at": now, **await self.chain_stats(sym, today)}
             except SchwabError as e:
                 self.cache[sym] = {"at": now, "error": str(e)[:200]}
+
+    async def _refresh_fundamentals(self, now: float, force: bool) -> None:
+        due = [
+            sym
+            for sym in self.portfolio.watchlist
+            # Indexes ($SPX) have no shares.
+            if not sym.startswith("$")
+            and (
+                force
+                or now - self.fundamentals.get(sym, {}).get("at", -1e12) >= FUNDAMENTALS_REFRESH_S
+            )
+        ]
+        if not due or not hasattr(self.source, "fundamentals"):
+            return
+        try:
+            raw = await self.source.fundamentals(due)
+        except SchwabError as e:
+            log.info("Fundamentals skipped: %s", e)
+            # Try again at the next chain refresh rather than every 10 seconds.
+            for sym in due:
+                self.fundamentals[sym] = {
+                    **self.fundamentals.get(sym, {}),
+                    "at": now - FUNDAMENTALS_REFRESH_S + CHAIN_REFRESH_S,
+                }
+            return
+        for sym in due:
+            self.fundamentals[sym] = {"at": now, "float": float_info(raw.get(sym))}
+
+    async def float_of(self, sym: str) -> dict | None:
+        """One symbol's float, from the daily cache or fetched now: for the order ticket,
+        which can trade symbols not on the watchlist. None when Schwab has none or fails."""
+        now = time.time()
+        hit = self.fundamentals.get(sym)
+        if hit and "float" in hit and now - hit["at"] < FUNDAMENTALS_REFRESH_S:
+            return hit["float"]
+        if sym.startswith("$") or not hasattr(self.source, "fundamentals"):
+            return None
+        try:
+            raw = await self.source.fundamentals([sym])
+        except (SchwabError, SchwabNotConnected) as e:
+            log.info("Float for %s skipped: %s", sym, e)
+            return (hit or {}).get("float")
+        self.fundamentals[sym] = {"at": now, "float": float_info(raw.get(sym))}
+        return self.fundamentals[sym]["float"]
 
     async def chain_stats(self, sym: str, today: date) -> dict:
         raw = await self.source.option_chain(
@@ -143,12 +193,32 @@ class WatchlistService:
             "earnings": self.earnings(sym) if self.earnings else None,
             "extreme": ext,
             "skew": c.get("skew"),
+            "float": self.fundamentals.get(sym, {}).get("float"),
             "shock": await self.shock(sym, change) if self.shock else None,
             "error": c.get("error"),
             "held": u is not None,
             "position_delta": None if u is None else u["delta"],
             "position_theta": None if u is None else u["theta"],
         }
+
+
+def float_info(f: dict | None) -> dict | None:
+    """The float in shares, its share of all shares, and how much of it trades a day.
+
+    None for funds and indexes, which Schwab gives no float for.
+    """
+    f = f or {}
+    shares = _num(f.get("marketCapFloat"))
+    if not shares or shares <= 0:
+        return None
+    outstanding = _num(f.get("sharesOutstanding"))
+    volume = _num(f.get("avg10DaysVolume"))
+    return {
+        "shares": shares,
+        "pct_of_outstanding": shares / outstanding if outstanding and outstanding > 0 else None,
+        "turnover": volume / shares if volume else None,
+        "low": shares < LOW_FLOAT_SHARES,
+    }
 
 
 def _num(v):
