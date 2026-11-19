@@ -607,7 +607,7 @@ entered in Settings.
 ## Quick profit in low IV (automanage)
 - New rule "Quick profit in low IV", with its own level per account like the others
   (default: Propose on the simulated account, Notify on Schwab accounts).
-- Only while IV rank is at most 30: a trade at 15% of max profit within 1 day of opening or
+- Only while IV rank is at most 20 (Low IV, shared with the low-IV loss rule): a trade at 15% of max profit within 1 day of opening or
   its last roll, or 30% within 7 days, is closed. All five numbers are set on Settings,
   Automation, step 1; a step at 0% is off.
 - Measured like the profit target (share of max profit; a covered call on the call's credit),
@@ -615,3 +615,18 @@ entered in Settings.
   closes it. Rationale (tastylive): low IV leaves little premium to collapse, and quick
   winners closed and redeployed did best.
 - Trade info carries `since` (the last open or roll), shown on each strategy.
+
+## Loss in low IV, and which rule closed each trade
+- New rule "Loss in low IV" (default Notify everywhere): in the same low IV (IV rank at most
+  20), a credit trade that has lost 1x its credit (adjustable; a ratio: the most it can make)
+  is closed, defined risk included since the scanner opens iron condors in low IV. Quick
+  profits shrink the average win; this keeps the win rate needed to break even about the
+  same. Not when the 2x loss rule already acts; not covered calls/puts, calendars or debit
+  trades.
+- Automanage records the rule whose closing order filled (`closed_by` in its state, by
+  trade id). The Dashboard's "Closed by" breakdown groups closed trades by it; the rest show
+  as "You, expiration or assignment".
+- Every breakdown row and the overview's win rate show the win rate needed to break even
+  with that group's average win and loss (|avg loss| / (avg win + |avg loss|)), in orange
+  when the actual win rate is below it. On phones breakdown rows stay on one line and the
+  table scrolls sideways.

@@ -6,6 +6,8 @@ import { pct, signed } from "./format";
 interface Stats {
   n: number;
   win_rate: number | null;
+  /** The win rate these average wins and losses need to break even. */
+  breakeven?: number | null;
   total: number;
   avg: number | null;
   avg_win: number | null;
@@ -179,7 +181,11 @@ function Overview({ d }: { d: DashData }) {
       <div className="tiles">
         <Tile label="Realized P/L" value={signed(o.total)} sub="as each leg closed" />
         <Tile label="Closed trades" value={t.n.toLocaleString("en-US")} sub="counting rolls as one trade" />
-        <Tile label="Win rate" value={pct(t.win_rate)} />
+        <Tile
+          label="Win rate"
+          value={pct(t.win_rate)}
+          sub={t.breakeven !== null && t.breakeven !== undefined ? `needs ${pct(t.breakeven)} to break even` : undefined}
+        />
         <Tile label="Average winner" value={signed(t.avg_win)} sub={`average loser ${signed(t.avg_loss)}`} />
         <Tile label="P/L per day held" value={signed(t.per_day, 2)} />
       </div>
@@ -387,7 +393,13 @@ function StatsTable({ rows, label }: { rows: Bucket[]; label: string }) {
             <tr key={r.bucket} className={r.n < 10 ? "thin" : ""} title={r.n < 10 ? "Fewer than 10 trades: too few to read much into" : ""}>
               <td className="l">{r.bucket}</td>
               <td>{r.n}</td>
-              <td>{pct(r.win_rate)}</td>
+              <td
+                className={below(r) ? "warn-text" : ""}
+                title={r.breakeven !== null && r.breakeven !== undefined ? `With these average wins and losses, ${pct(r.breakeven)} is needed to break even` : undefined}
+              >
+                {pct(r.win_rate)}
+                {r.breakeven !== null && r.breakeven !== undefined ? <span className="sub"> needs {pct(r.breakeven)}</span> : null}
+              </td>
               <td className="l avgbar">
                 <span className="mini-track">
                   <span className="bar-mid" />
@@ -455,6 +467,11 @@ function TradesTable({ trades }: { trades: Trade[] }) {
       </table>
     </div>
   );
+}
+
+/** A win rate under what its own wins and losses need. */
+function below(r: Stats): boolean {
+  return r.win_rate !== null && r.breakeven !== null && r.breakeven !== undefined && r.win_rate < r.breakeven;
 }
 
 // What worked --------------------------------------------------------------------------

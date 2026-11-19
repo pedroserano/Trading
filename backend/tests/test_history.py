@@ -484,3 +484,20 @@ def test_a_failing_sheet_merge_keeps_schwab_trades_and_says_why(client, monkeypa
     act = client.get("/api/activity").json()
     assert "bad row" in act["sheet"]["error"] and act["sheet"]["rows"] == 8
     assert act["trade_counts"].get("sheet", 0) == 0
+
+
+def test_stats_give_the_win_rate_needed_and_closed_by_buckets():
+    from app import dashboard as d
+
+    trades = [
+        {"pl": 100.0, "days": 2, "kept": 0.2, "closed_by": "Quick profit in low IV"},
+        {"pl": 100.0, "days": 2, "kept": 0.2, "closed_by": "Quick profit in low IV"},
+        {"pl": 100.0, "days": 2, "kept": 0.2, "closed_by": "Quick profit in low IV"},
+        {"pl": -300.0, "days": 9, "kept": -0.6, "closed_by": "Loss in low IV"},
+    ]
+    s = d.stats(trades)
+    # Wins of 100 against losses of 300 need 75% to break even.
+    assert s["win_rate"] == 0.75 and s["breakeven"] == 0.75
+    rows = {r["bucket"]: r for r in d.breakdown(trades, "closed_by")}
+    assert rows["Quick profit in low IV"]["n"] == 3 and rows["Loss in low IV"]["n"] == 1
+    assert d.stats(trades[:3])["breakeven"] is None  # no losses yet

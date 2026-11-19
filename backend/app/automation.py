@@ -34,6 +34,7 @@ LEVELS = ("off", "notify", "propose", "auto")
 RULES = {
     "profit": "Profit target",
     "quick": "Quick profit in low IV",
+    "lowloss": "Loss in low IV",
     "dte": "Manage at DTE",
     "tested": "Tested short strike",
     "loss": "Loss at a multiple of credit",
@@ -45,6 +46,7 @@ DEFAULT_SETTINGS = {
     "levels": {
         "profit": "auto",
         "quick": "propose",
+        "lowloss": "notify",
         "dte": "propose",
         "tested": "notify",
         "loss": "notify",
@@ -56,6 +58,7 @@ DEFAULT_SETTINGS = {
     "levels_live": {
         "profit": "propose",
         "quick": "notify",
+        "lowloss": "notify",
         "dte": "propose",
         "tested": "notify",
         "loss": "notify",
@@ -70,11 +73,13 @@ DEFAULT_SETTINGS = {
     "roll_target_dte": 45,
     # tastytrade keeps rolling for a credit while premium is worth selling; IV rank decides.
     "min_roll_ivr": 25,
-    # Quick profit: with IV rank at most quick_max_ivr there is little premium left to
-    # collapse, so a fast gain is taken early: quick_pct_1 of max profit within quick_days_1
-    # days of opening (or the last roll), or quick_pct_2 within quick_days_2 (0%: that step
-    # off).
-    "quick_max_ivr": 30,
+    # Low IV: IV rank at most low_ivr. There is little premium left to collapse, so a fast
+    # gain is taken early: quick_pct_1 of max profit within quick_days_1 days of opening (or
+    # the last roll), or quick_pct_2 within quick_days_2 (0%: that step off). Smaller wins
+    # need smaller losses to keep the win rate needed the same: a loss of
+    # low_iv_loss_multiple times the credit closes the trade.
+    "low_ivr": 20,
+    "low_iv_loss_multiple": 1.0,
     "quick_days_1": 1,
     "quick_pct_1": 0.15,
     "quick_days_2": 7,
@@ -126,7 +131,8 @@ DEFAULT_SETTINGS = {
 }
 # Adjustable on the Settings page: (key, label, low, high, kind, unit).
 SETTING_FIELDS = [
-    ("quick_max_ivr", "Quick profit: only while IV rank is at most", 0, 100, "int", "IVR"),
+    ("low_ivr", "Low IV: IV rank at most", 0, 100, "int", "IVR"),
+    ("low_iv_loss_multiple", "Low IV: close at a loss of", 0.25, 5.0, "float", "× credit"),
     ("quick_days_1", "Quick profit: within", 0, 60, "int", "days"),
     ("quick_pct_1", "Quick profit: at least", 1, 100, "percent", "% of max"),
     ("quick_days_2", "Quick profit, later: within", 0, 60, "int", "days"),
@@ -369,7 +375,7 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             "start; at Propose or Notify you hear once it is reached."
         ),
         "quick": (
-            f"When: IV rank is {settings['quick_max_ivr']} or less and a trade has made "
+            f"When: IV rank is {settings['low_ivr']} or less and a trade has made "
             f"{pct(settings['quick_pct_1'])} of its max profit within "
             f"{settings['quick_days_1']} day{'s' if settings['quick_days_1'] != 1 else ''} of "
             f"opening or its last roll, or {pct(settings['quick_pct_2'])} within "
@@ -377,6 +383,13 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             "premium to collapse, so tastylive takes fast winners sooner and redeploys. "
             "Measured like the profit target; trades the profit rule leaves alone are left "
             "alone. Does: closes the trade."
+        ),
+        "lowloss": (
+            f"When: IV rank is {settings['low_ivr']} or less and a credit trade has lost "
+            f"{settings['low_iv_loss_multiple']:g}x its credit (a ratio: the most it can "
+            "make), defined risk included. Quick profits make wins smaller, so losses are "
+            "cut sooner in the same low IV to keep the win rate needed to break even about "
+            "the same. Does: closes the trade."
         ),
         "dte": (
             f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
@@ -715,6 +728,8 @@ def decide(
             )
         else:
             out.append(Action("tested", "notify", "A short strike is tested"))
+    if levels.get("lowloss", "off") != "off" and (why := low_iv_loss(st, ivr, settings)):
+        out.append(Action("lowloss", "close", why))
     if levels.get("quick", "off") != "off" and (why := quick_profit(st, ivr, settings, now)):
         out.append(Action("quick", "close", why))
     if levels.get("profit", "off") != "off" and profit_basis(st) is not None:
@@ -728,6 +743,35 @@ def decide(
 ROLLS = ("roll", "roll_calls", "roll_puts")
 
 
+def low_iv_loss(st: dict, ivr: float | None, settings: dict) -> str | None:
+    """Why a credit trade in low IV should be closed for its loss, or None.
+
+    Quick profits make the average win smaller; to keep the win rate needed to break even
+    where it was, losses are cut sooner in the same low IV. Against the credit (a ratio:
+    the most it can make), like the loss rule, but on defined-risk trades too, since the
+    scanner opens iron condors in low IV. Not once the loss rule's own multiple is reached
+    (it acts), nor on covered calls and puts, calendars or debit trades.
+    """
+    if ivr is None or ivr > settings.get("low_ivr", 20):
+        return None
+    flags = {f["kind"] for f in st.get("flags", [])}
+    n = st["numbers"]
+    pl = n.get("pl")
+    name = st["name"]
+    if "loss" in flags or pl is None or name in ("Covered call", "Covered put"):
+        return None
+    basis = profit_basis(st)
+    if basis is None or name in CALENDARS:
+        return None
+    limit = settings.get("low_iv_loss_multiple", 1.0) * basis[0]
+    if limit <= 0 or pl > -limit:
+        return None
+    return (
+        f"Loss of {-pl:,.0f} is {-pl / basis[0]:.1f}x the credit with IV rank {ivr:.0f} "
+        f"(at most {settings.get('low_ivr', 20)}): cut it, as quick profits are taken here"
+    )
+
+
 def quick_profit(st: dict, ivr: float | None, settings: dict, now=None) -> str | None:
     """Why a fast gain in low IV should be taken now, or None.
 
@@ -736,7 +780,7 @@ def quick_profit(st: dict, ivr: float | None, settings: dict, now=None) -> str |
     profit, like the profit target, from the last open or roll; never once the target
     itself is reached (the profit rule closes it).
     """
-    if ivr is None or ivr > settings.get("quick_max_ivr", 30):
+    if ivr is None or ivr > settings.get("low_ivr", 20):
         return None
     pct, since = st["numbers"].get("pct_max_profit"), st.get("since")
     flags = {f["kind"] for f in st.get("flags", [])}
@@ -750,7 +794,7 @@ def quick_profit(st: dict, ivr: float | None, settings: dict, now=None) -> str |
             when = "today" if age == 0 else f"in {age} day{'s' if age != 1 else ''}"
             return (
                 f"Quick profit: {pct * 100:.0f}% of max {when} with IV rank {ivr:.0f} "
-                f"(at most {settings.get('quick_max_ivr', 30)}): take it"
+                f"(at most {settings.get('low_ivr', 20)}): take it"
             )
     return None
 
@@ -879,10 +923,13 @@ AUTO_STEPS = [
             "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
             "(⟦levels:profit⟧; at Auto a closing order "
             "rests at the target from the start).",
-            "In low IV, IV rank ⟦quick_max_ivr⟧ or less, take a fast winner sooner: "
+            "In low IV, IV rank ⟦low_ivr⟧ or less, take a fast winner sooner: "
             "⟦quick_pct_1⟧% of max within ⟦quick_days_1⟧ days of opening or the last roll, "
             "or ⟦quick_pct_2⟧% within ⟦quick_days_2⟧ days (0%: off). Little premium is left "
             "to collapse, so it is closed and redeployed. Acts at: ⟦levels:quick⟧",
+            "Smaller wins need smaller losses, or the win rate needed to break even climbs: "
+            "in the same low IV, close a credit trade once it has lost ⟦low_iv_loss_multiple⟧"
+            "× its credit, defined risk included. Acts at: ⟦levels:lowloss⟧",
             "Debit spreads and long options are not tastylive trades and are left alone.",
             "⟦?ticket_automanage⟧ The order ticket starts with Automanage on fill ticked.",
         ],
@@ -2028,6 +2075,9 @@ class AutomationService:
                     "rule": info["rule"],
                     "view": info.get("view"),
                 }
+            if order.get("intent") == "close" and info["rule"] not in ("entry", None):
+                # Which rule closed the trade, for the Dashboard's Closed by breakdown.
+                self.state.setdefault("closed_by", {})[str(info["trade_id"])] = info["rule"]
             fill = order.get("fill_net")
             self._log(
                 info["trade_id"],

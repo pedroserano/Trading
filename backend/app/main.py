@@ -2373,6 +2373,12 @@ def create_app(
             prices,
             source=source if account != "sim" else "all",
             include_futures=futures,
+            closed_by={
+                tid: RULES.get(rule, rule)
+                for tid, rule in (
+                    (await automations[account].load()).get("closed_by") or {}
+                ).items()
+            },
         )
         out["prices_pending"] = prices_service.status.get("pending")
         out["account"] = account

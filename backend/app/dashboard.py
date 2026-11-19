@@ -215,6 +215,7 @@ FACTORS = [
         ),
     ),
     ("outcome", "How it ended", lambda f: f["outcome"]),
+    ("closed_by", "Closed by", lambda f: f.get("closed_by")),
     (
         "exit_dte",
         "DTE left when closed",
@@ -303,9 +304,18 @@ def stats(trades: list[dict]) -> dict:
     losses = [p for p in pls if p <= 0]
     days = sum(max(t["days"], 1.0) for t in trades)
     kept = [t["kept"] for t in trades if t["kept"] is not None]
+    avg_win = sum(wins) / len(wins) if wins else None
+    avg_loss = sum(losses) / len(losses) if losses else None
+    # The win rate these average wins and losses need to break even.
+    breakeven = (
+        -avg_loss / (avg_win - avg_loss)
+        if avg_win is not None and avg_loss is not None and avg_win - avg_loss > 0
+        else None
+    )
     return {
         "n": len(pls),
         "win_rate": round(len(wins) / len(pls), 4) if pls else None,
+        "breakeven": None if breakeven is None else round(breakeven, 4),
         "total": round(sum(pls), 2),
         "avg": round(sum(pls) / len(pls), 2) if pls else None,
         "avg_win": round(sum(wins) / len(wins), 2) if wins else None,
@@ -344,6 +354,13 @@ ORDER = {
     "pop": ["Under 60%", "60-70%", "70-80%", "80%+"],
     "earnings_days": ["0-7", "8-30", "31+"],
     "followed": ["Yes", "No"],
+    "closed_by": [
+        "Profit target",
+        "Quick profit in low IV",
+        "Loss in low IV",
+        "Loss at a multiple of credit",
+        "Manage at DTE",
+    ],
     "weekday": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
     "outcome": [
         "Closed at 75%+ of max",
@@ -482,8 +499,13 @@ def build(
     *,
     source: str = "all",
     include_futures: bool = False,
+    closed_by: dict[str, str] | None = None,
 ) -> dict:
+    """closed_by: the automanage rule (its label) that closed each trade, by trade id; the
+    rest closed some other way (by you, at expiration, or by assignment)."""
     trades = [f for c in chains if (f := facts(c, prices)) is not None]
+    for t in trades:
+        t["closed_by"] = (closed_by or {}).get(str(t["id"]), "You, expiration or assignment")
     if source != "all":
         trades = [t for t in trades if t["source"] == source]
         chains = (

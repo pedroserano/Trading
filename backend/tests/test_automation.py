@@ -1043,6 +1043,44 @@ def test_quick_profit_takes_a_fast_winner_only_in_low_iv():
 
 def test_quick_profit_settings_save():
     s = parse_settings(
-        {"quick_max_ivr": "20", "quick_pct_1": "10", "quick_days_2": "5"}, merged_settings(None)
+        {"low_ivr": "15", "quick_pct_1": "10", "quick_days_2": "5"}, merged_settings(None)
     )
-    assert s["quick_max_ivr"] == 20 and s["quick_pct_1"] == 0.10 and s["quick_days_2"] == 5
+    assert s["low_ivr"] == 15 and s["quick_pct_1"] == 0.10 and s["quick_days_2"] == 5
+
+
+def test_low_iv_loss_cuts_losses_only_in_low_iv():
+    r, s = Rules(), merged_settings(None)
+    assert s["low_ivr"] == 20 and s["low_iv_loss_multiple"] == 1.0
+
+    def lost(pl, defined=False, flags=()):
+        st = strat(defined=defined, flags=flags)
+        st["numbers"]["pl"] = pl
+        return st
+
+    acts = decide(lost(-600), 590, r, s, ALL, ivr=15)
+    assert ("lowloss", "close") in kinds(acts)
+    assert acts[0].reason.startswith("Loss of 600 is 1.0x the credit with IV rank 15")
+    # Defined risk too: the scanner opens iron condors in low IV.
+    assert ("lowloss", "close") in kinds(decide(lost(-600, defined=True), 590, r, s, ALL, ivr=15))
+    # Not low IV, not lost enough, or the 2x loss rule already acting.
+    assert ("lowloss", "close") not in kinds(decide(lost(-600), 590, r, s, ALL, ivr=25))
+    assert ("lowloss", "close") not in kinds(decide(lost(-500), 590, r, s, ALL, ivr=15))
+    assert ("lowloss", "close") not in kinds(
+        decide(lost(-1200, flags=("loss",)), 590, r, s, ALL, ivr=15)
+    )
+    off = {**ALL, "lowloss": "off"}
+    assert ("lowloss", "close") not in kinds(decide(lost(-600), 590, r, s, off, ivr=15))
+
+
+@pytest.mark.anyio
+async def test_the_rule_that_closed_a_trade_is_recorded():
+    h = Harness([], QUOTES, settings={"levels": {"profit": "off", "lowloss": "auto"}})
+    tid = await h.open_strangle()
+    st = strat(tid=tid)
+    st["numbers"]["pl"] = -600.0
+    h.portfolio.snapshot["underlyings"][0]["strategies"] = [st]
+    h.portfolio.snapshot["underlyings"][0]["ivr"] = {"rank": 12}
+    await h.svc.set_trade(tid, True)
+    assert "place lowloss" in await h.svc.tick()
+    await h.svc.tick()  # the fill is recorded
+    assert h.svc.state["closed_by"] == {str(tid): "lowloss"}
