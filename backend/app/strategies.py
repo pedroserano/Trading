@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
-from .options import Leg, day_pl
+from .options import NONSTANDARD, Leg, day_pl
 
 
 @dataclass
@@ -92,13 +92,19 @@ class _Pool:
         return sorted({leg.expiration for leg in self.options()})
 
 
+def nonstandard_strategy(leg: Leg) -> Strategy:
+    """A non-standard option on its own: never matched with standard legs, closing only."""
+    return Strategy(NONSTANDARD, leg.underlying, [leg.with_quantity(leg.quantity)], False)
+
+
 def group(legs: list[Leg]) -> list[Strategy]:
     """Groups the legs of one underlying."""
     if not legs:
         return []
     underlying = legs[0].underlying
+    out: list[Strategy] = [nonstandard_strategy(x) for x in legs if x.extra.get("nonstandard")]
+    legs = [x for x in legs if not x.extra.get("nonstandard")]
     pool = _Pool(legs)
-    out: list[Strategy] = []
 
     def add(name, taken, defined):
         out.append(Strategy(name, underlying, taken, defined))
@@ -636,6 +642,38 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     if any(leg.mark is None or (leg.is_option and leg.delta is None) for leg in legs):
         flags.append({"kind": "data", "label": "No quote", "detail": "Missing live quote"})
     st.flags = flags
+    if name == NONSTANDARD:
+        _nonstandard_numbers(st)
+
+
+def _nonstandard_numbers(st: Strategy) -> None:
+    """Its deliverable is not 100 shares of the underlying, so nothing priced as if it were
+    is shown: only Schwab's market value and the P/L against what was paid. No greeks, no
+    targets, no tested or DTE flags; closing only."""
+    why = "; ".join(sorted({x.extra.get("nonstandard", "") for x in st.legs} - {""}))
+    st.numbers.update(
+        {
+            "pct_max_profit": None,
+            "max_profit": None,
+            "max_loss": None,
+            "delta": None,
+            "theta": None,
+            "vega": None,
+            "gamma": None,
+            "short_deltas": [None for _ in st.numbers.get("short_deltas", [])],
+            "upside_risk": None,
+            "shares_like": None,
+            "nonstandard": why,
+        }
+    )
+    st.flags = [
+        {
+            "kind": "nonstandard",
+            "label": "Close only",
+            "detail": f"Non-standard option: {why}. Closing only; automanage and the scanner "
+            "leave it alone. Check what it delivers in thinkorswim before closing.",
+        }
+    ]
 
 
 def _shares_like(name: str, opts: list[Leg]) -> int | None:

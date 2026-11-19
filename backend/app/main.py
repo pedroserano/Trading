@@ -77,7 +77,7 @@ from .jobs import DailyJobs
 from .live import LiveBroker
 from .market import MARKETS, MarketService
 from .notify import PushoverNotifier, ReminderService
-from .options import parse_option_symbol
+from .options import nonstandard, parse_option_symbol
 from .order_check import OrderCheckService
 from .orders import (
     Ticket,
@@ -261,6 +261,26 @@ def summarize_preview(raw) -> dict:
         "messages": [m for m in messages if m["level"] != "ok"],
         "raw": raw,
     }
+
+
+def nonstandard_checks(t, held: dict, errors: list[str], warnings: list[str]) -> None:
+    """Non-standard options (adjusted after a corporate action) are closing only: opening
+    one, or rolling it, is blocked; a plain close is warned about. `held`: symbol -> why,
+    for the positions the snapshot marks."""
+    for x in t.legs:
+        if x.equity:
+            continue
+        why = held.get(x.symbol) or nonstandard(x.symbol, t.underlying)
+        if not why:
+            continue
+        name = f"{x.symbol.split()[0]} {x.strike:g}{x.put_call}"
+        if x.effect == "open" or t.intent in ("open", "roll", "adjust"):
+            errors.append(f"{name} is a non-standard option ({why}): closing only")
+        else:
+            warnings.append(
+                f"{name} is a non-standard option ({why}): check what it delivers in "
+                "thinkorswim before closing"
+            )
 
 
 OVERSOLD = ("oversold", "overbought")
@@ -1658,6 +1678,15 @@ def create_app(
             notional_cap=getattr(rules, "max_notional", 0.0),
             look_through=look_text,
         )
+        # Non-standard options (adjusted after a corporate action): closing only.
+        held_ns = {
+            x["symbol"]: st["numbers"]["nonstandard"]
+            for u in (pf.snapshot or {}).get("underlyings", [])
+            for st in u["strategies"]
+            if st["numbers"].get("nonstandard")
+            for x in st["legs"]
+        }
+        nonstandard_checks(t, held_ns, errors, warnings)
         # Portfolio targets: warn when the trade moves delta or theta further outside its band.
         band_after = None
         if a is not None and nl:

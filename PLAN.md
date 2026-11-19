@@ -715,3 +715,18 @@ entered in Settings.
 - Nasdaq: fuller browser headers; each day tried 3 times on a dropped connection, timeout
   or 5xx; a day that still fails is skipped (its dates kept from the last pass) and read
   next time; the error names the failure even when it has no text (ReadError).
+
+## Non-standard options: closing only
+- Recognised from a numbered root (AAPL1, after a split, merger or special dividend), and
+  from Schwab's position fields when present: a multiplier other than 100, or deliverables
+  other than 100 shares of the underlying (the exact fields to be checked against a real
+  position when one is held).
+- Positions: each is its own row ("Non-standard option", flag "Close only"), never matched
+  with standard legs or kept inside its trade chain; P/L from Schwab's market value, no
+  greeks, targets or tested/DTE flags, and left out of the delta and theta totals. Close
+  only: no Roll button, no automanage panel; automanage never acts on it (its flag is
+  notified once).
+- Ticket: opening or rolling one is blocked (red box, "closing only"); a close is allowed
+  with a warning to check the deliverable in thinkorswim.
+- Option chains (Trade screen, scanner, watchlist) never list one: Schwab's nonStandard
+  flag, a multiplier other than 100, or a numbered root.

@@ -36,6 +36,52 @@ def option_symbol(underlying: str, expiration: date, put_call: str, strike: floa
     return f"{underlying:<6}{expiration:%y%m%d}{put_call}{round(strike * 1000):08d}"
 
 
+# An adjusted option after a split, merger or special dividend takes a numbered root
+# (AAPL1, GME2) and delivers something other than 100 shares.
+_ADJUSTED_ROOT = re.compile(r"^([A-Z.]+?)(\d)$")
+NONSTANDARD = "Non-standard option"
+
+
+def nonstandard(symbol: str, underlying: str | None = None, inst: dict | None = None) -> str | None:
+    """Why an option is non-standard, or None for a standard one (100 shares of the
+    underlying). From its root (a numbered root, AAPL1) and, when Schwab gives them, the
+    position's multiplier and deliverables."""
+    occ = parse_option_symbol(symbol or "")
+    if occ is None:
+        return None
+    m = _ADJUSTED_ROOT.match(occ.underlying)
+    under = (underlying or "").lstrip("$").upper()
+    if m and (not under or under in (m.group(1), occ.underlying)):
+        return f"adjusted option (root {occ.underlying})"
+    inst = inst or {}
+    mult = inst.get("optionMultiplier")
+    try:
+        if mult not in (None, "") and float(mult) != 100:
+            return f"multiplier {float(mult):g}, not 100"
+    except (TypeError, ValueError):
+        pass
+    parts = inst.get("optionDeliverables") or []
+    if isinstance(parts, list) and parts:
+        shown = ", ".join(
+            f"{_units(p.get('deliverableUnits'))} {p.get('symbol') or p.get('assetType') or '?'}"
+            for p in parts
+            if isinstance(p, dict)
+        )
+        standard = (
+            len(parts) == 1
+            and isinstance(parts[0], dict)
+            and (parts[0].get("symbol") or "").upper() in ("", under)
+            and parts[0].get("deliverableUnits") in (None, 100, 100.0)
+        )
+        if not standard:
+            return f"delivers {shown}"
+    return None
+
+
+def _units(v) -> str:
+    return f"{v:g}" if isinstance(v, int | float) else str(v if v is not None else "?")
+
+
 @dataclass
 class Leg:
     symbol: str
@@ -107,6 +153,9 @@ def leg_from_schwab_position(pos: dict) -> Leg | None:
             expiration=occ.expiration,
             multiplier=100,
         )
+        why = nonstandard(symbol, leg.underlying, inst)
+        if why:
+            leg.extra["nonstandard"] = why
     elif asset in EQUITY_TYPES:
         leg = Leg(symbol=symbol, underlying=symbol, kind="EQUITY", quantity=qty, avg_price=avg)
     else:

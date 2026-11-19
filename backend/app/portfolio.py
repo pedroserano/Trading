@@ -22,7 +22,15 @@ from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
 from .preferences import MARGIN_SCALE
 from .schwab_service import SchwabAuthError, SchwabError, SchwabNotConnected
-from .strategies import Rules, Strategy, cover_calls, evaluate, group, group_all
+from .strategies import (
+    Rules,
+    Strategy,
+    cover_calls,
+    evaluate,
+    group,
+    group_all,
+    nonstandard_strategy,
+)
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -510,6 +518,13 @@ class PortfolioService:
                 by_trade.setdefault(tid, []).append(leg)
         out: dict[str, list[Strategy]] = {}
         for tid, legs in by_trade.items():
+            # A non-standard option stands alone, outside its trade: closing only.
+            for x in legs:
+                if x.extra.get("nonstandard"):
+                    out.setdefault(x.underlying, []).append(nonstandard_strategy(x))
+            legs = [x for x in legs if not x.extra.get("nonstandard")]
+            if not legs:
+                continue
             guess = group(legs)
             t = info.get(tid, {})
             name = guess[0].name if len(guess) == 1 else t.get("strategy", "Custom")
@@ -636,6 +651,8 @@ class PortfolioService:
                     ("vega", "vega"),
                     ("gamma", "gamma"),
                 ):
+                    if n[nk] is None and n.get("nonstandard") and k != "pl" and k != "day_pl":
+                        continue  # not priced as 100 shares; left out of the totals
                     if n[nk] is None:
                         u_missing[k] = True
                     else:

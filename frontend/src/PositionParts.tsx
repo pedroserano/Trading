@@ -30,6 +30,8 @@ export function Actions({ st, under }: { st: StrategyView; under: string | undef
   const account = useContext(AccountContext);
   const [history, setHistory] = useState<StrategyView | null>(null);
   if (!under) return null;
+  // A non-standard option is closing only: no roll, no automanage.
+  const ns = !!st.numbers.nonstandard;
   const acts = actionsFor(st);
   const options = st.legs.some((l) => l.kind === "OPTION");
   const shares = st.legs.some((l) => l.kind === "EQUITY");
@@ -47,12 +49,12 @@ export function Actions({ st, under }: { st: StrategyView; under: string | undef
           Close{side === "P" ? " puts" : side === "C" ? " calls" : ""}
         </button>
       ))}
-      {acts.roll.map((side) => (
+      {(ns ? [] : acts.roll).map((side) => (
         <button key={`r${side}`} type="button" className="small" onClick={() => open(rollSpec(st, under, account, side))}>
           Roll{side === "P" ? " puts" : side === "C" ? " calls" : ""}
         </button>
       ))}
-      {options && acts.roll.length === 0 ? (
+      {options && !ns && acts.roll.length === 0 ? (
         <span className="sub" title="Schwab accepts at most four legs in one order">
           No roll: it would need more than four legs.{" "}
         </span>
@@ -73,7 +75,7 @@ export function Actions({ st, under }: { st: StrategyView; under: string | undef
           shares={shares}
         />
       ) : null}
-      {st.lots ? null : <AutoPanel st={st} />}
+      {st.lots || ns ? null : <AutoPanel st={st} />}
     </>
   );
 }

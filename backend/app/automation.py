@@ -555,7 +555,9 @@ def decide(
     n = st["numbers"]
     shorts = [x for x in st["legs"] if x["kind"] == "OPTION" and x["quantity"] < 0]
     out: list[Action] = []
-    if not shorts:
+    if not shorts or n.get("nonstandard"):
+        # A non-standard option is closing only and never priced as 100 shares: its flag
+        # is notified, and the rest is yours.
         return out
     dte = n["dte"]
     flags = {f["kind"] for f in st["flags"]}

@@ -4,6 +4,7 @@ import math
 from datetime import date
 
 from .analytics import _valid_vol
+from .options import nonstandard
 
 
 def _f(c: dict, *keys):
@@ -77,6 +78,16 @@ def _contract(c: dict) -> dict:
     }
 
 
+def _nonstandard(c: dict, underlying: str | None) -> bool:
+    """Schwab's own flag, a multiplier other than 100, or a numbered root (AAPL1)."""
+    if c.get("nonStandard") or c.get("isNonStandard"):
+        return True
+    mult = c.get("multiplier")
+    if isinstance(mult, int | float) and mult not in (0, 100):
+        return True
+    return bool(nonstandard(c.get("symbol") or "", underlying))
+
+
 def chain_rows(raw: dict) -> dict:
     """Rows by strike for one expiration: {strike, call, put}."""
     rows: dict[float, dict] = {}
@@ -89,6 +100,8 @@ def chain_rows(raw: dict) -> dict:
                 except (IndexError, ValueError):
                     pass
             for strike_s, contracts in strikes.items():
+                # Adjusted options (after a corporate action) are closing only: never listed.
+                contracts = [c for c in contracts or [] if not _nonstandard(c, raw.get("symbol"))]
                 if not contracts:
                     continue
                 strike = float(strike_s)

@@ -48,6 +48,8 @@ export interface StrategyNumbers {
   short_strikes: number[];
   /** ZEBRAs: the shares the position moves like (negative for a put ZEBRA). */
   shares_like?: number | null;
+  /** Why it is a non-standard option (adjusted after a corporate action): closing only. */
+  nonstandard?: string;
   /** A covered call or put written against shares or a ZEBRA held separately. */
   covered_by?: "shares" | "ZEBRA" | null;
   /** A covered option on a ZEBRA: the ZEBRA's expiration, never rolled past. */
