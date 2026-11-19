@@ -92,6 +92,12 @@ DEFAULT_SETTINGS = {
     # A tested side, the tastytrade way: roll the untested side closer for a credit.
     "untested_target": "match",  # "match": the tested side's delta; "fixed": the tested delta
     "roll_ic_untested": True,  # iron condors roll their untested vertical, same width
+    # ...only once the price reaches a short strike (tastylive rolls at the strike breach, not
+    # at a delta; the loss is capped). Off: as soon as the side is tested (tested_delta).
+    "ic_roll_at_strike": True,
+    # A tested side must stay tested this long before its untested side is rolled, so a brief
+    # spike does not move the safe side (ours, not a tastylive rule). 0: at once.
+    "tested_confirm_min": 30,
     "max_untested_rolls": 2,  # per expiration; then the DTE rule takes over
     "roll_single_itm": False,
     # A single short option in the money rolls to: "same" strike, or "further" out of the
@@ -144,6 +150,7 @@ SETTING_FIELDS = [
     ("min_roll_ivr", "Roll only if IV rank is at least; else close", 0, 100, "int", "IVR"),
     ("max_rolls", "Close instead of rolling after (0: no limit)", 0, 20, "int", "rolls"),
     ("max_untested_rolls", "Untested-side rolls per expiration, at most", 0, 10, "int", "rolls"),
+    ("tested_confirm_min", "Tested for at least", 0, 390, "int", "minutes"),
     ("wings_delta", "Guts to wings: sell the new wings at", 0.05, 0.5, "delta", "Δ"),
     (
         "guts_near_gap",
@@ -306,6 +313,7 @@ def parse_settings(
     if form.get("_form") == "automation":  # checkboxes are only sent when ticked
         out["allow_inverted"] = form.get("allow_inverted") in ("on", "true", "1")
         out["roll_ic_untested"] = form.get("roll_ic_untested") in ("on", "true", "1")
+        out["ic_roll_at_strike"] = form.get("ic_roll_at_strike") in ("on", "true", "1")
         out["roll_single_itm"] = form.get("roll_single_itm") in ("on", "true", "1")
         out["guts_to_wings"] = form.get("guts_to_wings") in ("on", "true", "1")
         out["guts_near"] = form.get("guts_near") in ("on", "true", "1")
@@ -700,6 +708,15 @@ def decide(
                     "A short strike is tested: roll the untested side closer",
                 )
             )
+        elif (
+            name == "Iron condor"
+            and settings.get("roll_ic_untested", True)
+            and settings.get("ic_roll_at_strike", True)
+            and not itm
+        ):
+            # Tested by delta only: flagged, and the flag notified; nothing to do until the
+            # price reaches a short strike.
+            pass
         elif name == "Iron condor" and settings.get("roll_ic_untested", True):
             out.append(
                 Action(
@@ -959,6 +976,7 @@ def auto_fields(
     for key in (
         "ticket_automanage",
         "roll_ic_untested",
+        "ic_roll_at_strike",
         "allow_inverted",
         "roll_single_itm",
         "guts_to_wings",
@@ -1015,6 +1033,12 @@ AUTO_STEPS = [
             "⟦max_untested_rolls⟧ times per expiration, leaving the trade leaning with its "
             "view or your bias.",
             "⟦?roll_ic_untested⟧ Iron condors roll their untested spread, at the same width.",
+            "⟦?ic_roll_at_strike⟧ An iron condor waits until the price reaches a short strike "
+            "before rolling (tastylive rolls at the strike, and the loss is capped).",
+            "A side must stay tested for ⟦tested_confirm_min⟧ minutes before the untested side "
+            "rolls, so a brief spike does not move it. A trade whose view (else your bias) "
+            "expects the move to reverse is held instead: bearish with the calls tested, or "
+            "bullish with the puts tested.",
             "⟦?allow_inverted⟧ A strangle may go inverted (the safe side past the tested one).",
             "⟦?guts_to_wings⟧ An inverted strangle buys the guts and sells new wings at "
             "⟦wings_delta⟧ delta, paying at most the in-the-money value plus "
@@ -1157,7 +1181,13 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "Iron condor",
             f"{pct(rules.profit_target)} of credit",
             defined,
-            f"Roll untested vertical, same width{bias_note}"
+            "Roll untested vertical, same width"
+            + (
+                ", once a short strike is reached"
+                if settings.get("ic_roll_at_strike", True)
+                else ""
+            )
+            + bias_note
             if settings.get("roll_ic_untested", True)
             else "Notify",
             "As tested",
@@ -1311,6 +1341,67 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
 
 
 BIAS_SHIFT = 0.05
+
+
+UNTESTED_ROLLS = ("roll_untested", "roll_untested_vertical")
+
+
+def tested_move(st: dict, spot: float | None, tested_delta: float) -> str | None:
+    """Which way the price has gone against a trade: "up" when a short call is tested (at or
+    past tested_delta, or in the money), "down" for a short put; the deeper one if both."""
+    best, move = -1.0, None
+    for x in st["legs"]:
+        if x["kind"] != "OPTION" or x["quantity"] >= 0 or x.get("strike") is None:
+            continue
+        d = abs(x.get("delta") or 0.0)
+        itm = spot is not None and (
+            spot < x["strike"] if x["put_call"] == "P" else spot > x["strike"]
+        )
+        if (itm or d >= tested_delta) and (d + (1 if itm else 0)) > best:
+            best, move = d + (1 if itm else 0), "up" if x["put_call"] == "C" else "down"
+    return move
+
+
+def steady_tested(
+    acts: list,
+    st: dict,
+    spot: float | None,
+    view: str,
+    tested_since: float | None,
+    now_ts: float,
+    settings: dict,
+    tested_delta: float,
+) -> list:
+    """Untested-side rolls, held back: until the side has stayed tested for
+    tested_confirm_min, and for good while the trade's view (else the bias) expects the move
+    to reverse (bearish with the calls tested, bullish or would own with the puts tested),
+    when a notice says so instead."""
+    out = []
+    for a in acts:
+        if a.rule != "tested" or a.kind not in UNTESTED_ROLLS:
+            out.append(a)
+            continue
+        move = tested_move(st, spot, tested_delta)
+        against = (move == "up" and view == "bearish") or (
+            move == "down" and view in ("bullish", "would_own")
+        )
+        if against:
+            safe = "puts up" if move == "up" else "calls down"
+            label = "would own" if view == "would_own" else view
+            out.append(
+                Action(
+                    "tested",
+                    "notify",
+                    f"The {'calls' if move == 'up' else 'puts'} are tested, but your {label} "
+                    f"view expects the move to reverse: holding, not rolling the {safe}",
+                )
+            )
+            continue
+        wait = (settings.get("tested_confirm_min") or 0) * 60
+        if wait and (tested_since is None or now_ts - tested_since < wait):
+            continue  # not tested long enough yet
+        out.append(a)
+    return out
 
 
 def untested_target(tested_delta: float, untested_pc: str, bias: str) -> float:
@@ -1692,6 +1783,21 @@ class AutomationService:
                             else a
                             for a in acts
                         ]
+                    t = st["trades"][str(tid)]
+                    if any(f["kind"] == "tested" for f in s["flags"]):
+                        t.setdefault("tested_since", now.timestamp())
+                    else:
+                        t.pop("tested_since", None)
+                    acts = steady_tested(
+                        acts,
+                        s,
+                        u["price"],
+                        self.trade_view(tid, rules),
+                        t.get("tested_since"),
+                        now.timestamp(),
+                        settings,
+                        rules.tested_delta,
+                    )
                     if expiry_only:
                         acts = [a for a in acts if a.rule == "expiry"]
                     for action in acts:

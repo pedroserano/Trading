@@ -242,7 +242,12 @@ def summarize_preview(raw) -> dict:
                 if k in levels and isinstance(v, list):
                     for item in v:
                         if isinstance(item, dict):
-                            text = item.get("message") or item.get("title") or str(item)
+                            text = (
+                                item.get("message")
+                                or item.get("activityMessage")
+                                or item.get("title")
+                                or str(item)
+                            )
                             messages.append({"level": levels[k], "text": str(text)[:300]})
                 walk(v, k)
         elif isinstance(node, list):
@@ -255,6 +260,44 @@ def summarize_preview(raw) -> dict:
         "fields": fields,
         "messages": [m for m in messages if m["level"] != "ok"],
         "raw": raw,
+    }
+
+
+OVERSOLD = ("oversold", "overbought")
+
+
+async def _expected_oversold(preview: dict, t, broker, warnings: list[str]) -> dict:
+    """A closing order or roll previewed while a working closing order (say the GTC profit
+    target) holds the same contracts: Schwab's preview counts both and rejects the new one
+    as oversold. Placing it replaces that order, so this rejection is expected and does not
+    block; the ticket says which order goes. Any other rejection still blocks."""
+    symbols = {x.symbol for x in t.legs}
+    holding = [
+        o
+        for o in await broker.working()
+        if o.get("intent") in ("close", "roll") and symbols & {x["symbol"] for x in o["legs"]}
+    ]
+    errors = [m for m in preview.get("messages", []) if m["level"] == "error"]
+    if not holding or not errors or preview.get("error"):
+        return preview
+    if not all(any(w in m["text"].lower() for w in OVERSOLD) for m in errors):
+        return preview
+    ids = ", ".join(f"#{o['id']}" for o in holding)
+    extra = [x["symbol"] for o in holding for x in o["legs"] if x["symbol"] not in symbols]
+    warnings.append(
+        f"Placing this replaces your working closing order {ids} on these contracts (Schwab's "
+        "preview counted both, hence its oversold message)"
+        + (
+            "; that order also closed other legs, which are left without a closing order "
+            "until a new profit target is placed"
+            if extra
+            else ""
+        )
+    )
+    return {
+        **preview,
+        "ok": True,
+        "messages": [m if m not in errors else {**m, "level": "info"} for m in preview["messages"]],
     }
 
 
@@ -1738,6 +1781,8 @@ def create_app(
         live_blocks = []
         if body.account != "sim":
             live_blocks = await brokers[body.account].gate(t, bp, nl)
+            if preview is not None and not preview.get("ok") and t.intent in ("close", "roll"):
+                preview = await _expected_oversold(preview, t, brokers[body.account], warnings)
             if preview is not None and not preview.get("ok"):
                 live_blocks.append(
                     "Schwab's preview did not accept the order: "

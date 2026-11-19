@@ -355,6 +355,73 @@ def test_summarize_preview_finds_nested_fields_and_messages():
     assert not s["ok"] and {m["level"] for m in s["messages"]} == {"warning", "error"}
 
 
+def test_schwab_activity_messages_are_read_as_text():
+    raw = {
+        "orderValidationResult": {
+            "rejects": [
+                {
+                    "activityMessage": "This order may result in an oversold/overbought "
+                    "position in your account.",
+                    "originalSeverity": "REJECT",
+                }
+            ]
+        }
+    }
+    s = summarize_preview(raw)
+    assert s["messages"][0]["text"].startswith("This order may result in an oversold")
+
+
+@pytest.mark.anyio
+async def test_an_oversold_preview_is_expected_while_a_working_close_holds_the_contracts():
+    from app.main import _expected_oversold
+    from app.orders import Ticket, TicketLeg
+
+    p665, p660 = "SPY   270115P00665000", "SPY   270115P00660000"
+    p700, p695 = "SPY   270115P00700000", "SPY   270115P00695000"
+    c760 = "SPY   270115C00760000"
+    t = Ticket(
+        legs=[
+            TicketLeg.parse(p665, 1, "close"),
+            TicketLeg.parse(p660, -1, "close"),
+            TicketLeg.parse(p700, -1, "open"),
+            TicketLeg.parse(p695, 1, "open"),
+        ],
+        intent="roll",
+        limit_net=0.40,
+    )
+    oversold = {
+        "ok": False,
+        "fields": {},
+        "messages": [
+            {"level": "error", "text": "This order may result in an oversold/overbought position"}
+        ],
+    }
+
+    class Broker:
+        def __init__(self, orders):
+            self.orders = orders
+
+        async def working(self):
+            return self.orders
+
+    target = {
+        "id": "123",
+        "intent": "close",
+        "legs": [{"symbol": p665}, {"symbol": p660}, {"symbol": c760}],
+    }
+    warnings = []
+    out = await _expected_oversold(oversold, t, Broker([target]), warnings)
+    assert out["ok"] and out["messages"][0]["level"] == "info"
+    assert "#123" in warnings[0] and "left without a closing order" in warnings[0]
+    # Nothing working on those contracts: Schwab's rejection stands.
+    warnings = []
+    assert not (await _expected_oversold(oversold, t, Broker([]), warnings))["ok"]
+    assert warnings == []
+    # Any other rejection stands too.
+    funds = {**oversold, "messages": [{"level": "error", "text": "Insufficient funds"}]}
+    assert not (await _expected_oversold(funds, t, Broker([target]), []))["ok"]
+
+
 # API ------------------------------------------------------------------------------------
 
 

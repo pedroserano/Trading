@@ -42,7 +42,19 @@ NASDAQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.nasdaq.com",
+    "Referer": "https://www.nasdaq.com/",
 }
+NASDAQ_TRIES = 3  # per day, on a dropped connection, a timeout or a 5xx
+
+
+def _why(e: Exception) -> str:
+    """An error as text, also when it carries none (httpx's ReadError often does not)."""
+    text = str(e).strip()
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
 REFRESH_S = 6 * 3600
 FUNDS = {"ETF", "ETN", "COLLECTIVE_INVESTMENT", "INDEX", "MUTUAL_FUND"}
 LABELS = {"bmo": "before the open", "amc": "after the close", None: "time not given"}
@@ -187,6 +199,7 @@ class EarningsService:
         self.industries_at: float = 0.0
         self.past: dict[str, str] = {}  # stock -> its last report date, once past
         self.stocks: set[str] = set()  # the stocks covered on the last refresh
+        self.partial: str | None = None  # days of the calendar a refresh could not read
         self.refreshed_at: float | None = None
         self.error: str | None = None
         self._wake = asyncio.Event()
@@ -322,6 +335,7 @@ class EarningsService:
         stocks = wanted - self.funds
         self.stocks = stocks
         errors = []
+        self.partial = None
         if stocks and self.use_nasdaq:
             own = self.client is None
             client = self.client or httpx.AsyncClient(timeout=30)
@@ -330,7 +344,7 @@ class EarningsService:
                     await self._nasdaq(client)
                 except Exception as e:  # keeps what it had
                     log.warning("Earnings: Nasdaq calendar failed: %s", e)
-                    errors.append(f"Nasdaq: {type(e).__name__}: {e}"[:200])
+                    errors.append(f"Nasdaq: {_why(e)}"[:200])
                 if stocks - set(self.industries) and (
                     time.time() - self.industries_at > INDUSTRIES_REFRESH_S
                 ):
@@ -344,6 +358,8 @@ class EarningsService:
         elif self.demo:
             self.nasdaq = self._demo(stocks)
         self.refreshed_at = time.time()
+        if self.partial:
+            errors.append(self.partial)
         self.error = "; ".join(errors) or None
         await self.store.set_setting(
             CACHE_KEY,
@@ -360,19 +376,55 @@ class EarningsService:
         return len([s for s in stocks if self.raw(s)])
 
     async def _nasdaq_day(self, client, d: date) -> dict | None:
-        r = await client.get(NASDAQ_URL, params={"date": d.isoformat()}, headers=NASDAQ_HEADERS)
-        r.raise_for_status()
-        return parse_nasdaq(r.json())
+        """One day of the calendar, tried again on a dropped connection, a timeout or a
+        server error. Raises once every try failed."""
+        for attempt in range(NASDAQ_TRIES):
+            try:
+                r = await client.get(
+                    NASDAQ_URL,
+                    params={"date": d.isoformat()},
+                    headers=NASDAQ_HEADERS,
+                    timeout=15,
+                )
+                if r.status_code >= 500 or r.status_code == 429:
+                    raise httpx.HTTPStatusError(
+                        f"HTTP {r.status_code}", request=r.request, response=r
+                    )
+                r.raise_for_status()
+                return parse_nasdaq(r.json())
+            except (httpx.TransportError, httpx.HTTPStatusError) as e:
+                if attempt == NASDAQ_TRIES - 1 or (
+                    isinstance(e, httpx.HTTPStatusError)
+                    and e.response.status_code < 500
+                    and e.response.status_code != 429
+                ):
+                    raise
+                await asyncio.sleep(2 * (attempt + 1) * self.pace)
+        return None  # not reached
 
     async def _nasdaq(self, client) -> None:
         """Nasdaq's calendar, every listed company: the weeks ahead (read again each time,
-        dates move) and the weeks back, for each stock's last report (each day read once)."""
+        dates move) and the weeks back, for each stock's last report (each day read once).
+        A day that still fails is skipped (its dates kept from before, or read next time);
+        if nothing at all can be read, the error is raised."""
         today = self.today()
         ahead: dict = {}
         empty = 0
+        failed: list[str] = []
+        read = 0
+        last_error = None
         for d in weekdays(today, today + timedelta(days=NASDAQ_AHEAD_DAYS)):
-            day = await self._nasdaq_day(client, d)
-            await asyncio.sleep(0.5 * self.pace)
+            try:
+                day = await self._nasdaq_day(client, d)
+            except Exception as e:
+                failed.append(d.isoformat())
+                last_error = e
+                if not read and len(failed) >= 3:
+                    raise  # not reaching Nasdaq at all
+                continue
+            finally:
+                await asyncio.sleep(0.5 * self.pace)
+            read += 1
             if day is None:
                 empty += 1
                 if empty >= 3:  # past the end of what Nasdaq lists
@@ -382,18 +434,34 @@ class EarningsService:
             for sym, t in day.items():
                 if sym not in ahead:
                     ahead[sym] = {"date": d.isoformat(), "time": t, "source": "Nasdaq"}
+        # Dates on the days that could not be read are kept from the last pass.
+        for sym, info in self.nasdaq.items():
+            if info["date"] in failed and (sym not in ahead or info["date"] < ahead[sym]["date"]):
+                ahead[sym] = info
         self.nasdaq = ahead
         for d in weekdays(today - timedelta(days=NASDAQ_BACK_DAYS), today - timedelta(days=1)):
             if d.isoformat() in self.nasdaq_done:
                 continue
-            day = await self._nasdaq_day(client, d)
-            await asyncio.sleep(0.5 * self.pace)
+            try:
+                day = await self._nasdaq_day(client, d)
+            except Exception as e:
+                failed.append(d.isoformat())
+                last_error = e
+                continue  # read again next time
+            finally:
+                await asyncio.sleep(0.5 * self.pace)
             if day is None:
                 continue
             for sym in day:
                 if self.past.get(sym, "") < d.isoformat():
                     self.past[sym] = d.isoformat()
             self.nasdaq_done.add(d.isoformat())
+        self.partial = (
+            f"Nasdaq: {len(failed)} day{'s' if len(failed) != 1 else ''} not read "
+            f"({_why(last_error)}); tried again next refresh"
+            if failed
+            else None
+        )
         oldest = (today - timedelta(days=PAST_KEEP_DAYS)).isoformat()
         self.nasdaq_done = {x for x in self.nasdaq_done if x >= oldest}
         self.past = {k: v for k, v in self.past.items() if v >= oldest}

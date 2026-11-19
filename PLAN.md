@@ -696,3 +696,22 @@ entered in Settings.
   screener instead: one request for every listed company (about 6,500 with an industry), at
   most once a day and only while a covered stock has none. Industries already saved from
   Finnhub stay until Nasdaq's replace them; its old saved dates are no longer used.
+
+## Calmer untested-side rolls; previews behind a working close; Nasdaq retries
+- Iron condors roll their untested spread only once the price reaches a short strike
+  (Settings, Automation, step 3, on by default): tastylive's rule, as its research is
+  summarised, is to roll the untested side at the tested strike, not at a delta, and the
+  loss is capped. Below the strike the Tested flag shows (and is notified) and nothing rolls.
+- Any untested-side roll (strangle or iron condor) waits until the side has stayed tested
+  for 30 minutes (adjustable, 0 at once; ours, against whipsaw on a brief spike).
+- A trade whose view (its own, else the portfolio bias) expects the move to reverse is held:
+  bearish with the calls tested, bullish or Would own with the puts tested. A notice says
+  so instead of rolling. A view that matches the move rolls as before.
+- Schwab's preview of a close or roll is rejected as "oversold/overbought" while a working
+  closing order (the GTC profit target) holds the same contracts; placing replaces that
+  order, so that rejection no longer blocks. The ticket warns which order is replaced, and
+  that legs only that order closed are left without a closing order. Schwab's
+  `activityMessage` is shown as text.
+- Nasdaq: fuller browser headers; each day tried 3 times on a dropped connection, timeout
+  or 5xx; a day that still fails is skipped (its dates kept from the last pass) and read
+  next time; the error names the failure even when it has no text (ReadError).

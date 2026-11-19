@@ -254,3 +254,45 @@ async def test_a_failing_nasdaq_keeps_what_it_had():
     e.nasdaq = {"NVDA": {"date": "2026-11-24", "time": "amc", "source": "Nasdaq"}}
     assert await e.refresh() == 1
     assert e.info("NVDA")["date"] == "2026-11-24" and "Nasdaq" in e.error
+
+
+@pytest.mark.anyio
+async def test_nasdaq_dropped_connections_are_retried_and_one_bad_day_is_skipped():
+    tries = {}
+
+    def handler(request):
+        d = request.url.params["date"]
+        tries[d] = tries.get(d, 0) + 1
+        if d == "2026-11-12" and tries[d] == 1:
+            raise httpx.ReadError("", request=request)  # dropped once: retried
+        if d == "2026-11-13":
+            raise httpx.ReadError("", request=request)  # always: skipped
+        if d > "2026-11-20":
+            return httpx.Response(200, json={"data": None})
+        rows = [{"symbol": "NVDA", "time": "time-after-hours"}] if d == "2026-11-19" else []
+        if d == "2026-11-12":
+            rows = [{"symbol": "WMT", "time": "time-pre-market"}]
+        return httpx.Response(200, json={"data": {"rows": rows}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    async def symbols():
+        return {"NVDA", "WMT", "AAPL"}
+
+    clock = lambda: datetime(2026, 11, 11, 12, tzinfo=ET)  # noqa: E731
+    e = er.EarningsService(
+        MemoryStore(), Quotes(), symbols, clock=clock, client=client, nasdaq=True
+    )
+    e.pace = 0
+    # A date known from the last pass, on the day that cannot be read now, is kept.
+    e.nasdaq = {"AAPL": {"date": "2026-11-13", "time": "bmo", "source": "Nasdaq"}}
+    assert await e.refresh() == 3
+    assert tries["2026-11-12"] == 2 and tries["2026-11-13"] == er.NASDAQ_TRIES
+    assert e.info("WMT")["date"] == "2026-11-12" and e.info("AAPL")["date"] == "2026-11-13"
+    assert e.error.startswith("Nasdaq: ") and "(ReadError)" in e.error
+    assert "2026-11-13" not in e.nasdaq_done  # read again next time (it is ahead anyway)
+
+
+def test_errors_with_no_text_still_say_what_they_are():
+    assert er._why(httpx.ReadError("")) == "ReadError"
+    assert er._why(ValueError("bad")) == "ValueError: bad"

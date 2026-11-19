@@ -88,7 +88,11 @@ def test_decide_follows_the_rules():
     assert ("dte", "roll") in kinds(decide(strat(dte=20), 590, r, s, ALL, ivr=40))
     assert ("tested", "roll_untested") in kinds(decide(strat(flags=["tested"]), 590, r, s, ALL))
     ic = strat(name="Iron condor", flags=["tested"], defined=True)
-    assert ("tested", "roll_untested_vertical") in kinds(decide(ic, 590, r, s, ALL))
+    # Tested by delta only: an iron condor waits for the price to reach a short strike.
+    assert not any(a.rule == "tested" for a in decide(ic, 590, r, s, ALL))
+    assert ("tested", "roll_untested_vertical") in kinds(decide(ic, 612, r, s, ALL))
+    at_delta = {**s, "ic_roll_at_strike": False}
+    assert ("tested", "roll_untested_vertical") in kinds(decide(ic, 590, r, at_delta, ALL))
     no_ic = {**s, "roll_ic_untested": False}
     assert ("tested", "notify") in kinds(decide(ic, 590, r, no_ic, ALL))
     assert kinds(decide(strat(flags=["loss"]), 590, r, s, ALL))[0] == ("loss", "close")
@@ -517,6 +521,7 @@ def test_tested_side_settings_from_the_form():
     )
     assert s["untested_target"] == "fixed" and s["roll_single_itm"] is True
     assert s["roll_ic_untested"] is False  # unticked on that form
+    assert s["ic_roll_at_strike"] is False
     assert s["max_untested_rolls"] == 3
 
 
@@ -920,12 +925,12 @@ def test_the_plain_summary_follows_the_settings():
     assert len(steps) == 6
     first = steps["1. Take profits early"][0]
     assert "at 50% of what it can make" in first and "(simulated Auto, Schwab Propose;" in first
-    assert "to the same strike" in steps["3. Defend a tested side, calmly"][5]
+    assert "to the same strike" in steps["3. Defend a tested side, calmly"][7]
     assert "Never margin" in steps["4. Expiration day"][1]
     on = {**s, "single_roll_strike": "further"}
     assert (
         "the furthest strike that still pays"
-        in dict(auto.plain_summary(Rules(), on))["3. Defend a tested side, calmly"][5]
+        in dict(auto.plain_summary(Rules(), on))["3. Defend a tested side, calmly"][7]
     )
 
 
@@ -1133,3 +1138,40 @@ def test_butterflies_take_a_share_of_max_profit_and_are_never_rolled():
     acts = decide(st, 600, r, s, ALL)
     assert ("dte", "close") in kinds(acts) and ("dte", "roll") not in kinds(acts)
     assert "butterflies are closed, not rolled" in acts[0].reason
+
+
+def test_untested_rolls_wait_for_a_steady_test_and_respect_the_view():
+    s = merged_settings(None)
+    assert s["tested_confirm_min"] == 30 and s["ic_roll_at_strike"] is True
+    # SPY up through the 610 call: the calls are tested.
+    st = strat(
+        name="Iron condor",
+        flags=["tested"],
+        defined=True,
+        legs=[leg("P", 555, -1, -0.08), leg("C", 610, -1, 0.55)],
+    )
+    roll = Action("tested", "roll_untested_vertical", "A short strike is tested")
+    other = Action("profit", "target", "x")
+    assert auto.tested_move(st, 612, 0.30) == "up"
+    t0 = 1_000_000.0
+    # Just tested: wait. Tested 30 minutes: roll. Other actions pass untouched.
+    assert kinds(auto.steady_tested([roll, other], st, 612, "neutral", t0, t0 + 60, s, 0.30)) == [
+        ("profit", "target")
+    ]
+    assert auto.steady_tested([roll], st, 612, "neutral", t0, t0 + 1800, s, 0.30) == [roll]
+    assert auto.steady_tested([roll], st, 612, "bullish", t0, t0 + 1800, s, 0.30) == [roll]
+    # A bearish view expects SPY back down: hold the puts, and say so.
+    (held,) = auto.steady_tested([roll], st, 612, "bearish", t0, t0 + 1800, s, 0.30)
+    assert held.kind == "notify" and "bearish view" in held.reason and "puts up" in held.reason
+    # Puts tested with a bullish (or would own) view: hold the calls.
+    down = strat(
+        name="Strangle", flags=["tested"], legs=[leg("P", 555, -1, -0.45), leg("C", 610, -1, 0.05)]
+    )
+    r2 = Action("tested", "roll_untested", "x")
+    for v in ("bullish", "would_own"):
+        (h,) = auto.steady_tested([r2], down, 560, v, t0, t0 + 1800, s, 0.30)
+        assert h.kind == "notify" and "calls down" in h.reason
+    # No wait when set to 0.
+    assert auto.steady_tested(
+        [r2], down, 560, "neutral", None, t0, {"tested_confirm_min": 0}, 0.30
+    ) == [r2]
