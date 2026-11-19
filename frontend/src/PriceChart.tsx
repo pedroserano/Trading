@@ -60,6 +60,10 @@ export default function PriceChart(props: {
   spot: number | null;
   expiration: string | null;
   expectedMove: number | null;
+  /** Where to load the candles from, when not the Trade screen's chart of an underlying. */
+  url?: string;
+  /** A market rather than something you trade: no strikes, cone or earnings in the legend. */
+  plain?: boolean;
 }) {
   const account = useContext(AccountContext);
   const box = useRef<HTMLDivElement>(null);
@@ -73,14 +77,14 @@ export default function PriceChart(props: {
     let stop = false;
     setData(null);
     setError(null);
-    getJson<ChartData>(`/api/trade/${encodeURIComponent(props.symbol)}/chart?account=${account}`).then(
+    getJson<ChartData>(props.url ?? `/api/trade/${encodeURIComponent(props.symbol)}/chart?account=${account}`).then(
       (d) => !stop && setData(d),
       (e) => !stop && setError(String(e.message)),
     );
     return () => {
       stop = true;
     };
-  }, [props.symbol, account]);
+  }, [props.symbol, props.url, account]);
 
   // Build the chart whenever its data or overlays change.
   useEffect(() => {
@@ -225,11 +229,15 @@ export default function PriceChart(props: {
             </button>
           ))}
         </div>
+        {props.plain ? (
+          <span className="dim-text chart-legend">Daily · ⋯ 52-week high/low</span>
+        ) : (
         <span className="dim-text chart-legend">
           Daily · <span className="key-short">━</span> your shorts <span className="key-long">┅</span> longs ·{" "}
           <span className="key-cone">┅</span> expected move to {props.expiration ?? "–"} · ⋯ 52-week high/low ·{" "}
           <span className="key-short">▲</span> earnings
         </span>
+        )}
       </div>
       {error ? <div className="msg warn">Chart: {error}</div> : null}
       <div className="chart-box" ref={box} />

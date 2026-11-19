@@ -702,6 +702,16 @@ def test_market_strip_in_demo(client):
     assert es["contract"] == "/ESZ26" and es["price"] > 1000 and es["change_pct"] is not None
 
 
+def test_market_chart_is_the_index_behind_each_future(client):
+    r = client.get("/api/market/chart", params={"label": "S&P"}).json()
+    assert r["symbol"] == "$SPX" and len(r["candles"]) > 200
+    assert r["high52"] == max(x["close"] for x in r["candles"])
+    assert r["strikes"] == [] and r["earnings"] is None
+    assert client.get("/api/market/chart", params={"label": "VIX"}).json()["symbol"] == "$VIX"
+    assert client.get("/api/market/chart", params={"label": "Gold"}).json()["symbol"] == "GLD"
+    assert client.get("/api/market/chart", params={"label": "Nope"}).status_code == 404
+
+
 def test_automanage_on_fill_from_the_ticket(client):
     put = first_put(client)
     body = {
