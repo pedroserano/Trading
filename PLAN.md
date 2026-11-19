@@ -631,3 +631,22 @@ entered in Settings.
   with that group's average win and loss (|avg loss| / (avg win + |avg loss|)), in orange
   when the actual win rate is below it. On phones breakdown rows stay on one line and the
   table scrolls sideways.
+
+## Earnings play and post-earnings fade (scanner, both off by default)
+- Earnings play (tick in Settings, Scanner, step 4): on the last session before a single
+  stock's report (time known, before the open or after the close), with IV rank at least 50,
+  sell an iron condor (or a strangle, by choice) at the usual deltas in the first expiration
+  on or after the session the report reaches the price, at half size (contracts and buying
+  power cap). The trade carries a `play` tag ("earnings:<that session>") through proposals,
+  the ticket (`OrderIn.play`), fills and automanage's trade state.
+- Automanage rule "Earnings play: close after the report" (default Propose): closes the
+  trade from that session. The earnings, DTE, tested, quick-profit and low-IV loss rules
+  leave tagged trades alone; profit target, loss and expiration day still apply.
+- Post-earnings fade (tick to turn on): within 3 sessions after a report (from the session
+  after the report day), a move since the close before the report day of at least 1x the
+  expected move options priced for the report (recorded by the scanner on the last session
+  before it, in scanner state `pre_em`), or, with none recorded, 3x the usual day's move over
+  the 20 sessions before. Sold against: one side outside the expected move, with its own IV
+  rank floor (0) and no IV-over-realized check; a spread when IV rank is at or under
+  automanage's low-IV level. A Would own view keeps its cash-secured put; a view against the
+  fade skips the stock.

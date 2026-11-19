@@ -603,3 +603,134 @@ async def test_a_low_float_means_defined_risk_at_half_size():
     assert "Defined risk, half size: low float (7.2 million shares)" in c["label"]
     # Funds have no float to check.
     assert "XLE" not in asked and "SPY" not in asked
+
+
+# Earnings play and post-earnings fade ------------------------------------------------
+
+
+class EarningsAt(Earnings):
+    """Reports with a time, and the last report already past."""
+
+    def __init__(self, dates, time_="amc", last=None):
+        super().__init__(dates)
+        self.time_, self.last = time_, last or {}
+
+    def info(self, symbol):
+        from app.earnings import describe
+
+        d = self.dates.get(symbol)
+        return describe({"date": d, "time": self.time_}, NOW.date()) if d else None
+
+    def last_report(self, symbol):
+        return self.last.get(symbol)
+
+
+@pytest.mark.anyio
+async def test_earnings_play_is_off_by_default_then_sells_into_the_report():
+    scanner, _, _ = harness({"min_ic_credit": 0.15})
+    scanner.earnings = EarningsAt({"AAPL": "2026-11-11"})  # after today's close
+    r = await scanner.scan("sim", act=False)
+    assert "AAPL" not in [c["symbol"] for c in r["candidates"]]
+    assert "buffer" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+
+    scanner.store.settings[sc.SETTINGS_KEY] = {
+        "min_ic_credit": 0.15,
+        "max_bp_share": 0.1,
+        "earnings_play": True,
+    }
+    r = await scanner.scan("sim", act=False)
+    c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
+    assert c["play"] == "earnings:2026-11-12" and c["strategy"] == "Iron condor"
+    assert c["label"].startswith("Earnings play: ")
+    assert "closed on 2026-11-12 after the IV crush" in c["label"]
+    # The move options price for the report is remembered for the fade.
+    assert (await scanner._state())["pre_em"]["AAPL"]["report"] == "2026-11-11"
+
+    scanner.store.settings[sc.SETTINGS_KEY] = {
+        "min_ic_credit": 0.15,
+        "max_bp_share": 0.1,
+        "earnings_play": True,
+        "earnings_play_risk": "undefined",
+    }
+    c = next(
+        x for x in (await scanner.scan("sim", act=False))["candidates"] if x["symbol"] == "AAPL"
+    )
+    assert c["strategy"] == "Strangle"
+    # IV rank under the play's floor, or no report time: skipped, saying why.
+    scanner.store.settings[sc.SETTINGS_KEY] = {"earnings_play": True, "earnings_play_ivr": 80}
+    r = await scanner.scan("sim", act=False)
+    assert (
+        "earnings play: IV rank 70, under 80"
+        in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+    )
+    scanner.earnings = EarningsAt({"AAPL": "2026-11-11"}, time_=None)
+    scanner.store.settings[sc.SETTINGS_KEY] = {"earnings_play": True}
+    r = await scanner.scan("sim", act=False)
+    assert "time" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+
+
+@pytest.mark.anyio
+async def test_a_proposed_earnings_play_carries_its_tag():
+    scanner, auto, _ = harness(
+        {"min_ic_credit": 0.15, "max_bp_share": 0.1, "earnings_play": True, "level": "propose"}
+    )
+    scanner.earnings = EarningsAt({"AAPL": "2026-11-11"})
+    await scanner.scan("sim", act=True)
+    p = next(x for x in (await auto.load())["proposals"] if x["underlying"] == "AAPL")
+    assert p["play"] == "earnings:2026-11-12"
+
+
+def test_fade_signal():
+    s = sc.merged({"fade": True})
+    flat = [(date(2026, 10, 1 + i), 100.0 + (i % 2) * 0.5) for i in range(25)]
+    today = date(2026, 11, 11)
+    # Down 8% since the close before the report, against a recorded 5% expected move.
+    f = sc.fade_signal(flat, 92.46, "2026-11-10", today, s, {"report": "2026-11-10", "em": 0.05})
+    assert f["direction"] == "down" and f["basis"] == "its 5.0% expected move"
+    # Inside the expected move: no fade.
+    assert (
+        sc.fade_signal(flat, 97.0, "2026-11-10", today, s, {"report": "2026-11-10", "em": 0.05})
+        is None
+    )
+    # No move recorded: against 3x the usual day (about 0.5%).
+    f = sc.fade_signal(flat, 103.0, "2026-11-10", today, s, None)
+    assert f["direction"] == "up" and "usual" in f["basis"]
+    # Too long after the report, or on the report day itself.
+    assert sc.fade_signal(flat, 92.0, "2026-11-03", today, s, None) is None
+    assert sc.fade_signal(flat, 92.0, "2026-11-11", today, s, None) is None
+
+
+@pytest.mark.anyio
+async def test_post_earnings_fade_sells_against_the_move_when_on():
+    class Priced(Source):
+        async def quotes(self, symbols):
+            out = await super().quotes(symbols)
+            out["AAPL"]["quote"] = {"mark": 560.0, "netPercentChange": -1.0}
+            return out
+
+    def setup(settings):
+        scanner, _, _ = harness(settings)
+        scanner.source = Priced({"SPY": "ETF", "XLE": "ETF"})
+        scanner.history = History([600.0 + (i % 2) for i in range(30)])
+        scanner.earnings = EarningsAt({"AAPL": "2027-02-01"}, last={"AAPL": "2026-11-10"})
+        return scanner
+
+    off = setup({"min_ic_credit": 0.15, "extreme_tilt": False, "shock_day_ratio": 1000})
+    c = next(x for x in (await off.scan("sim", act=False))["candidates"] if x["symbol"] == "AAPL")
+    assert c["fade"] is None and c["strategy"] == "Strangle"
+
+    on = setup(
+        {"min_ic_credit": 0.15, "extreme_tilt": False, "shock_day_ratio": 1000, "fade": True}
+    )
+    c = next(x for x in (await on.scan("sim", act=False))["candidates"] if x["symbol"] == "AAPL")
+    assert c["fade"]["direction"] == "down" and c["strategy"] == "Short put"
+    assert c["label"].startswith("Post-earnings fade (down 6.8% since the 2026-11-10 report")
+    assert "against the post-earnings move" in c["label"]
+
+    # A bearish view on the stock is not overridden.
+    async def views():
+        return {"AAPL": "bearish"}
+
+    on.preferences.symbol_views = views
+    r = await on.scan("sim", act=False)
+    assert "against your bearish view" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]

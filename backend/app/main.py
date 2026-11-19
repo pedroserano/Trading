@@ -160,6 +160,9 @@ class OrderIn(BaseModel):
     automanage: bool = False
     # The new trade's view for automanage: neutral, bullish, bearish (None: the portfolio's).
     view: str | None = None
+    # An earnings play from the scanner ("earnings:<date>"): automanage closes it after the
+    # report.
+    play: str | None = Field(None, max_length=32)
     # Placed from a proposal's Review: that proposal is then done.
     proposal_id: str | None = Field(None, max_length=64)
 
@@ -1785,7 +1788,7 @@ def create_app(
             await key_order_notice(key, body)
         if body.automanage and body.intent == "open":
             view = body.view if body.view in targets.VIEWS else None
-            await automations[body.account].watch_entry(order, view)
+            await automations[body.account].watch_entry(order, view, body.play)
         if body.proposal_id:
             await automations[body.account].placed_from_ticket(body.proposal_id)
         return order

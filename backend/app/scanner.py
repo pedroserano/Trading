@@ -16,13 +16,14 @@ import copy
 import logging
 import math
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dividends, plain, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
+from .earnings import sessions_until
 from .extremes import compute as compute_extreme
 from .options import parse_option_symbol
 from .signals import drop_signal, one_side, shock, skew
@@ -89,6 +90,21 @@ DEFAULTS = {
     # A single stock whose report falls inside the trade: "skip" it, or "defined" risk at
     # half size.
     "earnings_inside": "skip",
+    # Earnings play (tastylive): on the last session before a single stock's report, sell
+    # premium outside the expected move in the first expiration after it, at half size,
+    # and close it the session the report reaches the price (the IV crush). Off by default.
+    "earnings_play": False,
+    "earnings_play_ivr": 50,
+    "earnings_play_risk": "defined",  # "defined": iron condor; "undefined": strangle
+    # Post-earnings fade: in the first sessions after a report, a move bigger than the
+    # expected move (recorded before the report; else fade_day_ratio times the usual day)
+    # is sold against, one side outside the expected move, at a lower IV rank than usual.
+    # Off by default.
+    "fade": False,
+    "fade_sessions": 3,
+    "fade_min_ivr": 0,
+    "fade_move": 1.0,  # times the expected move
+    "fade_day_ratio": 3.0,  # times the usual day's move, when no expected move was recorded
     "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
     "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
@@ -123,6 +139,18 @@ FIELDS = [
     ("shock_iv_jump", "Possible shock: or IV30 up in 5 sessions at least", 5, 300, "percent", "%"),
     ("shock_sessions", "Possible shock: look back and stay careful for", 1, 60, "int", "sessions"),
     ("contracts", "Contracts per trade", 1, 50, "int", "contracts"),
+    ("earnings_play_ivr", "Earnings play: IV rank at least", 0, 100, "int", "IVR"),
+    ("fade_sessions", "Post-earnings fade: within", 1, 10, "int", "sessions of the report"),
+    ("fade_min_ivr", "Post-earnings fade: IV rank at least", 0, 100, "int", "IVR"),
+    ("fade_move", "Post-earnings fade: a move of at least", 0.5, 5, "float", "× expected move"),
+    (
+        "fade_day_ratio",
+        "Post-earnings fade: or, with no expected move recorded, at least",
+        1,
+        20,
+        "float",
+        "× the usual day",
+    ),
     ("min_pop", "Probability of profit, at least", 0, 95, "percent", "%"),
     ("min_iv30", "IV30 at least (quiet-market floor; 0: off)", 0, 100, "float", "%"),
     ("rich_iv30", "Or IV30 at least, at any IV rank (0: off)", 0, 200, "float", "%"),
@@ -186,6 +214,10 @@ def parse_form(
         out["extreme_tilt"] = form.get("extreme_tilt") in ("on", "true", "1")
         out["band_lean"] = form.get("band_lean") in ("on", "true", "1")
         out["avoid_through_earnings"] = form.get("avoid_through_earnings") in ("on", "true", "1")
+        out["earnings_play"] = form.get("earnings_play") in ("on", "true", "1")
+        out["fade"] = form.get("fade") in ("on", "true", "1")
+    if form.get("earnings_play_risk") in ("defined", "undefined"):
+        out["earnings_play_risk"] = form["earnings_play_risk"]
     if form.get("earnings_inside") in ("skip", "defined"):
         out["earnings_inside"] = form["earnings_inside"]
     if "scan_time" in form:
@@ -204,6 +236,7 @@ def parse_form(
 
 LEVEL_LABELS = {"off": "Off", "notify": "Notify", "propose": "Propose", "auto": "Auto"}
 EARNINGS_INSIDE = [("skip", "skip the stock"), ("defined", "allow only a defined-risk spread")]
+PLAY_RISK = [("defined", "an iron condor"), ("undefined", "a strangle")]
 
 
 def level_field(account: str) -> str:
@@ -245,12 +278,20 @@ def scan_fields(
     out["earnings_inside"] = plain.Field(
         "select", s.get("earnings_inside", "skip"), d["earnings_inside"], options=EARNINGS_INSIDE
     )
+    out["earnings_play_risk"] = plain.Field(
+        "select",
+        s.get("earnings_play_risk", "defined"),
+        d["earnings_play_risk"],
+        options=PLAY_RISK,
+    )
     for key in (
         "monthly_only",
         "automanage_new",
         "extreme_tilt",
         "band_lean",
         "avoid_through_earnings",
+        "earnings_play",
+        "fade",
     ):
         out[key] = plain.Field("check", s[key], d[key])
     return out
@@ -335,6 +376,17 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "A low float, under 20 million shares free to trade (Schwab's figure): the "
                 "stock can gap on news or a short squeeze, so only defined-risk spreads at "
                 "half size.",
+                "⟦?earnings_play⟧ Earnings play (off unless ticked): on the last session "
+                "before a stock's report, with IV rank ⟦earnings_play_ivr⟧ or more, sell "
+                "⟦earnings_play_risk⟧ outside the expected move in the first expiration after "
+                "the report, at half size. Automanage closes it the session the report "
+                "reaches the price, after the IV crush (Settings, Automation: Earnings play).",
+                "⟦?fade⟧ Post-earnings fade (off unless ticked): within ⟦fade_sessions⟧ "
+                "sessions after a report, a move of ⟦fade_move⟧× the expected move or more "
+                "(recorded before the report; without it, ⟦fade_day_ratio⟧× the usual day) is "
+                "sold against: one side outside the expected move, at IV rank "
+                "⟦fade_min_ivr⟧ or more; a spread when IV rank is at or under the low-IV "
+                "level in Settings, Automation.",
                 "Nothing opens while the portfolio's daily theta is already at its maximum "
                 "(⟦link:theta band|portfolio⟧).",
             ],
@@ -493,6 +545,46 @@ def vol_check(ivr: float, iv30: float | None, hv: float | None, s: dict) -> tupl
                 "stock is making"
             ), False
     return None, rich and ivr < s["min_ivr"]
+
+
+def fade_signal(closes, price, last_report, today, s, pre) -> dict | None:
+    """A move since the last report bigger than expected, in the first sessions after it:
+    {direction, move, threshold, basis}; else None.
+
+    The move runs from the close before the report day. Expected: the move options priced
+    for the report, recorded before it; else s["fade_day_ratio"] times the usual day's move
+    over the 20 sessions before."""
+    if not last_report or not price or not closes:
+        return None
+    rd = date.fromisoformat(last_report)
+    since = sessions_until(rd, today)
+    # From the session after the report day: a report after the close has moved by then.
+    if not 1 <= since <= s["fade_sessions"]:
+        return None
+    before = [c for d, c in closes if d < rd]
+    if not before:
+        return None
+    move = price / before[-1] - 1
+    em = pre.get("em") if pre and pre.get("report") == last_report else None
+    if em:
+        threshold = s["fade_move"] * em
+        basis = f"its {em:.1%} expected move"
+    else:
+        rets = [abs(b / a - 1) for a, b in zip(before[-21:-1], before[-20:], strict=False) if a]
+        if len(rets) < 10:
+            return None
+        usual = sum(rets) / len(rets)
+        threshold = s["fade_day_ratio"] * usual
+        basis = f"{s['fade_day_ratio']:g}× its usual {usual:.1%} day (no expected move recorded)"
+    if abs(move) < threshold:
+        return None
+    return {
+        "direction": "down" if move < 0 else "up",
+        "move": round(move, 4),
+        "threshold": round(threshold, 4),
+        "basis": basis,
+        "report": last_report,
+    }
 
 
 def _theta_full(bands: dict) -> str | None:
@@ -768,7 +860,16 @@ class Scanner:
                 if full:
                     skipped.append({"symbol": sym, "reason": full})
                     continue
-                why = await self._check(account, sym, s, held, quotes)
+                why = None
+                if s.get("earnings_play"):
+                    why = await self._earnings_play(account, sym, s, held, st)
+                if s.get("fade") and (info := self._reporting_next(sym)):
+                    try:
+                        await self._record_move(sym, st, info)
+                    except Exception as e:  # a refinement, never a block
+                        log.warning("Scanner expected move for %s failed: %s", sym, e)
+                if why is None:
+                    why = await self._check(account, sym, s, held, quotes, st.get("pre_em"))
                 if isinstance(why, str):
                     skipped.append({"symbol": sym, "reason": why})
                     continue
@@ -808,9 +909,32 @@ class Scanner:
                 )
                 view = symbol_views.get(sym)
                 lean_on = s.get("band_lean", True)
+                play, fade = vol.get("play"), vol.get("fade")
+                view_tilt = targets.VIEW_TILT.get(view) if view in targets.VIEWS else None
                 # Which way to lean, first match wins: the book outside its band, your view on
                 # this underlying, a price extreme (against the move), your bias in the band.
-                if band_out and lean_on:
+                # An earnings play is neutral; a post-earnings fade sells against the move.
+                if play:
+                    tilt, source = None, None
+                    strangle = s.get("earnings_play_risk") == "undefined" and not defined_only
+                elif fade and view_tilt and view_tilt != fade["direction"]:
+                    side = "puts" if fade["direction"] == "down" else "calls"
+                    skipped.append(
+                        {
+                            "symbol": sym,
+                            "reason": f"post-earnings fade would sell {side}, against your "
+                            f"{view} view",
+                        }
+                    )
+                    continue
+                elif fade:
+                    # Would own keeps its cash-secured put; otherwise a fade.
+                    own_view = view == "would_own"
+                    tilt, source = fade["direction"], "view" if own_view else "fade"
+                    low = (await self.automations[account].settings()).get("low_ivr", 20)
+                    # Low IV (at or under automanage's low-IV level): a spread.
+                    strangle = ivr > low and not defined_only and not careful
+                elif band_out and lean_on:
                     tilt, source = band_out, "band"
                 elif view in targets.VIEWS:
                     tilt, source = targets.VIEW_TILT[view], "view"
@@ -831,7 +955,7 @@ class Scanner:
                 attempts = [True] if own else [True, False] if strangle else [False]
                 legs = pv = None
                 for undefined in attempts:
-                    if tilt and source in ("view", "extreme"):
+                    if tilt and source in ("view", "extreme", "fade"):
                         # A view on the stock or a sharp move: one side only, outside the
                         # expected move, so the trade does not depend on calling the turn.
                         legs, label = one_side(
@@ -941,6 +1065,8 @@ class Scanner:
                         "tilt": tilt,
                         "lean_source": source,
                         "drop_signal": drop,
+                        "play": play,
+                        "fade": fade,
                         "caution": vol["caution"],
                         "skew": vol["skew"],
                         # The view the trade is managed with once open (its rolls lean this way).
@@ -981,6 +1107,8 @@ class Scanner:
                         why_lean = targets.lean_reason(bands)
                     elif source == "view":
                         why_lean = f"your view on {sym}"
+                    elif source == "fade":
+                        why_lean = "against the post-earnings move"
                     else:
                         why_lean = "against the move: " + "; ".join(ext["reasons"])
                     candidates[-1]["label"] = f"{label}, tilted {lean}: {why_lean}"
@@ -997,6 +1125,14 @@ class Scanner:
                         f". Ex-dividend {'about ' if div['estimated'] else ''}{div['ex_date']} "
                         f"({div['amount']:.2f}) falls inside the trade"
                     )
+                if fade:
+                    candidates[-1]["label"] = (
+                        f"Post-earnings fade ({'down' if fade['move'] < 0 else 'up'} "
+                        f"{abs(fade['move']):.1%} since the {fade['report']} report, past "
+                        f"{fade['basis']}): " + candidates[-1]["label"]
+                    )
+                if play:
+                    candidates[-1]["label"] = "Earnings play: " + candidates[-1]["label"]
                 if drop:
                     candidates[-1]["label"] = (
                         f"Drop signal (IV rank {ivr:.0f}, put skew {vol['skew']:.1f} pts): "
@@ -1092,8 +1228,115 @@ class Scanner:
             iv = ((self.portfolios["live"].snapshot or {}).get("market") or {}).get("vix")
         return iv
 
-    async def _check(self, account, sym, s, held, quotes):
-        """(IV rank, expiration, chain rows) when the underlying qualifies, else the reason."""
+    async def _chain(self, sym: str, exp: dict, s: dict) -> dict | str:
+        """The chain at one expiration when it is liquid enough to trade, else the reason."""
+        d = date.fromisoformat(exp["date"])
+        chain = chain_mod.chain_rows(
+            await self.source.option_chain(sym, d, d, strike_count=None) or {}
+        )
+        rows, spot = chain["rows"], chain["underlying_price"]
+        if not rows or not spot:
+            return "no option chain"
+        atm = min(rows, key=lambda r: abs(r["strike"] - spot))
+        spreads, oi = [], 0.0
+        for c in (atm["call"], atm["put"]):
+            if c and c["bid"] is not None and c["ask"] and c["mark"]:
+                spreads.append((c["ask"] - c["bid"]) / c["mark"])
+            oi += (c or {}).get("oi") or 0
+        if spreads and sum(spreads) / len(spreads) > s["max_spread"]:
+            return f"at-the-money spread {sum(spreads) / len(spreads):.1%} is too wide"
+        if oi < s["min_oi"]:
+            return f"at-the-money open interest {oi:,.0f}, under {s['min_oi']:,}"
+        return chain
+
+    def _reporting_next(self, sym: str) -> dict | None:
+        """A single stock's report when today is the last session before it reaches the
+        price, with the session it does (reaction); else None."""
+        if self.earnings is None or sym.startswith("$") or self.earnings.is_fund(sym):
+            return None
+        info = self.earnings.info(sym)
+        if not info or info["sessions_left"] != 0:
+            return None
+        reaction = date.fromisoformat(info["exit_by"]) + timedelta(days=1)
+        while reaction.weekday() >= 5:
+            reaction += timedelta(days=1)
+        return {**info, "reaction": reaction.isoformat()}
+
+    async def _report_expiration(self, sym: str, reaction: str) -> dict | None:
+        """The first expiration on or after the session the report reaches the price."""
+        today = self.clock().astimezone(ET).date()
+        exps = chain_mod.expirations(await self.source.expirations(sym), today)
+        after = [e for e in exps if e["date"] >= reaction]
+        return min(after, key=lambda e: e["date"]) if after else None
+
+    async def _record_move(self, sym: str, st: dict, info: dict, chain: dict | None = None):
+        """Remembers the move options price for the report (the first expiration after it),
+        so the post-earnings fade can tell a bigger move than expected."""
+        pre = st.setdefault("pre_em", {})
+        if (pre.get(sym) or {}).get("report") == info["date"]:
+            return
+        if chain is None:
+            exp = await self._report_expiration(sym, info["reaction"])
+            if exp is None:
+                return
+            d = date.fromisoformat(exp["date"])
+            chain = chain_mod.chain_rows(
+                await self.source.option_chain(sym, d, d, strike_count=None) or {}
+            )
+        em, spot = chain.get("expected_move"), chain.get("underlying_price")
+        if em and spot:
+            pre[sym] = {"report": info["date"], "em": round(em / spot, 4)}
+        # Forget reports long past.
+        for k in [k for k, v in pre.items() if v.get("report", "") < info["date"][:4]]:
+            pre.pop(k, None)
+
+    async def _earnings_play(self, account, sym, s, held, st):
+        """None when the stock does not report before the next session; else the reason it
+        is skipped, or the trade's makings as _check gives them."""
+        info = self._reporting_next(sym)
+        if info is None:
+            return None
+        if info.get("time") not in ("bmo", "amc"):
+            return (
+                "earnings play: the report's time (before the open or after the close) is unknown"
+            )
+        if held.get(sym, 0) >= s["max_per_underlying"]:
+            return f"earnings play: already {held[sym]} open trade(s) here"
+        ivr = await self._ivr(account, sym)
+        if ivr is None:
+            return "earnings play: no IV rank yet (it needs IV history)"
+        if ivr < s["earnings_play_ivr"]:
+            return f"earnings play: IV rank {ivr:.0f}, under {s['earnings_play_ivr']}"
+        exp = await self._report_expiration(sym, info["reaction"])
+        if exp is None:
+            return "earnings play: no expiration after the report"
+        chain = await self._chain(sym, exp, s)
+        if isinstance(chain, str):
+            return f"earnings play: {chain}"
+        await self._record_move(sym, st, info, chain)
+        rows = chain["rows"]
+        return (
+            ivr,
+            exp,
+            rows,
+            {
+                "iv30": await self._iv30(sym),
+                "hv": None,
+                "rich_only": False,
+                "spot": chain["underlying_price"],
+                "em": chain.get("expected_move"),
+                "skew": skew(rows),
+                "caution": [
+                    f"earnings play: report {info['date']} {info['label']}, closed on "
+                    f"{info['reaction']} after the IV crush"
+                ],
+                "play": f"earnings:{info['reaction']}",
+            },
+        )
+
+    async def _check(self, account, sym, s, held, quotes, pre_em=None):
+        """(IV rank, expiration, chain rows) when the underlying qualifies, else the reason.
+        pre_em: the moves recorded before reports, for the post-earnings fade."""
         if held.get(sym, 0) >= s["max_per_underlying"]:
             return f"already {held[sym]} open trade{'s' if held[sym] > 1 else ''} here"
         ivr = await self._ivr(account, sym)
@@ -1107,10 +1350,26 @@ class Scanner:
                 hv = realized_vol(closes)
             except Exception as e:  # history is a refinement, never a block
                 log.warning("Scanner history for %s failed: %s", sym, e)
-        why, rich_only = vol_check(ivr, iv30, hv, s)
+        q = quotes.get(sym) or {}
+        fade = None
+        if s.get("fade") and self.earnings is not None and hasattr(self.earnings, "last_report"):
+            qq = q.get("quote") or {}
+            price = next((float(qq[k]) for k in ("mark", "lastPrice") if qq.get(k)), None)
+            fade = fade_signal(
+                closes,
+                price,
+                self.earnings.last_report(sym),
+                self.clock().astimezone(ET).date(),
+                s,
+                (pre_em or {}).get(sym),
+            )
+        # A fade sells after the report, when IV has just collapsed and the gap makes
+        # realized volatility look high: its own IV rank floor, no IV-over-realized check.
+        why, rich_only = vol_check(
+            ivr, iv30, hv, {**s, "min_ivr": s["fade_min_ivr"], "min_iv_hv": 0} if fade else s
+        )
         if why:
             return why
-        q = quotes.get(sym) or {}
         kind = {q.get("assetMainType"), q.get("assetSubType"), q.get("assetType")}
         fund = bool(kind & FUNDS) or sym.startswith("$")
         if not fund and self.earnings is not None and self.earnings.is_fund(sym):
@@ -1151,23 +1410,10 @@ class Scanner:
             if s.get("earnings_inside", "skip") == "skip":
                 return why_e
             caution.append(why_e)
-        d = date.fromisoformat(exp["date"])
-        chain = chain_mod.chain_rows(
-            await self.source.option_chain(sym, d, d, strike_count=None) or {}
-        )
+        chain = await self._chain(sym, exp, s)
+        if isinstance(chain, str):
+            return chain
         rows, spot = chain["rows"], chain["underlying_price"]
-        if not rows or not spot:
-            return "no option chain"
-        atm = min(rows, key=lambda r: abs(r["strike"] - spot))
-        spreads, oi = [], 0.0
-        for c in (atm["call"], atm["put"]):
-            if c and c["bid"] is not None and c["ask"] and c["mark"]:
-                spreads.append((c["ask"] - c["bid"]) / c["mark"])
-            oi += (c or {}).get("oi") or 0
-        if spreads and sum(spreads) / len(spreads) > s["max_spread"]:
-            return f"at-the-money spread {sum(spreads) / len(spreads):.1%} is too wide"
-        if oi < s["min_oi"]:
-            return f"at-the-money open interest {oi:,.0f}, under {s['min_oi']:,}"
         today_ = self.clock().astimezone(ET).date()
         iv_hist = []
         try:
@@ -1211,6 +1457,7 @@ class Scanner:
                 "em": chain.get("expected_move"),
                 "skew": skew(rows),
                 "caution": caution,
+                "fade": fade,
             },
         )
 
@@ -1255,6 +1502,7 @@ class Scanner:
                         "due_at": None,
                         "automanage": s["automanage_new"],
                         "view": c.get("view"),
+                        "play": c.get("play"),
                     }
                 )
                 auto._log(None, "scan", f"Proposed: {title}: {reason}")
@@ -1276,6 +1524,7 @@ class Scanner:
                 done,
                 automanage=s["automanage_new"],
                 view=c.get("view"),
+                play=c.get("play"),
             )
             if wide == "wide":
                 st["acted"].pop(key, None)  # the next scan may try again

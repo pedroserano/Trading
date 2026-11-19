@@ -432,6 +432,7 @@ export interface AutoProposal {
   bodies: ProposalBody[];
   automanage?: boolean;
   view?: string | null;
+  play?: string | null;
 }
 
 export interface ProposalBody {

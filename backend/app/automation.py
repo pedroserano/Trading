@@ -40,6 +40,7 @@ RULES = {
     "loss": "Loss at a multiple of credit",
     "expiry": "Expiration day, short in the money",
     "earnings": "Earnings ahead (single stocks)",
+    "eplay": "Earnings play: close after the report",
     "dividend": "Ex-dividend, short call likely assigned",
 }
 DEFAULT_SETTINGS = {
@@ -52,6 +53,7 @@ DEFAULT_SETTINGS = {
         "loss": "notify",
         "expiry": "propose",
         "earnings": "notify",
+        "eplay": "propose",
         "dividend": "notify",
     },
     # The Schwab account's own levels: Auto is offered only with LIVE_AUTO=true in .env.
@@ -64,6 +66,7 @@ DEFAULT_SETTINGS = {
         "loss": "notify",
         "expiry": "propose",
         "earnings": "notify",
+        "eplay": "propose",
         "dividend": "notify",
     },
     # Every other Schwab account's own levels, by account key; missing: a Propose-capped copy
@@ -448,6 +451,12 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             + ". Does: closes the trade. Dates come from Finnhub or the dates entered under "
             "Earnings; ETFs and indexes have none."
         ),
+        "eplay": (
+            "When: a trade the scanner opened as an earnings play (Settings, Scanner), from "
+            "the session its report reaches the price. Does: closes it, after the IV crush, "
+            "as tastylive does. The earnings, DTE, tested and low-IV rules leave these trades "
+            "alone; the profit target, loss and expiration-day rules still apply."
+        ),
         "dividend": (
             "When: a short call in the money, expiring after the ex-dividend date, with less "
             "time value left than the dividend: it is likely to be assigned the day before. "
@@ -540,6 +549,10 @@ def decide(
         return out
     dte = n["dte"]
     flags = {f["kind"] for f in st["flags"]}
+    # An earnings play from the scanner holds through its report on purpose and lives a few
+    # days: closed the session the report reaches the price; the earnings, DTE, tested and
+    # low-IV rules leave it alone.
+    eplay = is_play(st.get("play"))
     itm = any(
         spot is not None
         and x["strike"] is not None
@@ -580,8 +593,21 @@ def decide(
                 "it can be assigned",
             )
         )
+    if eplay and levels.get("eplay", "off") != "off":
+        reaction = st["play"].split(":", 1)[1]
+        today = (now or datetime.now(ET)).astimezone(ET).date().isoformat()
+        if today >= reaction:
+            out.append(
+                Action(
+                    "eplay",
+                    "close",
+                    f"Earnings play: the report reached the price on {reaction}; close "
+                    "after the IV crush, as tastylive does",
+                )
+            )
     if (
-        levels.get("earnings", "off") != "off"
+        not eplay
+        and levels.get("earnings", "off") != "off"
         and earnings
         and 0 <= earnings["sessions_left"] <= settings.get("earnings_close_sessions", 1)
         and date.fromisoformat(earnings["date"]) <= _exp(st)
@@ -607,7 +633,8 @@ def decide(
         out.append(Action("loss", "close", f"Loss reached {rules.loss_multiple:g}x the credit"))
     # A ZEBRA is a stock replacement: no 21-DTE roll (its short is never "tested").
     if (
-        levels.get("dte", "off") != "off"
+        not eplay
+        and levels.get("dte", "off") != "off"
         and dte is not None
         and 0 < dte <= rules.manage_dte
         and st["name"] not in ZEBRAS
@@ -633,7 +660,7 @@ def decide(
             )
         else:
             out.append(Action("dte", "roll", f"{dte} DTE: roll out for a credit"))
-    if levels.get("tested", "off") != "off" and "tested" in flags:
+    if not eplay and levels.get("tested", "off") != "off" and "tested" in flags:
         name = st["name"]
         put = next((x for x in shorts if x["put_call"] == "P"), None)
         call = next((x for x in shorts if x["put_call"] == "C"), None)
@@ -729,19 +756,37 @@ def decide(
             )
         else:
             out.append(Action("tested", "notify", "A short strike is tested"))
+    if eplay:
+        return [_within_cover(st, a) for a in out] + _profit_actions(st, levels, flags)
     if levels.get("lowloss", "off") != "off" and (why := low_iv_loss(st, ivr, settings)):
         out.append(Action("lowloss", "close", why))
     if levels.get("quick", "off") != "off" and (why := quick_profit(st, ivr, settings, now)):
         out.append(Action("quick", "close", why))
-    if levels.get("profit", "off") != "off" and profit_basis(st) is not None:
-        if levels["profit"] == "auto":
-            out.append(Action("profit", "target", "Profit target order resting at the broker"))
-        elif "profit" in flags:
-            out.append(Action("profit", "close", "Profit target reached"))
+    out += _profit_actions(st, levels, flags)
     return [_within_cover(st, a) for a in out]
 
 
+def _profit_actions(st: dict, levels: dict, flags: set) -> list[Action]:
+    if levels.get("profit", "off") != "off" and profit_basis(st) is not None:
+        if levels["profit"] == "auto":
+            return [Action("profit", "target", "Profit target order resting at the broker")]
+        if "profit" in flags:
+            return [Action("profit", "close", "Profit target reached")]
+    return []
+
+
 ROLLS = ("roll", "roll_calls", "roll_puts")
+
+
+def is_play(play) -> bool:
+    """An earnings play's tag: "earnings:<ISO date the report reaches the price>"."""
+    if not isinstance(play, str) or not play.startswith("earnings:"):
+        return False
+    try:
+        date.fromisoformat(play.split(":", 1)[1])
+    except ValueError:
+        return False
+    return True
 
 
 def low_iv_loss(st: dict, ivr: float | None, settings: dict) -> str | None:
@@ -951,6 +996,9 @@ AUTO_STEPS = [
             "⟦max_rolls⟧ rolls (0: no limit), or when the roll pays under ⟦min_roll_credit⟧ a "
             "unit.",
             "Defined-risk trades are ⟦dte_defined_action⟧; calendars are always closed.",
+            "An earnings play from the scanner is closed the session its report reaches the "
+            "price, after the IV crush; the earnings, DTE, tested and low-IV rules leave it "
+            "alone. Acts at: ⟦levels:eplay⟧",
         ],
     ),
     (
@@ -1442,12 +1490,15 @@ class AutomationService:
                     t["view"] = view
             await self._save()
 
-    def _switch_on(self, tid, view: str | None) -> None:
-        """Automanage on for a new trade, keeping anything already stored for it."""
+    def _switch_on(self, tid, view: str | None, play: str | None = None) -> None:
+        """Automanage on for a new trade, keeping anything already stored for it. play: an
+        earnings play ("earnings:<the session the report reaches the price>"), closed then."""
         t = self.state["trades"].setdefault(str(tid), {})
         t["enabled"] = True
         if view in VIEWS:
             t["view"] = view
+        if is_play(play):
+            t["play"] = play
 
     def trade_view(self, tid, rules) -> str:
         """The direction automanage leans this trade's rolls: its own view, else the
@@ -1458,7 +1509,9 @@ class AutomationService:
         bias = getattr(rules, "delta_bias", "neutral")
         return bias if bias in VIEWS else "neutral"
 
-    async def watch_entry(self, order: dict, view: str | None = None) -> None:
+    async def watch_entry(
+        self, order: dict, view: str | None = None, play: str | None = None
+    ) -> None:
         """An opening order placed from the ticket with "Automanage on fill" ticked: the new
         trade is switched to automanage once it fills. The order itself is left as placed."""
         async with self.lock:
@@ -1469,6 +1522,7 @@ class AutomationService:
                 "automanage_on_fill": True,
                 "placed_at": time.time(),
                 "view": view if view in VIEWS else None,
+                "play": play if is_play(play) else None,
             }
             self._log(None, "entry", f"Order #{order['id']}: automanage switches on when it fills")
             # Already filled (the simulated account fills at once): switch on now, not on the
@@ -1596,8 +1650,9 @@ class AutomationService:
                     levels = self.levels(settings)
                     ivr = (u.get("ivr") or {}).get("rank")
                     own_today = str(tid) in needs and s["numbers"].get("dte") == 0
+                    play = st["trades"].get(str(tid), {}).get("play")
                     acts = decide(
-                        s,
+                        {**s, "play": play} if play else s,
                         u["price"],
                         rules,
                         settings,
@@ -1826,12 +1881,22 @@ class AutomationService:
                 manual=True,
                 automanage=p.get("automanage", False),
                 view=p.get("view"),
+                play=p.get("play"),
             )
             await self._save()
             return done
 
     async def _place_all(
-        self, tid, action, bodies, settings, done, manual=False, automanage=False, view=None
+        self,
+        tid,
+        action,
+        bodies,
+        settings,
+        done,
+        manual=False,
+        automanage=False,
+        view=None,
+        play=None,
     ) -> str | None:
         """Places each body at mid. Returns "wide" when an automatic order was skipped for
         its bid/ask spread, so the caller can try again later."""
@@ -1941,6 +2006,7 @@ class AutomationService:
                 # A new trade from the scanner: switch automanage on once it fills.
                 "automanage_on_fill": automanage,
                 "view": view,
+                "play": play,
             }
             self._log(
                 tid,
@@ -2069,7 +2135,7 @@ class AutomationService:
                 and not str(known).startswith("new:")
             ):
                 # The simulated account names the trade on the order itself.
-                self._switch_on(known, info.get("view"))
+                self._switch_on(known, info.get("view"), info.get("play"))
                 self._log(known, info["rule"], "New trade filled; automanage on")
             elif info.get("automanage_on_fill"):
                 opened = [
@@ -2082,6 +2148,7 @@ class AutomationService:
                     "at": time.time(),
                     "rule": info["rule"],
                     "view": info.get("view"),
+                    "play": info.get("play"),
                 }
             if order.get("intent") == "close" and info["rule"] not in ("entry", None):
                 # Which rule closed the trade, for the Dashboard's Closed by breakdown.
@@ -2119,7 +2186,7 @@ class AutomationService:
                         held |= have
             if want and held == want:
                 for tid in found:
-                    self._switch_on(tid, p.get("view"))
+                    self._switch_on(tid, p.get("view"), p.get("play"))
                     self._log(tid, p["rule"], f"New trade filled (order #{oid}); automanage on")
                 pending.pop(oid)
                 changed = True

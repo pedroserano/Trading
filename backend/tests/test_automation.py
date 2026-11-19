@@ -1086,3 +1086,36 @@ async def test_the_rule_that_closed_a_trade_is_recorded():
     assert "place lowloss" in await h.svc.tick()
     await h.svc.tick()  # the fill is recorded
     assert h.svc.state["closed_by"] == {str(tid): "lowloss"}
+
+
+def test_an_earnings_play_is_closed_after_its_report_and_nothing_else_meddles():
+    r, s = Rules(), merged_settings(None)
+    st = strat(dte=3, flags=("tested",))
+    st["play"] = "earnings:2026-11-12"
+    report = {"date": "2026-11-11", "label": "after the close", "exit_by": "2026-11-11"}
+    before = datetime(2026, 11, 11, 11, 0, tzinfo=ET)
+    acts = kinds(
+        decide(st, 590, r, s, ALL, ivr=10, earnings={**report, "sessions_left": 0}, now=before)
+    )
+    # Held through the report on purpose: no earnings close, no 21-DTE roll, no defence.
+    assert acts == [("profit", "target")]
+    after = datetime(2026, 11, 12, 10, 0, tzinfo=ET)
+    acts = decide(st, 590, r, s, ALL, ivr=10, now=after)
+    assert kinds(acts)[0] == ("eplay", "close")
+    assert "reached the price on 2026-11-12" in acts[0].reason
+    # The same trade without the tag is closed before the report as usual.
+    plain = strat(dte=3)
+    assert ("earnings", "close") in kinds(
+        decide(plain, 590, r, s, ALL, earnings={**report, "sessions_left": 0}, now=before)
+    )
+    assert auto.is_play("earnings:2026-11-12") and not auto.is_play("earnings:soon")
+
+
+@pytest.mark.anyio
+async def test_switching_on_keeps_a_valid_earnings_play_tag_only():
+    h = Harness([], QUOTES)
+    h.svc.state = await h.svc.load()
+    h.svc._switch_on(7, None, "earnings:2026-11-12")
+    h.svc._switch_on(8, "bullish", "nonsense")
+    assert h.svc.state["trades"]["7"] == {"enabled": True, "play": "earnings:2026-11-12"}
+    assert h.svc.state["trades"]["8"] == {"enabled": True, "view": "bullish"}

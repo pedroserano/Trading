@@ -24,6 +24,7 @@ type Candidate = {
   /** The proposal waiting on Positions for this find, if one was made. */
   proposal_id?: string | null;
   view?: string | null;
+  play?: string | null;
 };
 
 type ScanView = {
@@ -194,6 +195,7 @@ export default function Scanner() {
                               underlying: c.symbol,
                               strategy: c.strategy,
                               view: c.view,
+                              play: c.play,
                             },
                             c.body!,
                             account,

@@ -17,11 +17,13 @@ export interface TicketSpec {
   /** A proposal's own Automanage choice and view, instead of the Settings default. */
   automanage?: boolean;
   view?: string | null;
+  /** An earnings play from the scanner: automanage closes it after the report. */
+  play?: string | null;
 }
 
 /** A proposed order (from automanage or the scanner) as a ticket, to read in full first. */
 export function proposalSpec(
-  p: { id?: string | null; underlying: string; strategy: string; trade_id?: string | null; automanage?: boolean; view?: string | null },
+  p: { id?: string | null; underlying: string; strategy: string; trade_id?: string | null; automanage?: boolean; view?: string | null; play?: string | null },
   body: ProposalBody,
   account: string,
 ): TicketSpec {
@@ -37,6 +39,7 @@ export function proposalSpec(
     proposalId: p.id ?? undefined,
     automanage: p.automanage,
     view: p.view,
+    play: p.play,
   };
 }
 
@@ -250,6 +253,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         duration,
         automanage: spec.intent === "open" && manage,
         view: spec.intent === "open" && manage && tradeView !== "portfolio" ? tradeView : null,
+        play: spec.intent === "open" && manage ? (spec.play ?? null) : null,
         proposal_id: spec.proposalId ?? null,
       });
       setPlaced(o);
