@@ -166,3 +166,54 @@ async def test_expirations_are_reused_for_half_an_hour(monkeypatch):
     t[0] += ds.EXPIRATIONS_TTL_S + 1
     await src.expirations("SPY")
     assert sch.calls.count("get_option_expiration_chain") == 2
+
+
+@pytest.mark.anyio
+async def test_a_scan_goes_ahead_of_routine_refreshes_and_counts_its_waits():
+    from app.pacing import count_waits, priority
+
+    t = [0.0]
+    real = asyncio.sleep
+
+    async def fake_sleep(s):
+        t[0] += s
+        for _ in range(3):  # time for others waiting to take their turn
+            await real(0)
+
+    p = Pacer(per_window=2, window=60, clock=lambda: t[0])
+    asyncio.sleep = fake_sleep
+    order = []
+    try:
+        await p.acquire()
+        await p.acquire()  # the window is full
+
+        async def routine(name):
+            await p.acquire()
+            order.append(name)
+
+        async def scan(name, into):
+            with priority(), count_waits(into):
+                await p.acquire()
+            order.append(name)
+
+        waited = [0.0, 0]
+        first = asyncio.create_task(routine("watchlist"))
+        await real(0)  # the refresh queues first
+        second = asyncio.create_task(scan("scan", waited))
+        await asyncio.gather(first, second)
+    finally:
+        asyncio.sleep = real
+    assert order == ["scan", "watchlist"]
+    assert waited[1] == 1  # one paced request counted
+
+    # A full window: the wait is counted.
+    q = Pacer(per_window=1, window=60, clock=lambda: t[0])
+    asyncio.sleep = fake_sleep
+    try:
+        await q.acquire()
+        waited = [0.0, 0]
+        with count_waits(waited):
+            await q.acquire()
+    finally:
+        asyncio.sleep = real
+    assert waited[1] == 1 and waited[0] >= 60

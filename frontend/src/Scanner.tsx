@@ -27,6 +27,11 @@ type Candidate = {
   play?: string | null;
 };
 
+function dur(s: number): string {
+  if (s < 60) return `${Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
 type ScanView = {
   level: "off" | "notify" | "propose" | "auto";
   settings: { scan_time: string; min_ivr: number; undefined_ivr: number };
@@ -36,6 +41,9 @@ type ScanView = {
     candidates: Candidate[];
     skipped: { symbol: string; reason: string }[];
     acted: string[];
+    took_s?: number;
+    schwab_requests?: number;
+    waited_s?: number;
   } | null;
   // A scan running in the background, and why the last one failed.
   running?: { done: number; total: number } | null;
@@ -187,6 +195,14 @@ export default function Scanner() {
           {account !== "sim" ? accountName : "Simulated account"}: {what}. Daily
           at {view.settings.scan_time} ET; opens when IV rank ≥{" "}
           {view.settings.min_ivr}, strangles from {view.settings.undefined_ivr}.
+          {last && last.took_s != null ? (
+            <>
+              {" "}
+              Last scan took {dur(last.took_s)}: {last.schwab_requests ?? 0} Schwab
+              request{last.schwab_requests === 1 ? "" : "s"}
+              {last.waited_s ? `, ${dur(last.waited_s)} of it waiting for Schwab's request limit` : ""}.
+            </>
+          ) : null}
           {last && last.skipped.length ? (
             <ul className="skipped">
               {last.skipped.map((x) => (

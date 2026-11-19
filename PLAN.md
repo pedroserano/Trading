@@ -763,3 +763,8 @@ entered in Settings.
   runs before the one Schwab request left: the full chain (the watchlist keeps six strikes,
   not the wings) for a symbol that passed all of them. The earnings play and post-earnings
   fade (opt-in) still read the expiration after a report from Schwab.
+- A scan's Schwab requests go ahead of the routine background refreshes (the watchlist's
+  chains alone can use the whole 60-a-minute budget after a restart). Each scan records how
+  long it took, how many paced Schwab requests it made and how long they waited for the
+  limit; the scanner's details show it ("Last scan took 2m 14s: 17 Schwab requests, 1m 59s
+  of it waiting for Schwab's request limit").

@@ -26,7 +26,7 @@ from .automation import LEVELS, Action, _hm
 from .earnings import sessions_until
 from .extremes import compute as compute_extreme
 from .options import parse_option_symbol
-from .pacing import background
+from .pacing import background, count_waits, priority
 from .signals import drop_signal, one_side, shock, skew
 
 log = logging.getLogger(__name__)
@@ -875,8 +875,21 @@ class Scanner:
     async def scan(self, account: str, act: bool = True) -> dict:
         """Looks for trades now. With act, applies the account's scanner level to them.
         Its market data is paced as background work, also when asked for by hand."""
-        with background():
-            return await self._scan(account, act)
+        waited = [0.0, 0]
+        start = time.monotonic()
+        with background(), priority(), count_waits(waited):
+            result = await self._scan(account, act)
+        # Where the time went, for the scanner bar.
+        timing = {
+            "took_s": round(time.monotonic() - start, 1),
+            "schwab_requests": waited[1],
+            "waited_s": round(waited[0], 1),
+        }
+        st = await self._state()
+        if account in st:
+            st[account] = {**st[account], **timing}
+            await self.store.set_setting(STATE_KEY, st)
+        return {**result, **timing}
 
     async def _scan(self, account: str, act: bool) -> dict:
         async with self.lock:
