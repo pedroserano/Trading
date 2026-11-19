@@ -748,3 +748,36 @@ def test_an_earnings_strangle_sits_twice_the_expected_move_away_by_default():
     assert [x["quantity"] for x in legs] == [-1, -1]
     legs, label = sc.build_trade(rows(), True, s, None, (590.0, 30.0, 2.0))
     assert legs is None and "no strikes 2× the ±30.00 expected move away" in label
+
+
+@pytest.mark.anyio
+async def test_a_post_earnings_fade_is_never_proposed_under_iv_rank_20():
+    class Priced(Source):
+        async def quotes(self, symbols):
+            out = await super().quotes(symbols)
+            out["AAPL"]["quote"] = {"mark": 560.0, "netPercentChange": -1.0}
+            return out
+
+    class LowIv(Watchlist):
+        async def rows(self):
+            return [{"symbol": "AAPL", "ivr": {"rank": 15}}, {"symbol": "XLE", "ivr": {"rank": 10}}]
+
+    scanner, _, _ = harness(
+        {
+            "min_ic_credit": 0.15,
+            "extreme_tilt": False,
+            "shock_day_ratio": 1000,
+            "fade": True,
+            "rich_iv30": 1,  # rich enough at any IV rank: still no fade under 20
+        }
+    )
+    scanner.source = Priced({"SPY": "ETF", "XLE": "ETF"})
+    scanner.watchlist = LowIv()
+    scanner.history = History([600.0 + (i % 2) for i in range(30)])
+    scanner.earnings = EarningsAt({"AAPL": "2027-02-01"}, last={"AAPL": "2026-11-10"})
+    r = await scanner.scan("sim", act=False)
+    assert "AAPL" not in [c["symbol"] for c in r["candidates"]]
+    assert "IV rank 15, under 20" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+    assert sc.merged({})["fade_min_ivr"] == 20
+    with pytest.raises(ValueError, match="between 20"):
+        sc.parse_form({"fade_min_ivr": "10"}, None)

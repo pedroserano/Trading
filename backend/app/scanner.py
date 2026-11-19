@@ -103,12 +103,14 @@ DEFAULTS = {
     # Off by default.
     "fade": False,
     "fade_sessions": 3,
-    "fade_min_ivr": 0,
+    "fade_min_ivr": 20,  # never under FADE_IVR_FLOOR
     "fade_move": 1.0,  # times the expected move
     "fade_day_ratio": 3.0,  # times the usual day's move, when no expected move was recorded
     "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
     "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
+# A post-earnings fade is never even proposed under this IV rank.
+FADE_IVR_FLOOR = 20
 # (key, label, low, high, kind, unit) for the Settings page.
 FIELDS = [
     ("min_ivr", "Open only if IV rank is at least", 0, 100, "int", "IVR"),
@@ -143,7 +145,7 @@ FIELDS = [
     ("earnings_play_ivr", "Earnings play: IV rank at least", 0, 100, "int", "IVR"),
     ("earnings_play_em", "Earnings play: strangle strikes at least", 0.5, 5, "float", "× EM"),
     ("fade_sessions", "Post-earnings fade: within", 1, 10, "int", "sessions of the report"),
-    ("fade_min_ivr", "Post-earnings fade: IV rank at least", 0, 100, "int", "IVR"),
+    ("fade_min_ivr", "Post-earnings fade: IV rank at least", FADE_IVR_FLOOR, 100, "int", "IVR"),
     ("fade_move", "Post-earnings fade: a move of at least", 0.5, 5, "float", "× expected move"),
     (
         "fade_day_ratio",
@@ -389,8 +391,8 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "sessions after a report, a move of ⟦fade_move⟧× the expected move or more "
                 "(recorded before the report; without it, ⟦fade_day_ratio⟧× the usual day) is "
                 "sold against: one side outside the expected move, at IV rank "
-                "⟦fade_min_ivr⟧ or more; a spread when IV rank is at or under the low-IV "
-                "level in Settings, Automation.",
+                "⟦fade_min_ivr⟧ or more (never under 20); a spread when IV rank is at or "
+                "under the low-IV level in Settings, Automation.",
                 "Nothing opens while the portfolio's daily theta is already at its maximum "
                 "(⟦link:theta band|portfolio⟧).",
             ],
@@ -1395,7 +1397,18 @@ class Scanner:
         # A fade sells after the report, when IV has just collapsed and the gap makes
         # realized volatility look high: its own IV rank floor, no IV-over-realized check.
         why, rich_only = vol_check(
-            ivr, iv30, hv, {**s, "min_ivr": s["fade_min_ivr"], "min_iv_hv": 0} if fade else s
+            ivr,
+            iv30,
+            hv,
+            {
+                **s,
+                "min_ivr": max(s["fade_min_ivr"], FADE_IVR_FLOOR),
+                "min_iv_hv": 0,
+                # Rich IV30 never admits a fade under the floor.
+                "rich_iv30": 0,
+            }
+            if fade
+            else s,
         )
         if why:
             return why
