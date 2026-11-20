@@ -80,6 +80,8 @@ interface Params {
 
 type Builder = {
   name: string;
+  /** The trade's direction, shown as an arrow on its button. */
+  dir: "bull" | "bear" | "neutral";
   title?: string;
   /** cover: shares-equivalent free for this builder's covered side (calls or puts). */
   build: (rows: ChainRow[], exp: string, p: Params, spot: number, cover: number) => BuildLeg[] | null;
@@ -88,6 +90,7 @@ type Builder = {
 const BUILDERS: Builder[] = [
   {
     name: "Strangle",
+    dir: "neutral",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.strangle);
       const sc = byDelta(rows, "call", p.strangle);
@@ -97,6 +100,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Straddle",
+    dir: "neutral",
     build: (rows, exp, _p, spot) => {
       const atm = rows.reduce((a, b) => (Math.abs(b.strike - spot) < Math.abs(a.strike - spot) ? b : a));
       if (!atm.put || !atm.call) return null;
@@ -105,6 +109,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Short put",
+    dir: "bull",
     title: "Cash-secured when the account holds the strike's value in cash",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.vertical);
@@ -113,6 +118,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Covered call",
+    dir: "bull",
     title: "Sells one call at the short delta for every 100 shares, or call ZEBRA expiring no sooner, this account holds",
     build: (rows, exp, p, _spot, cover) => {
       const n = Math.floor(cover / 100);
@@ -123,6 +129,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Covered put",
+    dir: "bear",
     title: "Sells one put at the short delta for every put ZEBRA (expiring no sooner), or 100 shares short, this account holds",
     build: (rows, exp, p, _spot, cover) => {
       const n = Math.floor(cover / 100);
@@ -133,6 +140,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Put vertical",
+    dir: "bull",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.vertical);
       const lp = sp && wing(rows, sp, "put", p.width);
@@ -142,6 +150,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Call vertical",
+    dir: "bear",
     build: (rows, exp, p) => {
       const sc = byDelta(rows, "call", p.vertical);
       const lc = sc && wing(rows, sc, "call", p.width);
@@ -151,6 +160,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Iron condor",
+    dir: "neutral",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.condor);
       const sc = byDelta(rows, "call", p.condor);
@@ -167,6 +177,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Put ratio 1×2",
+    dir: "bull",
     title: "Buys one put at the short delta and sells two at the strangle delta (a front ratio)",
     build: (rows, exp, p) => {
       const lp = byDelta(rows, "put", p.vertical);
@@ -177,6 +188,7 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Call ratio 1×2",
+    dir: "bear",
     title: "Buys one call at the short delta and sells two at the strangle delta (a front ratio)",
     build: (rows, exp, p) => {
       const lc = byDelta(rows, "call", p.vertical);
@@ -187,17 +199,20 @@ const BUILDERS: Builder[] = [
   },
   {
     name: "Call ZEBRA",
+    dir: "bull",
     title:
       "Stock replacement (Liz and Jenny, tastylive): sells one call at the money and buys two in the money, where the two carry about the short's extrinsic value. Moves like 100 shares, for the debit",
     build: (rows, exp, _p, spot) => zebra(rows, exp, "call", spot),
   },
   {
     name: "Put ZEBRA",
+    dir: "bear",
     title: "The bearish ZEBRA: sells one put at the money and buys two in the money. Moves like 100 shares short, for the debit",
     build: (rows, exp, _p, spot) => zebra(rows, exp, "put", spot),
   },
   {
     name: "Jade lizard",
+    dir: "bull",
     build: (rows, exp, p) => {
       const sp = byDelta(rows, "put", p.vertical);
       const sc = byDelta(rows, "call", p.condor);
@@ -211,6 +226,9 @@ const BUILDERS: Builder[] = [
     },
   },
 ];
+
+const DIR_ARROW = { bull: "↑", bear: "↓", neutral: "↔" } as const;
+const DIR_LABEL = { bull: "Bullish", bear: "Bearish", neutral: "Neutral" } as const;
 
 const NO_COVER: Cover = { C: { shares: 0, zebras: [] }, P: { shares: 0, zebras: [] } };
 
@@ -543,6 +561,9 @@ export default function Trade({ symbol, cover = NO_COVER }: { symbol: string; co
                 }}
               >
                 {b.name}
+                <span className={`dir ${b.dir}`} aria-label={DIR_LABEL[b.dir]} title={DIR_LABEL[b.dir]}>
+                  {DIR_ARROW[b.dir]}
+                </span>
               </button>
             ))}
           </div>

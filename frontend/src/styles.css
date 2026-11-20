@@ -956,3 +956,9 @@ form.earn-edit { position: sticky; left: 10px; display: inline-flex; flex-wrap: 
 .settings-page details.advanced > summary { cursor: pointer; color: var(--dim); padding: 6px 0; }
 .settings-page .mode-row button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: #1f6feb22; }
 .settings-page .mode-row button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Trade page: each quick-trade button's direction, an arrow after its name. */
+.quick button .dir { margin-left: 4px; font-size: 0.9em; }
+.quick button .dir.bull { color: var(--pos); }
+.quick button .dir.bear { color: var(--neg); }
+.quick button .dir.neutral { color: var(--dim); }
