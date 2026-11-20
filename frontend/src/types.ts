@@ -1,5 +1,5 @@
 export interface Flag {
-  kind: "profit" | "dte" | "tested" | "loss" | "data";
+  kind: "profit" | "dte" | "tested" | "loss" | "data" | "inverted";
   label: string;
   detail: string;
 }
@@ -46,6 +46,8 @@ export interface StrategyNumbers {
   delta_bw?: number | null;
   short_deltas: (number | null)[];
   short_strikes: number[];
+  /** Strangles and iron condors: points the short put sits above the short call. */
+  inverted?: number | null;
   /** ZEBRAs: the shares the position moves like (negative for a put ZEBRA). */
   shares_like?: number | null;
   /** Why it is a non-standard option (adjusted after a corporate action): closing only. */

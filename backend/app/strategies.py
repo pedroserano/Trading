@@ -142,11 +142,12 @@ def group(legs: list[Leg]) -> list[Strategy]:
             add("Double calendar" if same else "Double diagonal", taken, True)
 
     for exp in pool.expirations():
-        # Iron condors and iron flies.
+        # Iron condors and iron flies; also an inverted iron condor (a roll took the short
+        # put above the short call), which keeps both wings.
         while True:
             sp = _first(pool.options("P", True, exp), key=lambda x: -x.strike)
             sc = _first(pool.options("C", True, exp), key=lambda x: x.strike)
-            if not (sp and sc and sp.strike <= sc.strike):
+            if not (sp and sc):
                 break
             lp = _first(
                 [x for x in pool.options("P", False, exp) if x.strike < sp.strike],
@@ -675,6 +676,38 @@ def _greek(legs: list[Leg], attr: str) -> float | None:
     return total
 
 
+def _inversion(name: str, opts: list[Leg]) -> float | None:
+    """How far the short put sits above the short call, for a strangle or an iron condor
+    (one expiration); None when it does not."""
+    if name not in ("Strangle", "Iron condor"):
+        return None
+    sp = [x.strike for x in opts if x.short and x.put_call == "P"]
+    sc = [x.strike for x in opts if x.short and x.put_call == "C"]
+    if not sp or not sc or max(sp) <= min(sc):
+        return None
+    return round(max(sp) - min(sc), 4)
+
+
+def _payoff_range(opts: list[Leg], open_value: float) -> tuple[float, float]:
+    """(best, worst) at expiration over every price, the open value included. One
+    expiration: the payoff is straight between strikes, so the strikes and the ends
+    (zero, and far above) bound it; the far end is beyond any finite loss check."""
+    strikes = sorted({x.strike for x in opts})
+    points = [0.0, *strikes, strikes[-1] * 2 + 1]
+
+    def at(price: float) -> float:
+        total = open_value
+        for x in opts:
+            intrinsic = (
+                max(0.0, price - x.strike) if x.put_call == "C" else max(0.0, x.strike - price)
+            )
+            total += x.quantity * intrinsic * x.multiplier
+        return total
+
+    values = [at(p) for p in points]
+    return max(values), min(values)
+
+
 def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: Rules) -> None:
     legs = st.legs
     opts = [leg for leg in legs if leg.is_option]
@@ -783,6 +816,16 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         # Jade lizards and other credit trades: at most the credit.
         max_profit = open_value
 
+    # Inverted: a roll took the short put above the short call (strangle or iron condor). At
+    # expiration it loses at least the inversion, so the most it can make is the credit less
+    # that (tastylive); worked out from its legs at every strike.
+    inverted = _inversion(name, opts)
+    if inverted:
+        best, worst = _payoff_range(opts, open_value)
+        max_profit = best
+        if name == "Iron condor":
+            max_loss = -worst
+
     dtes = [leg.dte(today) for leg in opts]
     shorts = [leg for leg in opts if leg.short]
     pct = pl / max_profit if (pl is not None and max_profit and max_profit > 0) else None
@@ -834,6 +877,8 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "shares_like": _shares_like(name, opts),
         # A poor man's covered call or put: its target is a share of its estimated max profit.
         "pmcc": bool(pmcc_parts(name, legs)),
+        # Points the short put sits above the short call; None unless inverted.
+        "inverted": inverted,
         # A covered call or put written against shares or a ZEBRA held separately, and the
         # ZEBRA's expiration: the option is never rolled past it.
         "covered_by": st.meta.get("covered_by"),
@@ -904,6 +949,26 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
                 "detail": "Short strike "
                 + ", ".join(f"{x.strike:g}{x.put_call}" for x in tested)
                 + (" in the money" if itm else f" at or above {rules.tested_delta:.2f} delta"),
+            }
+        )
+    if inverted:
+        sp_ = max(x.strike for x in shorts if x.put_call == "P")
+        sc_ = min(x.strike for x in shorts if x.put_call == "C")
+        most = st.numbers["max_profit"]
+        flags.append(
+            {
+                "kind": "inverted",
+                "label": f"Inverted {inverted:g}",
+                "detail": f"Short put {sp_:g} above short call {sc_:g}: inverted by "
+                f"{inverted:g}, so it loses at least that at expiration. Most it can make now: "
+                + (
+                    "nothing, a loss of at least " + f"{-most:,.0f}"
+                    if most is not None and most <= 0
+                    else f"{most:,.0f}"
+                    if most is not None
+                    else "–"
+                )
+                + " (the credit less the inversion)",
             }
         )
     # A ratio opens for a small credit, so its loss is measured against what it can make.

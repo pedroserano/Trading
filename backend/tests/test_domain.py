@@ -758,3 +758,32 @@ def test_poor_mans_covered_call_targets_half_its_estimated_max_profit():
     low = group([opt("P", 560, 1, 5.0, exp=far), opt("P", 580, -1, 3.0)])[0]
     evaluate(low, TODAY, 590.0, Rules())
     assert not low.numbers["pmcc"]
+
+
+def test_an_inverted_strangle_and_iron_condor_are_flagged_with_what_they_can_make():
+    # Rolled the put up past the call: 600 put, 590 call, 13.00 credit in all.
+    (st,) = group([opt("P", 600, -1, 8.00, mark=12.0), opt("C", 590, -1, 5.00, mark=6.0)])
+    assert st.name == "Strangle"
+    evaluate(st, TODAY, 595.0, Rules())
+    n = st.numbers
+    assert n["inverted"] == 10 and n["max_profit"] == 300  # 1,300 credit less 1,000
+    flag = next(f for f in st.flags if f["kind"] == "inverted")
+    assert flag["label"] == "Inverted 10" and "300" in flag["detail"]
+    # An iron condor whose put side was rolled above the call side keeps its wings.
+    legs = [
+        opt("P", 590, 1, 1.00),
+        opt("P", 600, -1, 6.00),
+        opt("C", 595, -1, 4.00),
+        opt("C", 605, 1, 1.00),
+    ]
+    (ic,) = group(legs)
+    assert ic.name == "Iron condor"
+    evaluate(ic, TODAY, 597.0, Rules())
+    # Credit 800; between 595 and 600 it loses the 5 points of inversion; past a wing, 10.
+    assert ic.numbers["inverted"] == 5
+    assert ic.numbers["max_profit"] == 300 and ic.numbers["max_loss"] == 200
+    # Not inverted: no flag, numbers as before.
+    (ok,) = group([opt("P", 580, -1, 5.00), opt("C", 610, -1, 5.00)])
+    evaluate(ok, TODAY, 595.0, Rules())
+    assert ok.numbers["inverted"] is None and ok.numbers["max_profit"] == 1000
+    assert not [f for f in ok.flags if f["kind"] == "inverted"]
