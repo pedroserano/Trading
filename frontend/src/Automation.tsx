@@ -6,23 +6,23 @@ import { proposalSpec } from "./OrderTicket";
 import { usePolling } from "./usePolling";
 import type { AutoLevel, AutomationView, StrategyView } from "./types";
 
-type Ctx = { view: AutomationView | null; update: (v: AutomationView) => void };
+export type AutomationCtx = { view: AutomationView | null; update: (v: AutomationView) => void };
 
 /** Automanage state, shared by the Positions toolbar and every position's actions row. */
-export const AutomationContext = createContext<Ctx>({ view: null, update: () => {} });
+export const AutomationContext = createContext<AutomationCtx>({ view: null, update: () => {} });
 
 /** Under All: each Schwab account's automation, by account key. */
-export const AutomationsContext = createContext<Record<string, Ctx>>({});
+export const AutomationsContext = createContext<Record<string, AutomationCtx>>({});
 
 /** A trade's own account's automation: under All, the account it is in. */
-function useAutomationFor(st: StrategyView): Ctx {
+function useAutomationFor(st: StrategyView): AutomationCtx {
   const one = useContext(AutomationContext);
   const all = useContext(AutomationsContext);
   return (st.account && all[st.account]) || one;
 }
 
 /** Every listed account's automation, read every 10 seconds (All in the picker). */
-export function useAllAutomations(accounts: string[]): Record<string, Ctx> {
+export function useAllAutomations(accounts: string[]): Record<string, AutomationCtx> {
   const [views, setViews] = useState<Record<string, AutomationView>>({});
   const key = accounts.join(",");
   const load = useCallback(
@@ -43,14 +43,14 @@ export function useAllAutomations(accounts: string[]): Record<string, Ctx> {
     [key],
   );
   usePolling(load, 10000);
-  const ctxs: Record<string, Ctx> = {};
+  const ctxs: Record<string, AutomationCtx> = {};
   for (const a of key ? key.split(",") : []) {
     ctxs[a] = { view: views[a] ?? null, update: (v) => setViews((m) => ({ ...m, [a]: v })) };
   }
   return ctxs;
 }
 
-export function useAutomation(account: string): Ctx {
+export function useAutomation(account: string): AutomationCtx {
   const [view, setView] = useState<AutomationView | null>(null);
   useEffect(() => setView(null), [account]);
   // The app never shows the automation log, so the poll leaves it out (log=0).
@@ -257,45 +257,46 @@ export function AutoPanel({ st }: { st: StrategyView }) {
 }
 
 /** The header's kill switch: pauses or resumes automation for the account on screen. */
+/** The header's automation switch for the account: Off, Propose or Auto. */
 export function PauseSwitch() {
   const { view, update } = useContext(AutomationContext);
   const [busy, setBusy] = useState(false);
   if (!view) return null;
-  if (view.auto_possible === false) {
-    return (
-      <button
-        type="button"
-        className="pause-switch held"
-        disabled
-        title={`Nothing on the Schwab account can run by itself: ${view.auto_why ?? "LIVE_AUTO is off"}. Proposals and notifications still work as set.`}
-      >
-        Auto off
-      </button>
-    );
-  }
-  const held = view.paused || !!view.blocked;
-  const toggle = async () => {
+  const mode = view.paused ? "off" : (view.mode ?? "auto");
+  const set = async (next: string) => {
     setBusy(true);
     try {
-      update(
-        await postJson<AutomationView>(`/api/automation/pause?account=${view.account}`, {
-          paused: !view.paused,
-        }),
-      );
+      update(await postJson<AutomationView>(`/api/automation/mode?account=${view.account}`, { mode: next }));
     } catch {
       /* the next poll shows the real state */
     } finally {
       setBusy(false);
     }
   };
-  const title = view.paused
-    ? "Automation is paused for this account. Click to resume."
-    : view.blocked
-      ? `Automation is holding: ${view.blocked}. Click to pause it too.`
-      : "Automation is running for this account. Click to pause it.";
+  const title =
+    mode === "off"
+      ? view.paused && view.mode !== "off"
+        ? "Automation paused itself (stale prices or the daily order cap). Pick a level to resume."
+        : "Off: nothing automatic on this account."
+      : (mode === "propose"
+          ? "Propose: every rule and the scanner wait for your tap."
+          : "Auto: each rule and the scanner act at their own level (Settings, Advanced).") +
+        (view.auto_possible === false ? " On needs LIVE_TRADING=true and LIVE_AUTO=true in .env." : "") +
+        (view.blocked ? ` Holding now: ${view.blocked}.` : "");
   return (
-    <button type="button" className={`pause-switch ${held ? "held" : ""}`} disabled={busy} onClick={toggle} title={title}>
-      {view.paused ? "Auto paused" : view.blocked ? "Auto holding" : "Auto on"}
-    </button>
+    <select
+      className={`pause-switch mode-${mode} ${view.blocked && mode !== "off" ? "held" : ""}`}
+      value={mode}
+      disabled={busy}
+      onChange={(e) => set(e.target.value)}
+      title={title}
+      aria-label="Automation for this account"
+    >
+      <option value="off">Auto: Off</option>
+      <option value="propose">Auto: Propose</option>
+      <option value="auto" disabled={view.auto_possible === false}>
+        Auto: On
+      </option>
+    </select>
   );
 }

@@ -884,17 +884,9 @@ def test_ticket_warns_on_debit_trades_and_thin_jade_lizards(client):
     assert any("upside is not free of risk" in w for w in warn)
 
 
-def test_views_per_underlying_and_per_trade_through_the_api(client):
-    r = client.post("/api/watchlist/view", json={"symbol": "SPY", "view": "bullish"})
-    assert r.status_code == 200 and r.json()["views"] == {"SPY": "bullish"}
-    assert client.get("/api/watchlist").json()["views"] == {"SPY": "bullish"}
-    assert (
-        client.post("/api/watchlist/view", json={"symbol": "SPY", "view": "up"}).status_code == 400
-    )
-    assert (
-        client.post("/api/watchlist/view", json={"symbol": "SPY", "view": "auto"}).json()["views"]
-        == {}
-    )
+def test_a_trades_view_through_the_api(client):
+    # Views are set per trade on Positions; the Watchlist has none.
+    assert "views" not in client.get("/api/watchlist").json()
     v = client.post("/api/automation/trade?account=sim", json={"trade_id": 5, "view": "bearish"})
     assert v.json()["trades"]["5"] == {"enabled": False, "view": "bearish"}
     v = client.post("/api/automation/trade?account=sim", json={"trade_id": 5, "view": "portfolio"})
@@ -1008,6 +1000,9 @@ def test_preview_warns_when_a_roll_goes_past_the_zebra(client):
 
 
 def test_the_simulated_account_can_be_hidden_from_the_picker(client):
+    # Hidden until shown in Settings.
+    assert client.get("/api/accounts/in-use").json()["hide_sim"] is True
+    client.post("/accounts/hide-sim", data={}, follow_redirects=False)
     assert client.get("/api/accounts/in-use").json()["hide_sim"] is False
     r = client.post("/accounts/hide-sim", data={"hide_sim": "on"}, follow_redirects=False)
     assert r.status_code == 303
@@ -1158,6 +1153,7 @@ def test_earnings_dates_are_set_on_the_watchlist(client):
 
 
 def test_an_opening_order_copies_to_the_other_accounts_by_net_liq(client):
+    client.post("/accounts/hide-sim", data={}, follow_redirects=False)  # show it
     put = first_put(client)
     order = {
         "account": "live",
@@ -1245,3 +1241,23 @@ def test_all_accounts_answer_on_every_combined_page(client):
     assert act["account"] == "all" and isinstance(act["orders"], list)
     # Trading pages still need one account.
     assert client.get("/api/automation?account=all").status_code == 404
+
+
+def test_one_automation_switch_per_account(client):
+    v = client.get("/api/automation?account=sim").json()
+    assert v["mode"] == "auto" and v["settings"]["levels"]["profit"] == "auto"
+    # Propose: every rule at most proposes.
+    v = client.post("/api/automation/mode?account=sim", json={"mode": "propose"}).json()
+    assert v["mode"] == "propose" and v["paused"] is False
+    assert set(v["settings"]["levels"].values()) <= {"off", "notify", "propose"}
+    # Off: nothing automatic.
+    v = client.post("/api/automation/mode?account=sim", json={"mode": "off"}).json()
+    assert v["mode"] == "off" and v["paused"] is True
+    # A Schwab account without LIVE_AUTO offers no Auto.
+    bad = client.post("/api/automation/mode?account=live", json={"mode": "auto"})
+    assert bad.status_code == 400 and "LIVE_AUTO" in bad.json()["detail"]
+    v = client.post("/api/automation/mode?account=live", json={"mode": "propose"}).json()
+    assert v["mode"] == "propose"
+    # The old pause switch still works, as Off and back.
+    v = client.post("/api/automation/pause?account=sim", json={"paused": False}).json()
+    assert v["mode"] == "auto" and v["paused"] is False

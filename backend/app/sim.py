@@ -125,7 +125,7 @@ class SimBroker:
         replaces=None,
     ) -> dict:
         """Records a working order and tries to fill it at once. With replaces, the new
-        order takes the place of that working order (changed from the Activity page)."""
+        order takes the place of that working order (changed from History)."""
         async with self.lock:
             st = await self.load()
             old = None

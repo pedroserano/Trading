@@ -171,7 +171,7 @@ class OrderIn(BaseModel):
     play: str | None = Field(None, max_length=32)
     # Placed from a proposal's Review: that proposal is then done.
     proposal_id: str | None = Field(None, max_length=64)
-    # A working order this one replaces (changed on the ticket from the Activity page).
+    # A working order this one replaces (changed on the ticket from History).
     replaces: int | str | None = None
 
 
@@ -206,13 +206,12 @@ class EarningsSetIn(BaseModel):
     time: str | None = Field(None, max_length=3)  # bmo, amc, or none
 
 
-class SymbolViewIn(BaseModel):
-    symbol: str
-    view: str  # neutral, bullish, bearish, or "auto" to follow the portfolio
-
-
 class PauseIn(BaseModel):
     paused: bool
+
+
+class ModeIn(BaseModel):
+    mode: Literal["off", "propose", "auto"]
 
 
 class ResetIn(BaseModel):
@@ -868,7 +867,7 @@ def create_app(
                 "status": status,
                 "accounts": accounts,
                 "sheet_labels": registry.sheet_labels,
-                "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
+                "hide_sim": await sim_hidden(),
                 "sim_start_cash": (await broker.snapshot())["start_cash"],
                 "new_key": new_key,
                 "here_base": here_base,
@@ -912,6 +911,20 @@ def create_app(
                 ],
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
                 "scan_steps_html": await scan_steps_html(rules_now),
+                "auto_modes": [
+                    {
+                        "key": acct,
+                        "name": name,
+                        "mode": (await automations[acct].view(log=False))["mode"],
+                        "auto_possible": automations[acct].max_level == "auto",
+                    }
+                    for acct, name in [("sim", "Simulated"), *schwab_accounts()]
+                    if acct in automations
+                ],
+                "scan_presets": scan_mod.PRESETS,
+                "scan_preset": scan_mod.preset_of(
+                    scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
+                ),
                 "scan_fields": scan_mod.FIELDS,
                 "auto_rules": RULES,
                 "auto_rule_hints": rule_hints(
@@ -1196,6 +1209,18 @@ def create_app(
             request.session["flash"] = str(e)
         return RedirectResponse(settings_url("scanner"), status_code=303)
 
+    @app.post("/scanner/preset", dependencies=[Depends(require_login)])
+    async def scanner_preset_save(request: Request):
+        form = dict(await request.form())
+        try:
+            key = str(form.get("preset") or "")
+            new = scan_mod.apply_preset(await store.get_setting(scan_mod.SETTINGS_KEY), key)
+            await store.set_setting(scan_mod.SETTINGS_KEY, new)
+            request.session["notice"] = f"Scanner set to {scan_mod.PRESETS[key][0]}."
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("scanner"), status_code=303)
+
     @app.post("/live/settings", dependencies=[Depends(require_login)])
     async def live_settings_save(request: Request):
         form = dict(await request.form())
@@ -1286,6 +1311,12 @@ def create_app(
         except SchwabError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
 
+    async def sim_hidden() -> bool:
+        """Whether the simulated account is out of the picker: hidden until shown in
+        Settings."""
+        v = await store.get_setting(HIDE_SIM_KEY)
+        return True if v is None else bool(v)
+
     def all_snapshot() -> dict:
         """The Schwab accounts' snapshots as one ("All" in the picker; never the simulated
         account), each strategy tagged with its account."""
@@ -1339,7 +1370,6 @@ def create_app(
             r["earnings_mine"] = sym in earnings.manual
         return {
             "rows": rows,
-            "views": await preferences.symbol_views(),
             "earnings": earnings.status(),
         }
 
@@ -1361,17 +1391,6 @@ def create_app(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
         return {"found": n, "earnings": earnings.status()}
-
-    @app.post("/api/watchlist/view", dependencies=[Depends(require_login)])
-    async def api_watchlist_view(body: SymbolViewIn):
-        symbol = _check_symbol(body.symbol)
-        try:
-            views = await preferences.set_symbol_view(
-                symbol, None if body.view == "auto" else body.view
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"views": views}
 
     @app.get("/api/trade/{symbol:path}/expirations", dependencies=[Depends(require_login)])
     async def api_expirations(symbol: str):
@@ -1942,7 +1961,7 @@ def create_app(
                 status_code=400, detail="Only opening orders copy to other accounts"
             )
         t, _, _ = await build_ticket(src)
-        hide_sim = bool(await store.get_setting(HIDE_SIM_KEY))
+        hide_sim = await sim_hidden()
         targets = [a["key"] for a in registry.in_use() if a["key"] in portfolios]
         if not hide_sim:
             targets.append("sim")
@@ -2279,14 +2298,15 @@ def create_app(
                 continue
             v = await automations[acct].view(log=False)
             parts = []
-            if not v.get("auto_possible", True):
-                parts.append("Auto off (header)")
-            elif v["paused"]:
-                parts.append("Auto paused (header): nothing automatic")
-            elif v.get("blocked"):
-                parts.append(f"Auto holding: {v['blocked']}")
+            mode = v.get("mode", "auto")
+            if mode == "off" or v["paused"]:
+                parts.append("Automation Off: nothing automatic")
+            elif mode == "propose":
+                parts.append("Automation Propose: every rule and the scanner at most propose")
             else:
-                parts.append("Auto on (header)")
+                parts.append("Automation Auto: each rule and the scanner as set")
+            if v.get("blocked") and mode != "off":
+                parts.append(f"holding: {v['blocked']}")
             if acct != "sim":
                 if not live["on"]:
                     parts.append(
@@ -2344,6 +2364,30 @@ def create_app(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return await automations[account].view()
+
+    @app.post("/api/automation/mode", dependencies=[Depends(require_login)])
+    async def api_automation_mode(body: ModeIn, account: Acct = "sim"):
+        """The account's one switch: off, propose or auto."""
+        known(account)
+        try:
+            await automations[account].set_mode(body.mode)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return await automations[account].view()
+
+    @app.post("/automation/mode", dependencies=[Depends(require_login)])
+    async def automation_mode_form(request: Request):
+        form = dict(await request.form())
+        account = str(form.get("account") or "")
+        try:
+            if account not in automations:
+                raise ValueError("No such account")
+            await automations[account].set_mode(str(form.get("mode") or ""))
+            name = "Simulated" if account == "sim" else registry.name(account)
+            request.session["notice"] = f"{name}: automation set to {form['mode'].capitalize()}."
+        except ValueError as e:
+            request.session["flash"] = str(e)
+        return RedirectResponse(settings_url("automation"), status_code=303)
 
     @app.post("/api/automation/pause", dependencies=[Depends(require_login)])
     async def api_automation_pause(body: PauseIn, account: Acct = "sim"):
@@ -2411,7 +2455,7 @@ def create_app(
         """The Schwab accounts the app runs, by their Schwab name, for the header picker."""
         return {
             "accounts": [a for a in registry.in_use() if a["key"] in portfolios],
-            "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
+            "hide_sim": await sim_hidden(),
         }
 
     @app.get("/api/orders/{order_id}/entry", dependencies=[Depends(require_login)])

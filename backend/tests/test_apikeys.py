@@ -148,7 +148,6 @@ def test_keys_cannot_change_settings(env):
     for path, kw in [
         ("/api/sim/reset", {"json": {"confirm": "RESET"}}),
         ("/api/automation/pause?account=sim", {"json": {"paused": True}}),
-        ("/api/watchlist/view", {"json": {"symbol": "SPY", "view": "own"}}),
         ("/api/watchlist/add", {"json": {"text": "GLD"}}),
         ("/api/watchlist/remove", {"json": {"symbol": "SPY"}}),
         ("/api/watchlist/upload", {"files": {"file": ("w.csv", b"GLD", "text/csv")}}),

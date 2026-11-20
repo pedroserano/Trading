@@ -124,7 +124,6 @@ function RangeBar({ x }: { x: PriceExtreme | null | undefined }) {
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchRow[] | null>(null);
   // Your view per underlying, for the scanner: absent follows the portfolio bias.
-  const [views, setViews] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "symbol", desc: false });
   const [earnStatus, setEarnStatus] = useState<EarningsStatus | null>(null);
@@ -134,12 +133,11 @@ export default function Watchlist() {
 
   const load = useCallback(async (current: () => boolean = () => true) => {
     try {
-      const r = await getJson<{ rows: WatchRow[]; views?: Record<string, string>; earnings?: EarningsStatus }>(
+      const r = await getJson<{ rows: WatchRow[]; earnings?: EarningsStatus }>(
         "/api/watchlist",
       );
       if (!current()) return;
       setRows(r.rows);
-      setViews(r.views ?? {});
       setEarnStatus(r.earnings ?? null);
       setError(null);
     } catch (e) {
@@ -339,12 +337,6 @@ export default function Watchlist() {
               <th title="Open interest at the money, call plus put">ATM OI</th>
               {th("float", "Float", "Shares free to trade, from Schwab, with how much of the float trades on an average day (10 days). Under 20 million shares is a low float, highlighted: it can move sharply. Funds and indexes have none. Schwab gives no short interest")}
               {th("earnings", "Earnings", "Next earnings report: date, and before the open or after the close. Sorts soonest first, by day and side of the bell; no date last")}
-              <th
-                className="l"
-                title="Your view for the scanner: its new trades here lean this way, selling one side outside the expected move (puts when bullish, calls when bearish), and keep leaning that way through their rolls. Would own: you would be glad to buy the shares, so it sells cash-secured puts and, on expiration day, lets an in-the-money put be assigned if your cash and sweep cover it (never margin). Auto follows the portfolio bias and price extremes."
-              >
-                View
-              </th>
               <th title="Your position delta and theta in this underlying">Position</th>
               <th className="rm-col" aria-label="Remove" />
             </tr>
@@ -358,7 +350,7 @@ export default function Watchlist() {
               <Fragment key={r.symbol}>
               {heading ? (
                 <tr className="day-row">
-                  <td className="l" colSpan={19}>
+                  <td className="l" colSpan={18}>
                     <span>{group}</span>
                   </td>
                 </tr>
@@ -496,30 +488,6 @@ export default function Watchlist() {
                     <span className="warn-text">No date · set</span>
                   )}
                 </td>
-                <td className="l" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                  <select
-                    className={`view-select ${views[r.symbol] ? "set" : ""}`}
-                    value={views[r.symbol] ?? "auto"}
-                    aria-label={`Your view on ${r.symbol}`}
-                    onChange={async (e) => {
-                      try {
-                        const out = await postJson<{ views: Record<string, string> }>("/api/watchlist/view", {
-                          symbol: r.symbol,
-                          view: e.target.value,
-                        });
-                        setViews(out.views);
-                      } catch (err) {
-                        setError(String((err as Error).message));
-                      }
-                    }}
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="neutral">Neutral</option>
-                    <option value="bullish">Bullish</option>
-                    <option value="bearish">Bearish</option>
-                    <option value="would_own">Would own</option>
-                  </select>
-                </td>
                 <td>
                   {r.held ? (
                     <>
@@ -544,7 +512,7 @@ export default function Watchlist() {
               </tr>
               {editingEarn === r.symbol ? (
                 <tr className="day-row edit-row">
-                  <td className="l" colSpan={19}>
+                  <td className="l" colSpan={18}>
                     <EarningsEditor
                       row={r}
                       onDone={(changed) => {

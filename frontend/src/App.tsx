@@ -16,6 +16,7 @@ import {
   AutomationContext,
   AutomationsContext,
   PauseSwitch,
+  type AutomationCtx,
   useAllAutomations,
   useAutomation,
 } from "./Automation";
@@ -31,11 +32,11 @@ import Trade from "./Trade";
 import Watchlist from "./Watchlist";
 
 type Route =
-  | { page: "positions" }
+  /** Positions; risk: the Portfolio figures (allocation, Greeks, theta ladder) instead. */
+  | { page: "positions"; risk: boolean }
   | { page: "watchlist" }
-  | { page: "portfolio" }
-  | { page: "activity" }
-  | { page: "dashboard" }
+  /** History: orders and trades (once Activity), or stats (once Dashboard). */
+  | { page: "history"; tab: "orders" | "stats" }
   | { page: "settings"; section: string | null }
   | { page: "trade"; symbol: string };
 
@@ -48,9 +49,13 @@ function parseRoute(hash: string): Route {
   ) {
     return { page: "watchlist" };
   }
-  if (parts[0] === "portfolio") return { page: "portfolio" };
-  if (parts[0] === "activity") return { page: "activity" };
-  if (parts[0] === "dashboard") return { page: "dashboard" };
+  // Portfolio, Activity and Dashboard were pages of their own; old links still land.
+  if (parts[0] === "risk" || parts[0] === "portfolio")
+    return { page: "positions", risk: true };
+  if (parts[0] === "activity") return { page: "history", tab: "orders" };
+  if (parts[0] === "dashboard") return { page: "history", tab: "stats" };
+  if (parts[0] === "history")
+    return { page: "history", tab: parts[1] === "stats" ? "stats" : "orders" };
   if (parts[0] === "settings")
     return { page: "settings", section: parts[1] || null };
   if (parts[0] === "trade")
@@ -58,7 +63,7 @@ function parseRoute(hash: string): Route {
       page: "trade",
       symbol: decodeURIComponent(parts[1] || "SPY").toUpperCase(),
     };
-  return { page: "positions" };
+  return { page: "positions", risk: false };
 }
 
 function useRoute(): Route {
@@ -159,16 +164,6 @@ export default function App() {
   const { snapshot, link } = useSnapshot(shown);
   const route = useRoute();
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
-  const [view, setView] = usePersisted<View>("positions.view", "underlying");
-  const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">(
-    "positions.flagged",
-    "0",
-  );
-  // Simple: the columns that say how a trade is doing; Detail: every number.
-  const [cols, setCols] = usePersisted<"simple" | "detail">(
-    "positions.cols",
-    "simple",
-  );
   const automation = useAutomation(account);
   const automations = useAllAutomations(all ? (accounts ?? []).map((a) => a.key) : []);
 
@@ -200,9 +195,29 @@ export default function App() {
                 <main>
                   <Banner s={snapshot} />
                   {route.page === "watchlist" ? <Watchlist /> : null}
-                  {route.page === "portfolio" ? <Portfolio /> : null}
-                  {route.page === "activity" ? <Activity /> : null}
-                  {route.page === "dashboard" ? <Dashboard /> : null}
+                  {route.page === "history" ? (
+                    <>
+                      <div className="toolbar">
+                        <div className="seg" role="group" aria-label="History">
+                          <a
+                            className="seg-link"
+                            href="#/history"
+                            aria-pressed={route.tab === "orders"}
+                          >
+                            Orders &amp; trades
+                          </a>
+                          <a
+                            className="seg-link"
+                            href="#/history/stats"
+                            aria-pressed={route.tab === "stats"}
+                          >
+                            Stats
+                          </a>
+                        </div>
+                      </div>
+                      {route.tab === "orders" ? <Activity /> : <Dashboard />}
+                    </>
+                  ) : null}
                   {route.page === "settings" ? (
                     <Settings section={route.section} />
                   ) : null}
@@ -213,84 +228,12 @@ export default function App() {
                     />
                   ) : null}
                   {route.page === "positions" ? (
-                    <>
-                      <MarketStrip />
-                      <div className="toolbar">
-                        <div
-                          className="seg"
-                          role="group"
-                          aria-label="Group positions"
-                        >
-                          <button
-                            aria-pressed={view === "underlying"}
-                            onClick={() => setView("underlying")}
-                          >
-                            By underlying
-                          </button>
-                          <button
-                            aria-pressed={view === "dte"}
-                            onClick={() => setView("dte")}
-                          >
-                            By DTE
-                          </button>
-                        </div>
-                        <label className="check">
-                          <input
-                            type="checkbox"
-                            checked={flaggedOnly === "1"}
-                            onChange={(e) =>
-                              setFlaggedOnly(e.target.checked ? "1" : "0")
-                            }
-                          />
-                          Flagged only ({snapshot.totals.flags})
-                        </label>
-                        <div
-                          className="seg cols-toggle"
-                          role="group"
-                          aria-label="Columns"
-                        >
-                          <button
-                            aria-pressed={cols === "simple"}
-                            onClick={() => setCols("simple")}
-                            title="How each trade is doing"
-                          >
-                            Simple
-                          </button>
-                          <button
-                            aria-pressed={cols === "detail"}
-                            onClick={() => setCols("detail")}
-                            title="Every number: prices, Greeks, short deltas, max loss"
-                          >
-                            Detail
-                          </button>
-                        </div>
-                      </div>
-                      {all ? (
-                        // Each account's automanage line and proposals, under its name.
-                        (accounts ?? []).map((x) =>
-                          automations[x.key] ? (
-                            <AutomationContext.Provider key={x.key} value={automations[x.key]}>
-                              <div className="auto-acct">
-                                <AutoBar />
-                              </div>
-                            </AutomationContext.Provider>
-                          ) : null,
-                        )
-                      ) : (
-                        <AutoBar />
-                      )}
-                      <PositionsTable
-                        s={snapshot}
-                        view={view}
-                        flaggedOnly={flaggedOnly === "1"}
-                        detail={cols === "detail"}
-                      />
-                      <p className="footnote">
-                        Positions are grouped by their trade history, including
-                        trades placed in thinkorswim; credit includes every roll.
-                        Positions with no known history are grouped by their legs.
-                      </p>
-                    </>
+                    <PositionsPage
+                      s={snapshot}
+                      risk={route.risk}
+                      accounts={all ? (accounts ?? []) : null}
+                      automations={automations}
+                    />
                   ) : null}
                 </main>
                 {ticket ? (
@@ -308,6 +251,98 @@ export default function App() {
         </ViewContext.Provider>
       </AccountContext.Provider>
     </TicketContext.Provider>
+  );
+}
+
+/** Positions: the trades, grouped by underlying or by DTE, or Risk: the Portfolio figures. */
+function PositionsPage(props: {
+  s: Snapshot;
+  risk: boolean;
+  /** Under All: the Schwab accounts, each with its automanage line. */
+  accounts: SchwabAccount[] | null;
+  automations: Record<string, AutomationCtx>;
+}) {
+  const { s, risk, accounts, automations } = props;
+  const [view, setView] = usePersisted<View>("positions.view", "underlying");
+  const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
+  // Simple: the columns that say how a trade is doing; Detail: every number.
+  const [cols, setCols] = usePersisted<"simple" | "detail">("positions.cols", "simple");
+  const group = (v: View) => {
+    setView(v);
+    window.location.hash = "#/";
+  };
+  return (
+    <>
+      <MarketStrip />
+      <div className="toolbar">
+        <div className="seg" role="group" aria-label="Group positions">
+          <button aria-pressed={!risk && view === "underlying"} onClick={() => group("underlying")}>
+            By underlying
+          </button>
+          <button aria-pressed={!risk && view === "dte"} onClick={() => group("dte")}>
+            By DTE
+          </button>
+          <button
+            aria-pressed={risk}
+            onClick={() => (window.location.hash = "#/risk")}
+            title="Buying power by underlying and sector, Greeks by position, the theta ladder"
+          >
+            Risk
+          </button>
+        </div>
+        {risk ? null : (
+          <>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={flaggedOnly === "1"}
+                onChange={(e) => setFlaggedOnly(e.target.checked ? "1" : "0")}
+              />
+              Flagged only ({s.totals.flags})
+            </label>
+            <div className="seg cols-toggle" role="group" aria-label="Columns">
+              <button
+                aria-pressed={cols === "simple"}
+                onClick={() => setCols("simple")}
+                title="How each trade is doing"
+              >
+                Simple
+              </button>
+              <button
+                aria-pressed={cols === "detail"}
+                onClick={() => setCols("detail")}
+                title="Every number: prices, Greeks, short deltas, max loss"
+              >
+                Detail
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+      {risk ? (
+        <Portfolio />
+      ) : (
+        <>
+          {accounts ? (
+            // Under All: each account's automanage line and proposals in turn.
+            accounts.map((x) =>
+              automations[x.key] ? (
+                <AutomationContext.Provider key={x.key} value={automations[x.key]}>
+                  <AutoBar />
+                </AutomationContext.Provider>
+              ) : null,
+            )
+          ) : (
+            <AutoBar />
+          )}
+          <PositionsTable s={s} view={view} flaggedOnly={flaggedOnly === "1"} detail={cols === "detail"} />
+          <p className="footnote">
+            Positions are grouped by their trade history, including trades placed in thinkorswim;
+            credit includes every roll. Positions with no known history are grouped by their legs.
+          </p>
+        </>
+      )}
+    </>
   );
 }
 
@@ -430,7 +465,7 @@ const ICONS: Record<string, React.ReactNode> = {
     <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />
   ),
   trade: <path d="M4 8h14l-3-3M20 16H6l3 3" />,
-  activity: (
+  history: (
     <>
       <path d="M6 3h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5L6 21z" />
       <path d="M9 8h6M9 12h6M9 16h4" />
@@ -469,9 +504,7 @@ function Nav({ route }: { route: Route }) {
         route.page === "trade" ? `#/trade/${route.symbol}` : "#/trade/SPY",
         "Trade",
       )}
-      {tab("activity", "#/activity", "Activity")}
-      {tab("portfolio", "#/portfolio", "Portfolio")}
-      {tab("dashboard", "#/dashboard", "Dashboard")}
+      {tab("history", "#/history", "History")}
       {tab("settings", "#/settings", "Settings")}
     </nav>
   );
@@ -654,10 +687,10 @@ function Header(props: {
             title={
               `${!out(db) ? `β-Δ ${signed(s.totals.delta_bw, 0)} SPY shares (${pct(db?.value ?? null, 1)}), in its band. ` : ""}` +
               `${!thetaTone ? `Θ ${signed(s.totals.theta, 0)} a day (${pct(thetaPct, 2)}), in its band. ` : ""}` +
-              "Shown here when outside its band; every figure is on Portfolio."
+              "Shown here when outside its band; every figure is under Positions, Risk."
             }
           >
-            <a href="#/portfolio" className="in-band">
+            <a href="#/risk" className="in-band">
               {!out(db) && !thetaTone
                 ? "In band"
                 : !out(db)

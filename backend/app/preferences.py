@@ -156,24 +156,6 @@ class Preferences:
     async def set_watchlist(self, symbols: list[str]) -> None:
         await self.store.set_setting("watchlist", list(symbols))
 
-    async def symbol_views(self) -> dict[str, str]:
-        """Your view on an underlying, for the scanner: bullish, bearish or neutral. A symbol
-        not listed follows the portfolio bias and the price-extreme lean."""
-        return dict(await self.store.get_setting("symbol_views") or {})
-
-    async def set_symbol_view(self, symbol: str, view: str | None) -> dict[str, str]:
-        from .targets import VIEWS
-
-        if view is not None and view not in VIEWS:
-            raise ValueError("View: neutral, bullish, bearish or would_own")
-        views = await self.symbol_views()
-        if view is None:
-            views.pop(symbol, None)
-        else:
-            views[symbol] = view
-        await self.store.set_setting("symbol_views", views)
-        return views
-
     async def rules(self) -> Rules:
         saved = await self.store.get_setting("rules") or {}
         known = {f.name for f in fields(Rules)}

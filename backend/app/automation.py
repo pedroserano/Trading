@@ -43,6 +43,9 @@ RULES = {
     "eplay": "Earnings play: close after the report",
     "dividend": "Ex-dividend, short call likely assigned",
 }
+# The account's one automation switch (the header, and Settings).
+MODES = ("off", "propose", "auto")
+
 DEFAULT_SETTINGS = {
     "levels": {
         "profit": "auto",
@@ -1554,6 +1557,10 @@ class AutomationService:
         if self.state is None:
             self.state = await self.store.get_setting(self.state_key) or {}
         self.state.setdefault("paused", False)
+        # The account's one switch: off (nothing automatic), propose (every rule and the
+        # scanner at most propose), auto (each as set under Advanced). Before the switch, a
+        # pause was Off and anything else Auto.
+        self.state.setdefault("mode", "off" if self.state["paused"] else "auto")
         self.state.setdefault("trades", {})
         self.state.setdefault("proposals", [])
         self.state.setdefault("orders", {})
@@ -1656,9 +1663,38 @@ class AutomationService:
                 del st["orders"][str(order_id)]
                 await self._save()
 
+    async def set_mode(self, mode: str) -> None:
+        """The account's switch: off, propose or auto (auto only where orders may go out by
+        themselves)."""
+        if mode not in MODES:
+            raise ValueError("Automation: off, propose or auto")
+        if mode == "auto" and self.max_level != "auto":
+            raise ValueError(
+                "Auto needs LIVE_TRADING=true and LIVE_AUTO=true in .env for a Schwab account"
+            )
+        async with self.lock:
+            st = await self.load()
+            if st["mode"] != mode or st["paused"] != (mode == "off"):
+                st["mode"] = mode
+                st["paused"] = mode == "off"
+                self._log(None, None, f"Automation set to {mode.capitalize()} by you")
+                await self._save()
+
+    def mode_cap(self) -> str:
+        """The highest level anything may act at on this account: the switch, within the
+        .env cap."""
+        mode = (self.state or {}).get("mode", "auto")
+        top = {"off": "off", "propose": "propose"}.get(mode, self.max_level)
+        return LEVELS[min(LEVELS.index(top), LEVELS.index(self.max_level))]
+
     async def set_paused(self, paused: bool, why: str = "by you") -> None:
         async with self.lock:
             st = await self.load()
+            if why == "by you":
+                # The old pause switch: paused is Off; resumed is back to Auto (or Propose).
+                st["mode"] = (
+                    "off" if paused else ("auto" if self.max_level == "auto" else "propose")
+                )
             if st["paused"] != paused:
                 st["paused"] = paused
                 self._log(None, None, f"Automation {'paused' if paused else 'resumed'} {why}")
@@ -1691,6 +1727,8 @@ class AutomationService:
         today = self.clock().date().isoformat()
         return {
             "paused": st["paused"],
+            # Auto where orders may not go out by themselves acts as Propose: shown so.
+            "mode": "propose" if st["mode"] == "auto" and self.max_level != "auto" else st["mode"],
             "settings": {**settings, "levels": self.levels(settings)},
             "max_level": self.max_level,
             # The header's Auto switch means something only where orders can go out by
@@ -1892,6 +1930,8 @@ class AutomationService:
         Settings page never offers Auto for the Schwab account."""
         own = account_levels(settings, self.account)
         cap = LEVELS.index(self.max_level)
+        if (self.state or {}).get("mode") == "propose":
+            cap = min(cap, LEVELS.index("propose"))
         return {r: LEVELS[min(LEVELS.index(lv), cap)] for r, lv in own.items()}
 
     def _working(self, trade_id) -> list[dict]:

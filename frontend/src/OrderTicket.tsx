@@ -178,6 +178,8 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [copyOn, setCopyOn] = useState<Record<string, boolean>>({});
   const [copyUnits, setCopyUnits] = useState<Record<string, number>>({});
   const [copied, setCopied] = useState<CopyResult[]>([]);
+  // Closed until wanted: most orders go to one account.
+  const [copiesOpen, setCopiesOpen] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
 
   // Roll: choose the new expiration and strikes.
@@ -384,11 +386,11 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
             </p>
             {live ? (
               <p className="dim-text">
-                Follow it on the Activity page, which reads Schwab's orders every 10 seconds while it works.
+                Follow it on the History page, which reads Schwab's orders every 10 seconds while it works.
                 {spec.intent === "open" && manage ? " Automanage switches on for the trade once it fills." : ""}
               </p>
             ) : placed.status === "WORKING" ? (
-              <p className="dim-text">It fills when the mid price reaches the limit. See it on the Activity page.</p>
+              <p className="dim-text">It fills when the mid price reaches the limit. See it on the History page.</p>
             ) : null}
             {copied.length ? (
               <ul className="copied">
@@ -559,10 +561,17 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
 
             {canCopy && copies.length ? (
               <div className="copies">
-                <div className="copies-head">
-                  Also place in <span className="dim-text">sized to each account's net liq</span>
-                </div>
-                {copies.map((c) => {
+                <button
+                  type="button"
+                  className="link copies-head"
+                  aria-expanded={copiesOpen}
+                  onClick={() => setCopiesOpen((v) => !v)}
+                >
+                  {copiesOpen ? "▾" : "▸"} Also place in other accounts
+                  {toCopy.length ? ` (${toCopy.length})` : ""}
+                  {copiesOpen ? <span className="dim-text"> sized to each account's net liq</span> : null}
+                </button>
+                {(copiesOpen ? copies : copies.filter((c) => copyOn[c.account])).map((c) => {
                   const on = !!copyOn[c.account];
                   const stops = on ? copyStops(c) : [];
                   return (
@@ -683,7 +692,8 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                 </ul>
               </div>
             ) : null}
-            {sp ? (
+            {/* Schwab's preview speaks up only when it fails; accepted is the normal case. */}
+            {sp && (sp.error || !sp.ok) ? (
               <div className={`ticket-status ${sp.error || !sp.ok ? (live ? "bad" : "warn") : "ok"}`}>
                 {sp.error
                     ? `Schwab preview failed: ${sp.error}`
@@ -698,7 +708,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               </div>
             ) : null}
 
-            {preview?.schwab_json ? (
+            {preview?.schwab_json && (stops.length || (sp && (sp.error || !sp.ok))) ? (
               <details className="json">
                 <summary>Schwab order JSON</summary>
                 <pre>{JSON.stringify(preview.schwab_json, null, 2)}</pre>

@@ -19,13 +19,11 @@ import time
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import cash as cash_mod
 from . import chain as chain_mod
 from . import dividends, plain, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
 from .earnings import sessions_until
 from .extremes import compute as compute_extreme
-from .options import parse_option_symbol
 from .pacing import background, count_waits, priority
 from .signals import drop_signal, one_side, shock, skew
 
@@ -114,6 +112,69 @@ DEFAULTS = {
     "max_bp_day": 0.10,  # buying power the scanner may add in one day, share of net liq
     "scan_every": 0,  # minutes between scans after the scan time (0: once a day)
 }
+# Presets for Settings: the settings that decide how much and how boldly the scanner sells.
+# Applying one sets these and leaves the rest (levels, time, contracts, filters) as they are;
+# Advanced shows every number.
+_STANDARD = {
+    "min_ivr": 30,
+    "undefined_ivr": 50,
+    "short_delta": 0.16,
+    "ic_short_delta": 0.16,
+    "min_pop": 0.55,
+    "max_bp_share": 0.05,
+    "max_bp_day": 0.10,
+    "max_new_per_day": 3,
+    "defined_vix": 30.0,
+    "earnings_play": False,
+    "fade": False,
+}
+PRESETS = {
+    "conservative": (
+        "Conservative",
+        "Higher IV rank (40), iron condors only, short strikes at 12 delta, at least a 65% "
+        "chance of profit, 3% of net liq a trade and 2 new trades a day. No earnings trades.",
+        {
+            **_STANDARD,
+            "min_ivr": 40,
+            "undefined_ivr": 100,
+            "short_delta": 0.12,
+            "ic_short_delta": 0.12,
+            "min_pop": 0.65,
+            "max_bp_share": 0.03,
+            "max_bp_day": 0.05,
+            "max_new_per_day": 2,
+            "defined_vix": 25.0,
+        },
+    ),
+    "standard": (
+        "Standard",
+        "tastylive's defaults: IV rank 30 to open, strangles from IV rank 50, short strikes "
+        "at 16 delta, 5% of net liq a trade, 3 new trades a day. No earnings trades.",
+        _STANDARD,
+    ),
+    "earnings": (
+        "Earnings plays",
+        "Standard, plus the earnings play (sell the expected move the session before a "
+        "report, closed after the IV crush) and the post-earnings fade.",
+        {**_STANDARD, "earnings_play": True, "fade": True},
+    ),
+}
+
+
+def preset_of(s: dict) -> str | None:
+    """The preset the settings match, or None (Custom)."""
+    for key, (_, _, values) in PRESETS.items():
+        if all(s.get(k) == v for k, v in values.items()):
+            return key
+    return None
+
+
+def apply_preset(saved: dict | None, key: str) -> dict:
+    if key not in PRESETS:
+        raise ValueError("No such preset")
+    return {**(saved or {}), **PRESETS[key][2]}
+
+
 # A post-earnings fade is never even proposed under this IV rank.
 FADE_IVR_FLOOR = 20
 # (key, label, low, high, kind, unit) for the Settings page.
@@ -425,8 +486,6 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             [
                 "⟦?band_lean⟧ If the whole portfolio is outside its ⟦link:delta band|portfolio⟧, "
                 "lean back toward it (and lean with your bias, below).",
-                "Your view on the stock, from the ⟦link:Watchlist|watchlist⟧ page (bullish, "
-                "bearish, neutral, would own).",
                 "A sharp drop with IV rank ⟦drop_ivr⟧ or more and put skew of ⟦steep_skew⟧ "
                 "points or more is the drop signal: puts are dearest, so it sells puts, and "
                 "these trades go first.",
@@ -747,8 +806,11 @@ class Scanner:
         return await self.store.get_setting(STATE_KEY) or {}
 
     def level(self, s: dict, account: str) -> str:
+        """The account's scanner level, within its automation switch: Off shows finds only,
+        Propose at most proposes."""
         lv = account_level(s, account)
-        cap = self.automations[account].max_level
+        auto = self.automations[account]
+        cap = auto.mode_cap() if hasattr(auto, "mode_cap") else auto.max_level
         return LEVELS[min(LEVELS.index(lv), LEVELS.index(cap))]
 
     async def view(self, account: str) -> dict:
@@ -935,17 +997,6 @@ class Scanner:
             # bias leans until the middle of the band.
             band_out = targets.lean({**bands, "bias": "neutral"}) if bands else None
             bias_in = None if band_out else targets.lean(bands)
-            # Cash already promised to open Would own puts.
-            own_reserved = sum(
-                cash_mod.put_cost(x)
-                for u in snap.get("underlyings", [])
-                for x in u["strategies"]
-                if x.get("trade_id") is not None
-                and (auto.state or {}).get("trades", {}).get(str(x["trade_id"]), {}).get("view")
-                == "would_own"
-            )
-            views_of = getattr(self.preferences, "symbol_views", None)
-            symbol_views = await views_of() if views_of else {}
             candidates, skipped = [], []
             symbols = await self.symbols(account)
             quotes = await self._quotes(account, symbols)
@@ -1002,36 +1053,21 @@ class Scanner:
                     if s["extreme_tilt"] or bias == "contrarian" or drop
                     else None
                 )
-                view = symbol_views.get(sym)
                 lean_on = s.get("band_lean", True)
                 play, fade = vol.get("play"), vol.get("fade")
-                view_tilt = targets.VIEW_TILT.get(view) if view in targets.VIEWS else None
-                # Which way to lean, first match wins: the book outside its band, your view on
-                # this underlying, a price extreme (against the move), your bias in the band.
-                # An earnings play is neutral; a post-earnings fade sells against the move.
+                # Which way to lean, first match wins: the book outside its band, a price extreme
+                # (against the move), your bias in the band. An earnings play is neutral; a
+                # post-earnings fade sells against the move. (A trade's own view, such as Would
+                # own, is set on Positions once it is open.)
                 if play:
                     tilt, source = None, None
                     strangle = s.get("earnings_play_risk") == "undefined" and not defined_only
-                elif fade and view_tilt and view_tilt != fade["direction"]:
-                    side = "puts" if fade["direction"] == "down" else "calls"
-                    skipped.append(
-                        {
-                            "symbol": sym,
-                            "reason": f"post-earnings fade would sell {side}, against your "
-                            f"{view} view",
-                        }
-                    )
-                    continue
                 elif fade:
-                    # Would own keeps its cash-secured put; otherwise a fade.
-                    own_view = view == "would_own"
-                    tilt, source = fade["direction"], "view" if own_view else "fade"
+                    tilt, source = fade["direction"], "fade"
                     # Naked when allowed: a fade is never proposed under IV rank 20 at all.
                     strangle = not defined_only and not careful
                 elif band_out and lean_on:
                     tilt, source = band_out, "band"
-                elif view in targets.VIEWS:
-                    tilt, source = targets.VIEW_TILT[view], "view"
                 elif ext_dir:
                     tilt, source = ext_dir, "extreme"
                 elif bias_in and lean_on:
@@ -1039,18 +1075,16 @@ class Scanner:
                 else:
                     tilt, source = None, None
                 leaned = source in ("band", "bias")
-                # Would own: a cash-secured short put, the premium-collecting way to buy.
-                own = source == "view" and view == "would_own"
                 n = max(1, s["contracts"] // 2) if careful else s["contracts"]
                 if account in self.brokers:
                     n = min(n, (await self.brokers[account].config())["max_contracts"])
                 # Undefined risk first when allowed; over the notional limit, the same idea as
                 # a defined-risk spread instead.
-                attempts = [True] if own else [True, False] if strangle else [False]
+                attempts = [True, False] if strangle else [False]
                 legs = pv = None
                 for undefined in attempts:
-                    if tilt and source in ("view", "extreme", "fade"):
-                        # A view on the stock or a sharp move: one side only, outside the
+                    if tilt and source in ("extreme", "fade"):
+                        # A sharp move: one side only, outside the
                         # expected move, so the trade does not depend on calling the turn.
                         legs, label = one_side(
                             rows,
@@ -1091,25 +1125,6 @@ class Scanner:
                 if legs is None or pv is None:
                     skipped.append({"symbol": sym, "reason": label})
                     continue
-                if own:
-                    # Cash-secured only: cash and sweep, after the other Would own puts.
-                    need = sum(
-                        float(parse_option_symbol(x["symbol"]).strike) * 100 * -x["quantity"]
-                        for x in body["legs"]
-                        if x["quantity"] < 0
-                    )
-                    left = cash_mod.free_cash(acct) - own_reserved - cash_mod.FEE_BUFFER
-                    if need > left + 1e-9:
-                        skipped.append(
-                            {
-                                "symbol": sym,
-                                "reason": f"Would own: not cash-secured: the put needs "
-                                f"{need:,.0f} and {max(left, 0):,.0f} of cash and sweep is "
-                                "free after your other Would own puts (never margin)",
-                            }
-                        )
-                        continue
-                    own_reserved += need
                 problems = list(pv["errors"]) + list(pv.get("live_blocks") or [])
                 bp = pv.get("bp_effect")
                 bp_cap = s["max_bp_share"] * (0.5 if careful else 1.0)
@@ -1170,7 +1185,7 @@ class Scanner:
                         "caution": vol["caution"],
                         "skew": vol["skew"],
                         # The view the trade is managed with once open (its rolls lean this way).
-                        "view": "would_own" if own else targets.TILT_VIEW[tilt],
+                        "view": targets.TILT_VIEW[tilt],
                         "band_lean": leaned,
                         "delta_push": push,
                         "iv30": vol["iv30"],
@@ -1205,15 +1220,11 @@ class Scanner:
                     lean = "bullish" if tilt == "down" else "bearish"
                     if leaned:
                         why_lean = targets.lean_reason(bands)
-                    elif source == "view":
-                        why_lean = f"your view on {sym}"
                     elif source == "fade":
                         why_lean = "against the post-earnings move"
                     else:
                         why_lean = "against the move: " + "; ".join(ext["reasons"])
                     candidates[-1]["label"] = f"{label}, tilted {lean}: {why_lean}"
-                elif source == "view":
-                    candidates[-1]["label"] = f"{label}, symmetric: your neutral view on {sym}"
                 if push:
                     candidates[-1]["label"] += f". Warning: {push}"
                 div = dividends.info(quotes.get(sym), now.date(), sym)

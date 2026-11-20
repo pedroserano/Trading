@@ -503,25 +503,6 @@ async def test_contrarian_bias_sells_against_price_extremes():
 
 
 @pytest.mark.anyio
-async def test_a_view_on_the_underlying_beats_extremes_and_the_bias():
-    scanner, _, _ = harness()
-    _extreme_drop(scanner)
-
-    async def views():
-        return {"SPY": "bearish"}
-
-    scanner.preferences.symbol_views = views
-    snap = scanner.portfolios["sim"].snapshot
-    snap["bands"] = {
-        "bias": "bullish",
-        "delta": {"value": 0.02, "min": 0.0, "max": 0.15, "state": "inside"},
-        "theta": {},
-    }
-    (c,) = (await scanner.scan("sim", act=False))["candidates"]
-    assert c["tilt"] == "up" and c["view"] == "bearish" and "your view on SPY" in c["label"]
-
-
-@pytest.mark.anyio
 async def test_a_report_inside_the_trade_can_mean_defined_risk_and_half_size():
     scanner, _, _ = harness(
         {"earnings_inside": "defined", "min_ic_credit": 0.15, "max_bp_share": 0.1}
@@ -567,24 +548,6 @@ async def test_over_the_notional_limit_the_scanner_opens_a_spread_instead():
     auto.submit = submit
     (c,) = (await scanner.scan("sim", act=False))["candidates"]
     assert c["strategy"] == "Iron condor"
-
-
-@pytest.mark.anyio
-async def test_would_own_sells_only_cash_secured_puts():
-    scanner, _, _ = harness({"shock_day_ratio": 1000})
-
-    async def views():
-        return {"SPY": "would_own"}
-
-    scanner.preferences.symbol_views = views
-    snap = scanner.portfolios["sim"].snapshot
-    snap["account"] = {**snap["account"], "cash": 20_000.0, "sweep": 0.0}
-    r = await scanner.scan("sim", act=False)
-    reasons = {x["symbol"]: x["reason"] for x in r["skipped"]}
-    assert "not cash-secured" in reasons["SPY"] and "never margin" in reasons["SPY"]
-    snap["account"]["sweep"] = 60_000.0
-    (c,) = (await scanner.scan("sim", act=False))["candidates"]
-    assert c["strategy"] == "Short put" and c["view"] == "would_own"
 
 
 @pytest.mark.anyio
@@ -760,14 +723,6 @@ async def test_post_earnings_fade_sells_against_the_move_when_on():
     assert c["label"].startswith("Post-earnings fade (down 6.8% since the 2026-11-10 report")
     assert "against the post-earnings move" in c["label"]
 
-    # A bearish view on the stock is not overridden.
-    async def views():
-        return {"AAPL": "bearish"}
-
-    on.preferences.symbol_views = views
-    r = await on.scan("sim", act=False)
-    assert "against your bearish view" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
-
 
 def test_an_earnings_strangle_sits_twice_the_expected_move_away_by_default():
     s = sc.merged({})
@@ -902,3 +857,17 @@ async def test_the_scan_uses_what_the_app_already_holds():
     assert "spread 20.0% is too wide" in reasons["AAPL"]
     # Only SPY, which passed every local check, needed Schwab: its full chain.
     assert calls == [("chain", "SPY")]
+
+
+def test_presets_set_how_boldly_it_sells_and_leave_the_rest():
+    from app import scanner as scan_mod
+
+    s = scan_mod.merged({})
+    assert scan_mod.preset_of(s) == "standard"
+    saved = {"contracts": 2, "scan_time": "11:00"}
+    c = scan_mod.merged(scan_mod.apply_preset(saved, "conservative"))
+    assert scan_mod.preset_of(c) == "conservative"
+    assert c["min_ivr"] == 40 and c["contracts"] == 2 and c["scan_time"] == "11:00"
+    e = scan_mod.merged(scan_mod.apply_preset(c, "earnings"))
+    assert e["earnings_play"] and e["fade"] and e["min_ivr"] == 30
+    assert scan_mod.preset_of({**e, "min_ivr": 35}) is None  # Custom

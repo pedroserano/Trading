@@ -480,6 +480,8 @@ export interface AutomationView {
   auto_possible?: boolean;
   auto_why?: string | null;
   paused: boolean;
+  /** The account's one switch: off, propose, or auto (each rule as set). */
+  mode?: "off" | "propose" | "auto";
   settings: { levels: Record<string, AutoLevel>; window_start: string; window_end: string; daily_cap: number };
   /** view: the trade's own direction for automanage's rolls; absent follows the portfolio bias. */
   trades: Record<string, { enabled: boolean; view?: "neutral" | "bullish" | "bearish" | "would_own" }>;

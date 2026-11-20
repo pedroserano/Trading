@@ -809,3 +809,22 @@ Positions shows each account's automanage line in turn. Trade, Watchlist (the sc
 Settings act in the first Schwab account under All; covered calls there count only that
 account's shares. `account=all` on /api/snapshot, /api/events, /api/portfolio, /api/activity and
 /api/dashboard (combined.py).
+
+## Simpler app
+
+- Five tabs: Positions, Watchlist, Trade, History, Settings. Portfolio is Positions' "Risk"
+  view (#/risk); Activity and Dashboard are History's "Orders & trades" and "Stats"
+  (#/history, #/history/stats). Old #/portfolio, #/activity and #/dashboard links still land.
+- One automation switch per account (header and Settings, Automation): Off (nothing automatic),
+  Propose (every rule and the scanner at most propose), Auto (each rule and the scanner at its
+  own level, under Advanced). Auto is offered on a Schwab account only with LIVE_TRADING and
+  LIVE_AUTO; there an old Auto reads as Propose. A pause by the app (stale prices, the daily
+  order cap) shows as Off until a level is picked again.
+- No per-symbol view: a trade's view (including Would own) is set on Positions. The scanner
+  leans from the delta band, price extremes and the bias only, and no longer opens Would own
+  puts by itself.
+- Scanner presets (Conservative, Standard, Earnings plays) set IV rank, strikes, size and
+  earnings trades; every number is under Advanced; Custom when changed there.
+- The order ticket shows Schwab's preview line and the order JSON only when something fails;
+  "Also place in other accounts" is closed until opened (ticked copies stay shown).
+- The simulated account is hidden until shown in Settings.
