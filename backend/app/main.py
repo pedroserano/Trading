@@ -1915,7 +1915,8 @@ def create_app(
     @app.post("/api/orders/copies", dependencies=[Depends(require_login)])
     async def api_order_copies(body: CopiesIn):
         """The same opening order for each other account, sized to its net liq: the
-        number of spreads times that account's net liq over this one's, rounded. Each copy
+        number of spreads times that account's net liq over this one's, rounded, at least one.
+        Each copy
         asked for is previewed against its own account, with its own guards."""
         src = body.order
         known(src.account)
@@ -1934,7 +1935,8 @@ def create_app(
             if acct == src.account:
                 continue
             nl = net_liq(acct)
-            scaled = round(t.units * nl / base) if base and nl else None
+            # At least one spread: a small account still gets the trade if its own guards allow it.
+            scaled = max(1, round(t.units * nl / base)) if base and nl else None
             units = body.units.get(acct, scaled)
             row = {
                 "account": acct,

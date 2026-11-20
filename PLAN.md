@@ -779,7 +779,8 @@ entered in Settings.
 
 The ticket for an opening order (built on the Trade page, a scanner find's Review, or an
 opening proposal's Review) lists the other accounts under "Also place in". Each is sized to its
-net liq: the spreads times its net liq over this account's, rounded; the size can be changed.
+net liq: the spreads times its net liq over this account's, rounded, at least one (its own buying-power guards then
+decide); the size can be changed.
 A ticked copy is previewed in its own account with its own guards (cash, no margin, BP limits,
 delta band) and live gate; anything stopping it gets a red outline and that copy is skipped,
 while the rest go ahead. The copies go at the same limit and duration with the ticket's

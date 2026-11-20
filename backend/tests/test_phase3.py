@@ -1188,11 +1188,12 @@ def test_an_opening_order_copies_to_the_other_accounts_by_net_liq(client):
     # Previewed in its own account, with that account's guards: 3 puts are too much BP there.
     assert sim["preview"]["account"] == "sim"
     assert any("hard limit" in e for e in sim["preview"]["errors"])
-    # Too small an account scales to nothing: it can't be placed there.
+    # A small account still gets one spread; its own buying-power guards decide.
     set_nl("sim", live_nl / 100)
-    r = client.post("/api/orders/copies", json={"order": order}).json()
+    r = client.post("/api/orders/copies", json={"order": order, "preview": ["sim"]}).json()
     sim = next(c for c in r["copies"] if c["account"] == "sim")
-    assert sim["units"] == 0 and "less than one" in sim["errors"][0]
+    assert sim["units"] == 1 and sim["errors"] == []
+    assert any("hard limit" in e for e in sim["preview"]["errors"])
     # Closing orders aren't copied.
     bad = client.post("/api/orders/copies", json={"order": {**order, "intent": "close"}})
     assert bad.status_code == 400
