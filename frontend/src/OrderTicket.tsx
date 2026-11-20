@@ -186,18 +186,22 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [exps, setExps] = useState<Expiration[]>([]);
   const [rollExp, setRollExp] = useState<string | null>(null);
   const [chain, setChain] = useState<Chain | null>(null);
-  const [shift, setShift] = useState<Record<string, number>>({});
+  // The strike each leg rolls to, as chosen on the ticket; unset legs keep their strike.
+  const [pick, setPick] = useState<Record<string, number>>({});
   const current = spec.roll?.numbers.expiration ?? null;
 
   useEffect(() => {
     if (!spec.roll) return;
     getJson<{ expirations: Expiration[] }>(`/api/trade/${encodeURIComponent(spec.underlying)}/expirations`)
       .then((r) => {
+        // Every expiration, the current and nearer ones too: rolling up or down in the same
+        // expiration, or in to a nearer one, is a roll as well. The default is still out.
+        setExps(r.expirations);
         const later = r.expirations.filter((e) => !current || e.date > current);
-        setExps(later);
         const monthlies = later.filter((e) => e.monthly);
         const pool = monthlies.length ? monthlies : later;
         if (pool.length) setRollExp(pool.reduce((a, b) => (Math.abs(b.dte - 45) < Math.abs(a.dte - 45) ? b : a)).date);
+        else if (current) setRollExp(current);
       })
       .catch((e) => setError((e as Error).message));
   }, [spec.roll, spec.underlying, current]);
@@ -210,16 +214,15 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   }, [spec.roll, rollExp, spec.underlying]);
 
   const strikes = useMemo(() => (chain ? chain.rows.map((r) => r.strike) : []), [chain]);
-  // The new strike for a leg: the same strike if listed, else the nearest; then any shift
-  // chosen on the ticket. null until the new expiration's chain is in.
+  // The new strike for a leg: the one chosen on the ticket, else the same strike; the nearest
+  // listed in the new expiration. null until its chain is in.
   const newStrike = useCallback(
     (symbol: string, k: number): number | null => {
       if (!strikes.length) return null;
-      let i = strikes.reduce((bi, s, j) => (Math.abs(s - k) < Math.abs(strikes[bi] - k) ? j : bi), 0);
-      i = Math.max(0, Math.min(strikes.length - 1, i + (shift[symbol] ?? 0)));
-      return strikes[i];
+      const want = pick[symbol] ?? k;
+      return strikes.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a));
     },
-    [strikes, shift],
+    [strikes, pick],
   );
 
   useEffect(() => {
@@ -418,6 +421,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     {exps.map((e) => (
                       <option key={e.date} value={e.date}>
                         {shortDate(e.date)} · {e.dte}d{e.monthly ? " · monthly" : ""}
+                        {e.date === current ? " · current" : current && e.date < current ? " · in" : ""}
                       </option>
                     ))}
                   </select>
@@ -430,29 +434,23 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     return (
                       <span key={l.symbol} className="shift">
                         {l.put_call === "P" ? "Put" : "Call"} {strike(l.strike)}
-                        <span
+                        {" → "}
+                        <select
                           className={`shift-to ${moved ? (to! < l.strike! ? "down" : "up") : ""}`}
-                          title="The strike this leg rolls to in the new expiration"
+                          aria-label={`New strike for the ${l.put_call === "P" ? "put" : "call"} ${strike(l.strike)}`}
+                          title="The strike this leg rolls to in the chosen expiration"
+                          value={to ?? ""}
+                          disabled={to === null}
+                          onChange={(e) => setPick({ ...pick, [l.symbol]: Number(e.target.value) })}
                         >
-                          {" → "}
-                          {to === null ? "…" : strike(to)}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label="Lower strike"
-                          title="Roll to one strike lower"
-                          onClick={() => setShift({ ...shift, [l.symbol]: (shift[l.symbol] ?? 0) - 1 })}
-                        >
-                          −
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Higher strike"
-                          title="Roll to one strike higher"
-                          onClick={() => setShift({ ...shift, [l.symbol]: (shift[l.symbol] ?? 0) + 1 })}
-                        >
-                          +
-                        </button>
+                          {to === null ? <option value="">…</option> : null}
+                          {strikes.map((k) => (
+                            <option key={k} value={k}>
+                              {strike(k)}
+                              {k === l.strike ? " · same" : ""}
+                            </option>
+                          ))}
+                        </select>
                       </span>
                     );
                   })}

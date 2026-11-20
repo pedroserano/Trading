@@ -295,8 +295,6 @@ table.ticket-legs { width: 100%; border-collapse: collapse; margin-bottom: 10px;
 .roll-pick { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 10px; }
 .roll-pick select { margin-left: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--line);
   border-radius: 5px; padding: 4px 6px; font: inherit; }
-.roll-pick .shift button { margin-left: 4px; width: 22px; height: 22px; padding: 0; background: #21262d;
-  border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
 .price-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
 .presets { display: flex; gap: 6px; flex-wrap: wrap; }
 .presets button { background: #21262d; border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; cursor: pointer; }
