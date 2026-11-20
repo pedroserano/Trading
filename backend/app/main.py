@@ -911,16 +911,6 @@ def create_app(
                 ],
                 "scan": scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY)),
                 "scan_steps_html": await scan_steps_html(rules_now),
-                "auto_modes": [
-                    {
-                        "key": acct,
-                        "name": name,
-                        "mode": (await automations[acct].view(log=False))["mode"],
-                        "auto_possible": automations[acct].max_level == "auto",
-                    }
-                    for acct, name in [("sim", "Simulated"), *schwab_accounts()]
-                    if acct in automations
-                ],
                 "scan_presets": scan_mod.PRESETS,
                 "scan_preset": scan_mod.preset_of(
                     scan_mod.merged(await store.get_setting(scan_mod.SETTINGS_KEY))
@@ -2374,20 +2364,6 @@ def create_app(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return await automations[account].view()
-
-    @app.post("/automation/mode", dependencies=[Depends(require_login)])
-    async def automation_mode_form(request: Request):
-        form = dict(await request.form())
-        account = str(form.get("account") or "")
-        try:
-            if account not in automations:
-                raise ValueError("No such account")
-            await automations[account].set_mode(str(form.get("mode") or ""))
-            name = "Simulated" if account == "sim" else registry.name(account)
-            request.session["notice"] = f"{name}: automation set to {form['mode'].capitalize()}."
-        except ValueError as e:
-            request.session["flash"] = str(e)
-        return RedirectResponse(settings_url("automation"), status_code=303)
 
     @app.post("/api/automation/pause", dependencies=[Depends(require_login)])
     async def api_automation_pause(body: PauseIn, account: Acct = "sim"):

@@ -176,22 +176,10 @@
       <b>What runs by itself now</b>
       <ul class="rmap-list">{% for name, parts in runs_by_itself %}<li><b>{{ name }}:</b> {{ parts|join(" · ") }}</li>{% endfor %}</ul>
     </div>
-  {% call group("One switch per account", "Off: nothing automatic. Propose: every rule and the scanner wait for your tap. Auto: each rule and the scanner act at their own level, set under Advanced. Also in the header.") %}
-    {% for m in auto_modes %}
-    <form method="post" action="/automation/mode" class="mode-row">
-      <input type="hidden" name="account" value="{{ m.key }}">
-      <b>{{ m.name }}</b>
-      <span class="seg">
-        {% for key in ["off", "propose", "auto"] %}
-        <button type="submit" name="mode" value="{{ key }}" aria-pressed="{{ 'true' if m.mode == key else 'false' }}"
-          {% if key == "auto" and not m.auto_possible %}disabled title="Needs LIVE_TRADING=true and LIVE_AUTO=true in .env"{% endif %}>{{ key|capitalize }}</button>
-        {% endfor %}
-      </span>
-    </form>
-    {% endfor %}
-  {% endcall %}
   <details class="advanced">
-  <summary><b>Advanced: each rule's level and numbers</b></summary>
+  <summary><b>Each rule's level and numbers</b></summary>
+  <p class="dim small">The header's Auto switch sits above these: Off stops every rule, Propose
+    lets none go past Propose, On runs each at the level set here.</p>
   <form method="post" action="/automation/settings" class="plain-form">
     <input type="hidden" name="_form" value="automation">
     {% call group("How automanage looks after a trade") %}
