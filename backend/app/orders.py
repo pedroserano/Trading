@@ -229,8 +229,9 @@ def complex_type(t: Ticket) -> str:
     strangle, butterfly, condor, iron condor, vertical roll, covered stock, collar/synthetic,
     double diagonal (double calendar, straddle/strangle swap, double diagonal) and the
     unbalanced butterfly, condor, iron condor and vertical roll. Checked against real
-    thinkorswim orders so far: calendar, diagonal (rolls of one option) and a broken-wing
-    butterfly, which is a BUTTERFLY whatever the wing widths. Anything else is CUSTOM.
+    thinkorswim orders so far: calendar, diagonal (rolls of one option), a broken-wing
+    butterfly, which is a BUTTERFLY whatever the wing widths, and a call back ratio, which is
+    CUSTOM. Anything else is CUSTOM.
     Covered stock and collars with stock need a stock leg, which tickets never have.
     """
     legs = t.legs
@@ -247,7 +248,9 @@ def complex_type(t: Ticket) -> str:
             if a.expiration == b.expiration:
                 if a.strike == b.strike:
                     return "CUSTOM"
-                return "VERTICAL" if equal else "BACK_RATIO"
+                # A ratio (unequal quantities) is CUSTOM: thinkorswim sent a 2-by-4 call back
+                # ratio that way (TSLA, Nov 2026), not as BACK_RATIO.
+                return "VERTICAL" if equal else "CUSTOM"
             if not equal:
                 return "CUSTOM"
             return "CALENDAR" if a.strike == b.strike else "DIAGONAL"

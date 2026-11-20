@@ -295,7 +295,8 @@ N1 = date(2027, 1, 15)
     [
         ([("P", 570, -1, EXP, "open")], "NONE"),
         ([("P", 570, -1, EXP, "open"), ("P", 565, 1, EXP, "open")], "VERTICAL"),
-        ([("C", 600, -1, EXP, "open"), ("C", 610, 2, EXP, "open")], "BACK_RATIO"),
+        # A real thinkorswim back ratio (buy 4, sell 2) came through as CUSTOM.
+        ([("C", 600, -1, EXP, "open"), ("C", 610, 2, EXP, "open")], "CUSTOM"),
         ([("P", 570, 1, EXP, "close"), ("P", 570, -1, N1, "open")], "CALENDAR"),
         ([("P", 570, 1, EXP, "close"), ("P", 565, -1, N1, "open")], "DIAGONAL"),
         ([("P", 590, -1, EXP, "open"), ("C", 590, -1, EXP, "open")], "STRADDLE"),
@@ -411,7 +412,7 @@ def test_ratio_spreads_from_the_trade_screen_are_named_and_built():
     )
     assert strategy_name(front) == "Put ratio 1×2"
     body = schwab_order(front)
-    assert body["complexOrderStrategyType"] == "BACK_RATIO" and body["orderType"] == "NET_CREDIT"
+    assert body["complexOrderStrategyType"] == "CUSTOM" and body["orderType"] == "NET_CREDIT"
     assert [x["quantity"] for x in body["orderLegCollection"]] == [1, 2]
     calls = Ticket(
         legs=[
@@ -423,3 +424,30 @@ def test_ratio_spreads_from_the_trade_screen_are_named_and_built():
         limit_net=0.2,
     )
     assert strategy_name(calls) == "Call ratio 1×2"
+
+
+def test_the_thinkorswim_tsla_call_back_ratio_matches():
+    from app.order_check import check
+
+    def leg(k, instr, q):
+        return {
+            "orderLegType": "OPTION",
+            "instrument": {"assetType": "OPTION", "symbol": f"TSLA  281215C00{k}000"},
+            "instruction": instr,
+            "positionEffect": "OPENING",
+            "quantity": q,
+        }
+
+    order = {
+        "session": "NORMAL",
+        "duration": "DAY",
+        "orderType": "NET_DEBIT",
+        "complexOrderStrategyType": "CUSTOM",
+        "quantity": 2,
+        "price": 127.4,
+        "orderLegCollection": [leg(360, "BUY_TO_OPEN", 4), leg(370, "SELL_TO_OPEN", 2)],
+        "orderStrategyType": "SINGLE",
+        "orderId": 1008624948367,
+        "status": "REPLACED",
+    }
+    assert check(order)["result"] == "match", check(order)["diffs"]
