@@ -135,3 +135,9 @@ def test_defined_and_undefined_risk_share_of_short_premium():
     # Over a quarter in defined risk is flagged.
     assert pv.mix_of(300.0, 700.0)["over"] and not pv.mix_of(250.0, 750.0)["over"]
     assert pv.mix_of(0.0, 0.0)["defined_share"] is None
+
+
+def test_crowded_expirations():
+    # Nearly all the buying power is in the December strangle and short put.
+    assert pv.crowded_expirations(snap()) == {"2026-12-18"}
+    assert pv.crowded_expirations({"underlyings": []}) == set()

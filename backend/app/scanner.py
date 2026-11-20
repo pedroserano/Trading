@@ -505,7 +505,10 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
             "6. What it sells",
             [
                 "In the expiration nearest ⟦target_dte⟧ days, between ⟦min_dte⟧ and "
-                "⟦max_dte⟧ days; ⟦?monthly_only⟧ monthly expirations only.",
+                "⟦max_dte⟧ days; ⟦?monthly_only⟧ monthly expirations only. When that "
+                "expiration already holds over a third of the account's buying power in "
+                "options, the next nearest one that does not is used instead, so trades "
+                "spread across cycles (The Unlucky Investor's Guide to Options Trading).",
                 "With no lean: a strangle at ⟦short_delta⟧ delta when IV rank is "
                 "⟦undefined_ivr⟧ or more, otherwise an iron condor at ⟦ic_short_delta⟧ delta "
                 "collecting at least ⟦min_ic_credit⟧% of its width. Iron condors only while "
@@ -565,11 +568,21 @@ def scan_map(s: dict, live_symbols: list[str] | None, bias: str = "neutral", rul
     }
 
 
-def pick_expiration(exps: list[dict], s: dict) -> dict | None:
+class _NoSnap:
+    snapshot = None
+
+
+def pick_expiration(exps: list[dict], s: dict, crowded: set[str] | None = None) -> dict | None:
+    """The expiration nearest the target days, within the range. One already holding over a
+    third of the account's option buying power (crowded) gives way to the nearest one that
+    does not, so trades spread across cycles (The Unlucky Investor's Guide)."""
     ok = [e for e in exps if s["min_dte"] <= e["dte"] <= s["max_dte"]]
     if s["monthly_only"]:
         ok = [e for e in ok if e["monthly"]]
-    return min(ok, key=lambda e: abs(e["dte"] - s["target_dte"])) if ok else None
+    ok.sort(key=lambda e: abs(e["dte"] - s["target_dte"]))
+    if not ok:
+        return None
+    return next((e for e in ok if e["date"] not in (crowded or set())), ok[0])
 
 
 def nearest_delta(rows: list[dict], side: str, target: float) -> dict | None:
@@ -1591,7 +1604,8 @@ class Scanner:
             report = quiet = None
         today = self.clock().astimezone(ET).date()
         exps = await self._expirations(sym, today, s)
-        exp = pick_expiration(exps, s)
+        snap = (self.portfolios.get(account) or _NoSnap).snapshot or {}
+        exp = pick_expiration(exps, s, portfolio_view.crowded_expirations(snap))
         if exp is None:
             return (
                 f"no {'monthly ' if s['monthly_only'] else ''}expiration in "

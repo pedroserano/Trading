@@ -111,6 +111,28 @@ def mix_of(defined: float, undefined: float) -> dict:
     }
 
 
+# The Unlucky Investor's Guide to Options Trading: spread trades across expirations, as
+# positions in one cycle swing together near expiration. An expiration holding more than this
+# share of the buying power in options counts as crowded.
+CROWDED_SHARE = 1 / 3
+
+
+def crowded_expirations(snap: dict) -> set[str]:
+    """Expirations (ISO dates) holding more than CROWDED_SHARE of the buying power in
+    options."""
+    by_exp: dict[str, float] = {}
+    for u in snap.get("underlyings", []):
+        for st in u["strategies"]:
+            exp = st["numbers"].get("expiration")
+            if not exp or not any(x.get("kind") == "OPTION" for x in st.get("legs") or []):
+                continue
+            bp = strategy_bp(st, u.get("price"))
+            if bp:
+                by_exp[exp] = by_exp.get(exp, 0.0) + bp
+    total = sum(by_exp.values())
+    return {e for e, bp in by_exp.items() if total and bp / total > CROWDED_SHARE}
+
+
 def _monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 

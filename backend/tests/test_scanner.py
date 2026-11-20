@@ -88,6 +88,12 @@ def test_expiration_pick_and_form_checks():
     assert sc.pick_expiration(exps, s)["date"] == "2026-12-18"
     assert sc.pick_expiration(exps, {**s, "max_dte": 33}) is None
     assert sc.pick_expiration(exps, {**s, "max_dte": 33, "monthly_only": False})["dte"] == 30
+    # An expiration already holding over a third of the option buying power gives way to the
+    # next nearest; with none other, it is still used.
+    other = sc.pick_expiration(exps, {**s, "monthly_only": False}, {"2026-12-18"})
+    assert other["date"] != "2026-12-18"
+    only = sc.pick_expiration(exps, s, {"2026-12-18"})
+    assert only["date"] in {e["date"] for e in exps if e["monthly"]}
     out = sc.parse_form(
         {"min_ivr": "35", "min_ic_credit": "30", "_form": "scanner", "monthly_only": "on"}, None
     )
