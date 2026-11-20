@@ -322,6 +322,19 @@ details.json.inline pre { position: absolute; right: 16px; z-index: 3; max-width
 .ticket-actions > button:not(.primary) { background: #21262d; border: 1px solid var(--line); border-radius: 6px;
   padding: 6px 14px; cursor: pointer; }
 .ticket-done p { margin: 6px 0 12px; }
+/* Copies of an opening order to the other accounts */
+.copies { border-top: 1px solid var(--line); padding-top: 8px; margin: 8px 0; }
+.copies-head { font-size: 12px; color: var(--dim); text-transform: uppercase; margin-bottom: 4px; }
+.copies-head .dim-text { text-transform: none; }
+.copy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 5px 8px; border: 1px solid transparent;
+  border-radius: 6px; }
+.copy.blocked { border-color: var(--bad); background: #f851491a; }
+.copy label { min-width: 110px; }
+.copy-units { width: 60px; text-align: right; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--text); }
+.copy-status { color: var(--ok); font-size: 13px; }
+.copy ul { flex-basis: 100%; margin: 2px 0 0; padding-left: 18px; font-size: 13px; }
+ul.copied { margin: 0 0 12px; padding-left: 18px; }
 .ticket-actions > button.danger { background: var(--bad); border: 1px solid var(--bad); color: #fff; border-radius: 6px;
   padding: 6px 14px; cursor: pointer; font-weight: 600; }
 

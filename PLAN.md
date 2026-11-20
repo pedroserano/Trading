@@ -774,3 +774,15 @@ entered in Settings.
   once placed. The order ticket shows the profit and loss chart (as on the Trade page) after the
   Send button, at the limit set, for opening trades; the preview now prices it with each
   contract's own quoted IV instead of a flat 20%.
+
+## Copy an opening order to the other accounts
+
+The ticket for an opening order (built on the Trade page, a scanner find's Review, or an
+opening proposal's Review) lists the other accounts under "Also place in". Each is sized to its
+net liq: the spreads times its net liq over this account's, rounded; the size can be changed.
+A ticked copy is previewed in its own account with its own guards (cash, no margin, BP limits,
+delta band) and live gate; anything stopping it gets a red outline and that copy is skipped,
+while the rest go ahead. The copies go at the same limit and duration with the ticket's
+automanage, view and earnings play. A live copy needs the second tap on Send, which names every
+account and size. Closes and rolls are not copied: each account's automanage manages its own
+trade. `POST /api/orders/copies`.

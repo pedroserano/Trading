@@ -1155,3 +1155,44 @@ def test_earnings_dates_are_set_on_the_watchlist(client):
     r = client.post("/api/earnings/set", json={"symbol": "AAPL", "date": None})
     assert r.status_code == 200 and (r.json()["earnings"] or {}).get("source") != "you"
     assert client.post("/api/earnings/refresh").status_code == 200
+
+
+def test_an_opening_order_copies_to_the_other_accounts_by_net_liq(client):
+    put = first_put(client)
+    order = {
+        "account": "live",
+        "intent": "open",
+        "legs": [{"symbol": put, "quantity": -4, "effect": "open"}],
+    }
+    app = client.app
+    pfs = app.state.accounts["portfolios"]
+
+    def set_nl(acct, v):
+        snap = pfs[acct].snapshot or {}
+        pfs[acct].snapshot = {**snap, "account": {**(snap.get("account") or {}), "net_liq": v}}
+
+    live_nl = 100_000
+    set_nl("live", live_nl)
+    set_nl("sim", live_nl / 2)
+    r = client.post("/api/orders/copies", json={"order": order}).json()
+    sim = next(c for c in r["copies"] if c["account"] == "sim")
+    # Half the net liq: half the spreads, listed but not previewed until asked for.
+    assert sim["account"] == "sim" and sim["scaled"] == 2 and sim["units"] == 2
+    assert sim["legs"] == [{"symbol": put, "quantity": -2, "effect": "open"}]
+    assert sim["preview"] is None and sim["errors"] == []
+    r = client.post(
+        "/api/orders/copies", json={"order": order, "preview": ["sim"], "units": {"sim": 3}}
+    ).json()
+    sim = next(c for c in r["copies"] if c["account"] == "sim")
+    assert sim["units"] == 3 and sim["legs"][0]["quantity"] == -3
+    # Previewed in its own account, with that account's guards: 3 puts are too much BP there.
+    assert sim["preview"]["account"] == "sim"
+    assert any("hard limit" in e for e in sim["preview"]["errors"])
+    # Too small an account scales to nothing: it can't be placed there.
+    set_nl("sim", live_nl / 100)
+    r = client.post("/api/orders/copies", json={"order": order}).json()
+    sim = next(c for c in r["copies"] if c["account"] == "sim")
+    assert sim["units"] == 0 and "less than one" in sim["errors"][0]
+    # Closing orders aren't copied.
+    bad = client.post("/api/orders/copies", json={"order": {**order, "intent": "close"}})
+    assert bad.status_code == 400

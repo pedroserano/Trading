@@ -321,6 +321,16 @@ async def _expected_oversold(preview: dict, t, broker, warnings: list[str]) -> d
     }
 
 
+class CopiesIn(BaseModel):
+    """An opening order and the other accounts to copy it to."""
+
+    order: OrderIn
+    # Accounts to preview the copy in; the others are listed with their scaled size only.
+    preview: list[str] = Field(default_factory=list, max_length=10)
+    # A size chosen on the ticket instead of the net-liq scaled one, by account.
+    units: dict[str, int] = Field(default_factory=dict, max_length=10)
+
+
 class AnalyzeIn(BaseModel):
     symbol: str
     spot: float = Field(gt=0)
@@ -1897,6 +1907,72 @@ def create_app(
     async def api_order_preview(body: OrderIn):
         t, p, quotes = await build_ticket(body)
         return await assess(body, t, p, quotes)
+
+    def net_liq(account: str) -> float | None:
+        v = ((portfolios[account].snapshot or {}).get("account") or {}).get("net_liq")
+        return float(v) if v else None
+
+    @app.post("/api/orders/copies", dependencies=[Depends(require_login)])
+    async def api_order_copies(body: CopiesIn):
+        """The same opening order for each other account, sized to its net liq: the
+        number of spreads times that account's net liq over this one's, rounded. Each copy
+        asked for is previewed against its own account, with its own guards."""
+        src = body.order
+        known(src.account)
+        if src.intent != "open":
+            raise HTTPException(
+                status_code=400, detail="Only opening orders copy to other accounts"
+            )
+        t, _, _ = await build_ticket(src)
+        hide_sim = bool(await store.get_setting(HIDE_SIM_KEY))
+        targets = [a["key"] for a in registry.in_use() if a["key"] in portfolios]
+        if not hide_sim:
+            targets.append("sim")
+        base = net_liq(src.account)
+        rows = []
+        for acct in targets:
+            if acct == src.account:
+                continue
+            nl = net_liq(acct)
+            scaled = round(t.units * nl / base) if base and nl else None
+            units = body.units.get(acct, scaled)
+            row = {
+                "account": acct,
+                "name": "Simulated" if acct == "sim" else registry.name(acct),
+                "net_liq": nl,
+                "scaled": scaled,
+                "units": units,
+                "legs": None,
+                "preview": None,
+                "errors": [],
+            }
+            if nl is None or base is None:
+                row["errors"].append("No net liq for this account yet, so the size can't be scaled")
+            elif not units or units < 0:
+                row["errors"].append(
+                    f"At this account's net liq ({nl:,.0f}) the trade scales to less than one"
+                )
+            else:
+                row["legs"] = [
+                    {"symbol": x.symbol, "quantity": r * units, "effect": x.effect}
+                    for x, r in zip(t.legs, t.ratios(), strict=True)
+                ]
+                if acct in body.preview:
+                    copy = src.model_copy(
+                        update={
+                            "account": acct,
+                            "legs": [OrderLegIn(**leg) for leg in row["legs"]],
+                            "limit_net": t.limit_net,
+                            "proposal_id": None,
+                        }
+                    )
+                    try:
+                        ct, cp, cq = await build_ticket(copy)
+                        row["preview"] = await assess(copy, ct, cp, cq)
+                    except HTTPException as e:
+                        row["errors"].append(str(e.detail))
+            rows.append(row)
+        return {"net_liq": base, "units": t.units, "copies": rows}
 
     async def mark_key_order(account: str, order_id, name: str) -> None:
         """Remember that an API key placed this order, for the Activity list."""

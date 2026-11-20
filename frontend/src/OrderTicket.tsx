@@ -46,6 +46,31 @@ export function proposalSpec(
   };
 }
 
+/** The same opening order in another account, sized to its net liq (from /api/orders/copies). */
+interface CopyRow {
+  account: string;
+  name: string;
+  net_liq: number | null;
+  scaled: number | null;
+  units: number | null;
+  legs: OrderLeg[] | null;
+  preview: Preview | null;
+  errors: string[];
+}
+
+/** What a copy placed, or why it wasn't. */
+interface CopyResult {
+  name: string;
+  live: boolean;
+  order?: SimOrder;
+  error?: string;
+}
+
+/** Why a copy can't be placed: its own guards, its live gate, or no size. */
+function copyStops(c: CopyRow): string[] {
+  return [...c.errors, ...(c.preview?.errors ?? []), ...(c.account !== "sim" ? (c.preview?.live_blocks ?? []) : [])];
+}
+
 function netLabel(v: number | null): string {
   if (v === null) return "–";
   return `${Math.abs(v).toFixed(2)} ${v > 0 ? "cr" : v < 0 ? "db" : ""}`.trim();
@@ -142,6 +167,12 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<SimOrder | null>(null);
+  // Copies of an opening order to the other accounts, each sized to its own net liq.
+  const canCopy = spec.intent === "open" && !spec.roll;
+  const [copies, setCopies] = useState<CopyRow[]>([]);
+  const [copyOn, setCopyOn] = useState<Record<string, boolean>>({});
+  const [copyUnits, setCopyUnits] = useState<Record<string, number>>({});
+  const [copied, setCopied] = useState<CopyResult[]>([]);
   const panel = useRef<HTMLDivElement>(null);
 
   // Roll: choose the new expiration and strikes.
@@ -229,18 +260,38 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legs, limit, duration]);
 
+  // Copies: sized and checked again whenever the order, or which copies are on, changes.
+  useEffect(() => {
+    if (!canCopy || limit === null) return;
+    const t = window.setTimeout(() => {
+      postJson<{ copies: CopyRow[] }>("/api/orders/copies", {
+        order: { account: spec.account, intent: spec.intent, legs, limit_net: limit, duration },
+        preview: Object.keys(copyOn).filter((k) => copyOn[k]),
+        units: copyUnits,
+      })
+        .then((r) => setCopies(r.copies))
+        .catch(() => setCopies([]));
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [canCopy, spec.account, spec.intent, legs, limit, duration, copyOn, copyUnits]);
+  // The copies that go with the order: on, previewed, and nothing stopping them.
+  const toCopy = copies.filter((c) => copyOn[c.account] && c.preview && c.legs && copyStops(c).length === 0);
+  const liveCopies = toCopy.filter((c) => c.account !== "sim");
+  const copyText = toCopy.map((c) => `${c.name} ${c.units}`).join(", ");
+
   const live = spec.account !== "sim";
   const liveBlocks = preview?.live_blocks ?? [];
   // Everything that stops the order, in one list: the guards, the live gate, a failed send.
   const stops = [...(preview?.errors ?? []), ...(live ? liveBlocks : []), ...(error ? [error] : [])];
   const canPlace =
     !!preview && preview.errors.length === 0 && (!live || liveBlocks.length === 0) && !busy && limit !== null;
-  // A live order takes two clicks: Place, then Send to Schwab.
+  // A live order takes two clicks: Place, then Send to Schwab. So does any live copy.
   const [confirming, setConfirming] = useState(false);
-  useEffect(() => setConfirming(false), [legs, limit, duration]);
+  useEffect(() => setConfirming(false), [legs, limit, duration, copyOn, copyUnits]);
+  const needConfirm = live || liveCopies.length > 0;
   const place = async () => {
     if (!canPlace) return;
-    if (live && !confirming) {
+    if (needConfirm && !confirming) {
       setConfirming(true);
       return;
     }
@@ -259,6 +310,26 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         play: spec.intent === "open" && manage ? (spec.play ?? null) : null,
         proposal_id: spec.proposalId ?? null,
       });
+      // Then each copy, in its own account, with the same price, duration and automanage.
+      const results: CopyResult[] = [];
+      for (const c of toCopy) {
+        try {
+          const co = await postJson<SimOrder>("/api/orders", {
+            account: c.account,
+            intent: "open",
+            legs: c.legs,
+            limit_net: limit,
+            duration,
+            automanage: manage,
+            view: manage && tradeView !== "portfolio" ? tradeView : null,
+            play: manage ? (spec.play ?? null) : null,
+          });
+          results.push({ name: c.name, live: c.account !== "sim", order: co });
+        } catch (e) {
+          results.push({ name: c.name, live: c.account !== "sim", error: (e as Error).message });
+        }
+      }
+      setCopied(results);
       setPlaced(o);
     } catch (e) {
       setError((e as Error).message);
@@ -312,6 +383,18 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               </p>
             ) : placed.status === "WORKING" ? (
               <p className="dim-text">It fills when the mid price reaches the limit. See it on the Activity page.</p>
+            ) : null}
+            {copied.length ? (
+              <ul className="copied">
+                {copied.map((c) => (
+                  <li key={c.name} className={c.error ? "neg" : ""}>
+                    {c.name}:{" "}
+                    {c.order
+                      ? `${c.live ? "Schwab order" : "simulated order"} #${c.order.id} ${c.live ? "sent" : c.order.status.toLowerCase()}`
+                      : `not placed: ${c.error}`}
+                  </li>
+                ))}
+              </ul>
             ) : null}
             <button type="button" className="primary" onClick={() => onClose(placed)}>
               Done
@@ -468,6 +551,66 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
               ) : null}
             </div>
 
+            {canCopy && copies.length ? (
+              <div className="copies">
+                <div className="copies-head">
+                  Also place in <span className="dim-text">sized to each account's net liq</span>
+                </div>
+                {copies.map((c) => {
+                  const on = !!copyOn[c.account];
+                  const stops = on ? copyStops(c) : [];
+                  return (
+                    <div key={c.account} className={`copy${stops.length ? " blocked" : ""}`}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => setCopyOn((m) => ({ ...m, [c.account]: e.target.checked }))}
+                        />{" "}
+                        {c.name}
+                      </label>
+                      <input
+                        type="number"
+                        className="copy-units"
+                        aria-label={`Spreads in ${c.name}`}
+                        min={1}
+                        max={1000}
+                        value={c.units ?? ""}
+                        disabled={!on}
+                        onChange={(e) => {
+                          const n = Math.floor(Number(e.target.value));
+                          if (n >= 1 && n <= 1000) setCopyUnits((m) => ({ ...m, [c.account]: n }));
+                        }}
+                      />
+                      <span className="dim-text">
+                        {c.net_liq !== null ? `net liq ${money(c.net_liq)}` : ""}
+                        {c.scaled !== null && c.units !== c.scaled ? ` · scaled ${c.scaled}` : ""}
+                      </span>
+                      {on && !stops.length ? (
+                        <span className="copy-status">
+                          {c.preview ? (c.preview.bp_effect !== null ? `ready · BP ${money(c.preview.bp_effect)}` : "ready") : "checking…"}
+                        </span>
+                      ) : null}
+                      {stops.length ? (
+                        <ul>
+                          {stops.map((x) => (
+                            <li key={x}>{x}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {on && c.preview?.warnings.length ? (
+                        <ul className="warn-text">
+                          {c.preview.warnings.map((w) => (
+                            <li key={w}>{w}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
             {preview ? (
               <div className="ticket-sum">
                 <div>
@@ -561,8 +704,20 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                 Cancel
               </button>
               {!live ? (
-                <button type="button" className="primary" disabled={!canPlace} onClick={place} title="Ctrl+Enter">
-                  {busy ? "Checking…" : "Place simulated order"}
+                <button
+                  type="button"
+                  className={confirming ? "danger" : "primary"}
+                  disabled={!canPlace}
+                  onClick={place}
+                  title="Ctrl+Enter"
+                >
+                  {busy
+                    ? "Checking…"
+                    : confirming
+                      ? `Place, and send copies to Schwab: ${copyText}`
+                      : toCopy.length
+                        ? `Place simulated order + ${toCopy.length} ${toCopy.length === 1 ? "copy" : "copies"}`
+                        : "Place simulated order"}
                 </button>
               ) : liveBlocks.length ? (
                 <span className="dim-text">Preview only: see the red box.</span>
@@ -574,7 +729,13 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                   onClick={place}
                   title="Ctrl+Enter"
                 >
-                  {busy ? "Sending…" : confirming ? `Send to Schwab: ${netLabel(limit)}` : "Place live order"}
+                  {busy
+                    ? "Sending…"
+                    : confirming
+                      ? `Send to Schwab: ${netLabel(limit)}${toCopy.length ? ` · copies: ${copyText}` : ""}`
+                      : toCopy.length
+                        ? `Place live order + ${toCopy.length} ${toCopy.length === 1 ? "copy" : "copies"}`
+                        : "Place live order"}
                 </button>
               )}
             </div>
