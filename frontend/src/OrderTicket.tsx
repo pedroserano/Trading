@@ -334,6 +334,26 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [confirming, setConfirming] = useState(false);
   useEffect(() => setConfirming(false), [legs, limit, duration, copyOn, copyUnits]);
   const needConfirm = live || liveCopies.length > 0;
+  // A working order opened here to replace: it can be cancelled from the ticket too. Live
+  // takes two taps, as placing does.
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const cancelOrder = async () => {
+    if (spec.replaces === undefined) return;
+    if (live && !cancelConfirm) {
+      setCancelConfirm(true);
+      return;
+    }
+    setCancelConfirm(false);
+    setBusy(true);
+    try {
+      await postJson(`/api/orders/${encodeURIComponent(String(spec.replaces))}/cancel?account=${spec.account}`, {});
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const place = async () => {
     if (!canPlace) return;
     if (needConfirm && !confirming) {
@@ -757,8 +777,21 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
 
             <div className="ticket-actions">
               <button type="button" onClick={() => onClose()}>
-                Cancel
+                {spec.replaces !== undefined ? "Close" : "Cancel"}
               </button>
+              {spec.replaces !== undefined ? (
+                <button
+                  type="button"
+                  className={cancelConfirm ? "danger" : ""}
+                  disabled={busy}
+                  onClick={cancelOrder}
+                  title="Cancel the working order; the window closes"
+                >
+                  {cancelConfirm
+                    ? `Cancel #${spec.replaces}${live ? " at Schwab" : ""}?`
+                    : "Cancel order"}
+                </button>
+              ) : null}
               {!live ? (
                 <button
                   type="button"
