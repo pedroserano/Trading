@@ -186,6 +186,32 @@ def group(legs: list[Leg]) -> list[Strategy]:
             parts = [x for x in (lp, sp, lc, sc) if x]
             q = min(abs(x.quantity) for x in parts)
             add("Super bull", [pool.take(x, q) for x in parts], lp is not None)
+        # Super bears: a long put spread paid for by a short call above it. With a long call
+        # above that the call side is a credit spread: a delta buster (tastylive's Liz and
+        # Jenny), its risk defined.
+        while True:
+            sc = _first(pool.options("C", True, exp), key=lambda x: x.strike)
+            lp = sc and _first(
+                [x for x in pool.options("P", False, exp) if x.strike < sc.strike],
+                key=lambda x: -x.strike,
+            )
+            sp = lp and _first(
+                [x for x in pool.options("P", True, exp) if x.strike < lp.strike],
+                key=lambda x: -x.strike,
+            )
+            # A long call between them makes the short call half of a call spread instead.
+            if not (sc and lp and sp) or any(
+                sp.strike < x.strike < sc.strike for x in pool.options("C", False, exp)
+            ):
+                break
+            lc = _first(
+                [x for x in pool.options("C", False, exp) if x.strike > sc.strike],
+                key=lambda x: x.strike,
+            )
+            parts = [x for x in (sp, lp, sc, lc) if x]
+            q = min(abs(x.quantity) for x in parts)
+            name = "Delta buster" if lc else "Super bear"
+            add(name, [pool.take(x, q) for x in parts], lc is not None)
 
         # Big lizards: a short straddle with a long call above it; reverse big lizards: with a
         # long put below it.
@@ -554,7 +580,8 @@ BIG_LIZARDS = ("Big lizard", "Reverse big lizard")
 # Recognised, with their risk, but no profit target: tastylive gives none for these (back
 # ratios it does not route at all, as they are usually a debit). The DTE, tested and
 # expiration rules still apply.
-NO_TARGET = ("Put back ratio", "Call back ratio", "Super bull")
+BEARS = ("Super bear", "Delta buster")
+NO_TARGET = ("Put back ratio", "Call back ratio", "Super bull") + BEARS
 FLIES = (
     "Put butterfly",
     "Call butterfly",
@@ -656,19 +683,25 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
             if s_ and l_:
                 gap = max(gap, (s_[0] - l_[0]) if pc == "P" else (l_[0] - s_[0]))
         max_loss = -open_value + gap * 100 * contracts
-    elif name in BIG_LIZARDS or name == "Super bull":
+    elif name in BIG_LIZARDS or name == "Super bull" or name in BEARS:
         # A lizard: at most the credit. A super bull: the call spread's width plus the credit;
-        # its loss is defined only with the long put (the modified version).
+        # its loss is defined only with the long put (the modified version). A super bear or
+        # delta buster: the mirror, the put spread's width plus the credit; a delta buster's
+        # long call caps the loss.
         def width(pc):
             ks = sorted(x.strike for x in opts if x.put_call == pc)
             return (ks[-1] - ks[0]) * 100 * contracts if len(ks) > 1 else 0.0
 
         if name in BIG_LIZARDS:
             max_profit = open_value
-        else:
+        elif name == "Super bull":
             max_profit = width("C") + open_value
             if st.defined_risk:
                 max_loss = width("P") - open_value
+        else:
+            max_profit = width("P") + open_value
+            if st.defined_risk:
+                max_loss = width("C") - open_value
     elif name in ("Put back ratio", "Call back ratio"):
         # Worst at the longs' strike at expiration: the width less the credit (plus the
         # debit). Calls gain without limit above; puts most at zero.
@@ -823,7 +856,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     # A ratio opens for a small credit, so its loss is measured against what it can make.
     loss_basis = max_profit if name in RATIOS else open_value
     # A covered option's loss is offset by the shares or the ZEBRA behind it: no loss rule.
-    # A super bull opens for about nothing, so a multiple of its credit means little.
+    # A super bull or bear opens for about nothing, so a multiple of its credit means little.
     if (
         name not in COVERED_KINDS
         and name not in NO_TARGET

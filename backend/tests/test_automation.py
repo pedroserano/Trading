@@ -1209,6 +1209,10 @@ def test_collars_act_on_the_call_and_super_bulls_and_back_ratios_have_no_target(
         ("Super bull", [leg("P", 570, -1), leg("C", 590, 1, 0.5), leg("C", 600, -1, 0.3)]),
         ("Call back ratio", [leg("C", 600, -1, 0.3), leg("C", 610, 2, 0.2)]),
         ("Put back ratio", [leg("P", 580, -1, -0.3), leg("P", 570, 2, -0.2)]),
+        (
+            "Delta buster",
+            [leg("P", 580, -1), leg("P", 590, 1), leg("C", 610, -1, 0.2), leg("C", 615, 1, 0.1)],
+        ),
     ):
         st = strat(name=name, legs=legs, flags=["profit"], open_value=100.0)
         st["numbers"]["max_profit"] = 1100.0

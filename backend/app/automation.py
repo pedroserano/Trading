@@ -1289,7 +1289,7 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "— (the put is the floor)",
         ),
         (
-            "Super bull",
+            "Super bull / super bear / delta buster",
             "None: tastylive gives no target",
             out_to,
             "Notify",

@@ -597,6 +597,11 @@ def test_lizards_super_bulls_back_ratios_double_calendars_and_collars_are_recogn
         ([opt("P", 590, -1, 8), opt("C", 590, -1, 7), opt("P", 580, 1, 4)], "Reverse big lizard"),
         ([opt("C", 610, -1, 3), opt("P", 570, -1, 4), opt("P", 565, 1, 3)], "Reverse jade lizard"),
         ([opt("P", 570, -1, 4), opt("C", 590, 1, 9), opt("C", 600, -1, 5)], "Super bull"),
+        ([opt("C", 610, -1, 4), opt("P", 590, 1, 9), opt("P", 580, -1, 5)], "Super bear"),
+        (
+            [opt("C", 615, 1, 2), opt("C", 610, -1, 4), opt("P", 590, 1, 9), opt("P", 580, -1, 5)],
+            "Delta buster",
+        ),
         ([opt("C", 600, -1, 5), opt("C", 610, 2, 2)], "Call back ratio"),
         ([opt("P", 580, -1, 5), opt("P", 570, 2, 2)], "Put back ratio"),
         (
@@ -669,6 +674,14 @@ def test_numbers_and_targets_of_the_new_structures():
     )[0]
     evaluate(msb, TODAY, 590.0, r)
     assert msb.numbers["max_loss"] == 500.0 - 0.0  # 5 wide, opened for 0.00
+    # Delta buster: a 10-wide put debit spread for 4.00, a 5-wide call credit spread for 2.00:
+    # 2.00 debit. Most at or below 580; the call spread caps the loss.
+    db = group(
+        [opt("C", 615, 1, 2), opt("C", 610, -1, 4), opt("P", 590, 1, 9), opt("P", 580, -1, 5)]
+    )[0]
+    evaluate(db, TODAY, 590.0, r)
+    assert db.defined_risk and db.numbers["open_value"] == -200.0
+    assert db.numbers["max_profit"] == 800.0 and db.numbers["max_loss"] == 700.0
     # Call back ratio: sell the 600 for 5.00, buy two 610s for 2.00: 1.00 credit; worst at 610.
     br = group([opt("C", 600, -1, 5), opt("C", 610, 2, 2)])[0]
     evaluate(br, TODAY, 590.0, r)
