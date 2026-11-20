@@ -31,6 +31,10 @@ log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 SETTINGS_KEY = "scanner_settings"
 STATE_KEY = "scanner"
+# Earnings plays use spare capital only: skipped when buying power in use would come within
+# this share of net liq of the VIX ceiling.
+EARNINGS_SPARE = 0.05
+
 DEFAULTS = {
     "level_sim": "propose",
     "level_live": "off",
@@ -94,7 +98,7 @@ DEFAULTS = {
     # half size.
     "earnings_inside": "skip",
     # Earnings play (tastylive): on the last session before a single stock's report, sell
-    # premium outside the expected move in the first expiration after it, at half size,
+    # premium outside the expected move in the first expiration after it, at a quarter size,
     # and close it the session the report reaches the price (the IV crush). Off by default.
     "earnings_play": False,
     "earnings_play_ivr": 50,
@@ -467,7 +471,9 @@ def scan_steps(bias: str, live_symbols) -> list[tuple[str, list[str]]]:
                 "half size.",
                 "⟦?earnings_play⟧ Earnings play (off unless ticked): on the last session "
                 "before a stock's report, with IV rank ⟦earnings_play_ivr⟧ or more, sell "
-                "⟦earnings_play_risk⟧ in the first expiration after the report, at half size: "
+                "⟦earnings_play_risk⟧ in the first expiration after the report, at a quarter "
+                "size and only with spare capital (skipped within 5 points of the buying-power "
+                "ceiling), as The Unlucky Investor's Guide advises for binary events: "
                 "a strangle with its strikes ⟦earnings_play_em⟧× the expected move from the "
                 "price, an iron condor at its usual delta. Automanage closes it the session "
                 "the report "
@@ -1075,7 +1081,12 @@ class Scanner:
                 else:
                     tilt, source = None, None
                 leaned = source in ("band", "bias")
-                n = max(1, s["contracts"] // 2) if careful else s["contracts"]
+                # An earnings play is a quarter size and only for spare capital (The Unlucky
+                # Investor's Guide to Options Trading: binary events "exceptionally small").
+                if play:
+                    n = max(1, s["contracts"] // 4)
+                else:
+                    n = max(1, s["contracts"] // 2) if careful else s["contracts"]
                 if account in self.brokers:
                     n = min(n, (await self.brokers[account].config())["max_contracts"])
                 # Undefined risk first when allowed; over the notional limit, the same idea as
@@ -1127,7 +1138,7 @@ class Scanner:
                     continue
                 problems = list(pv["errors"]) + list(pv.get("live_blocks") or [])
                 bp = pv.get("bp_effect")
-                bp_cap = s["max_bp_share"] * (0.5 if careful else 1.0)
+                bp_cap = s["max_bp_share"] * (0.25 if play else 0.5 if careful else 1.0)
                 if bp is not None and net_liq and bp > bp_cap * net_liq:
                     problems.append(f"buying power {bp:,.0f} is over {bp_cap:.1%} of net liq")
                 after = pv.get("bp_used_after")
@@ -1136,6 +1147,13 @@ class Scanner:
                         f"buying power in use would be {after:.0%}, over the {ceiling:.0%} "
                         "ceiling for this VIX"
                     )
+                elif play and after is not None and ceiling is not None:
+                    if after > ceiling - EARNINGS_SPARE:
+                        problems.append(
+                            f"earnings plays use spare capital only: buying power in use would "
+                            f"be {after:.0%}, within {EARNINGS_SPARE:.0%} of the {ceiling:.0%} "
+                            "ceiling for this VIX"
+                        )
                 ba = pv.get("band_after") or {}
                 tb = bands.get("theta") or {}
                 if ba.get("theta") is not None and tb.get("max") is not None:
@@ -1249,7 +1267,11 @@ class Scanner:
                         f"Drop signal (IV rank {ivr:.0f}, put skew {vol['skew']:.1f} pts): "
                         + candidates[-1]["label"]
                     )
-                if careful:
+                if play:
+                    candidates[-1]["label"] += ". Quarter size, spare capital only: " + "; ".join(
+                        vol["caution"]
+                    )
+                elif careful:
                     candidates[-1]["label"] += ". Defined risk, half size: " + "; ".join(
                         vol["caution"]
                     )

@@ -626,13 +626,27 @@ async def test_earnings_play_is_off_by_default_then_sells_into_the_report():
     assert "AAPL" not in [c["symbol"] for c in r["candidates"]]
     assert "buffer" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
 
+    # A play may take a quarter of the per-trade buying power: 4,000 is over 2.5%.
     scanner.store.settings[sc.SETTINGS_KEY] = {
         "min_ic_credit": 0.15,
         "max_bp_share": 0.1,
         "earnings_play": True,
     }
     r = await scanner.scan("sim", act=False)
+    assert "over 2.5% of net liq" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+    scanner.store.settings[sc.SETTINGS_KEY] = {
+        "min_ic_credit": 0.15,
+        "max_bp_share": 0.2,
+        "earnings_play": True,
+    }
+    r = await scanner.scan("sim", act=False)
     c = next(x for x in r["candidates"] if x["symbol"] == "AAPL")
+    assert "Quarter size, spare capital only" in c["label"]
+    # Spare capital only: within 5 points of the VIX ceiling (12% after, ceiling 15%).
+    scanner.portfolios["sim"].snapshot["account"]["bp_ceiling_pct"] = 0.15
+    r = await scanner.scan("sim", act=False)
+    assert "spare capital only" in {x["symbol"]: x["reason"] for x in r["skipped"]}["AAPL"]
+    scanner.portfolios["sim"].snapshot["account"]["bp_ceiling_pct"] = 0.30
     assert c["play"] == "earnings:2026-11-12" and c["strategy"] == "Iron condor"
     assert c["label"].startswith("Earnings play: ")
     assert "closed on 2026-11-12 after the IV crush" in c["label"]
@@ -641,7 +655,7 @@ async def test_earnings_play_is_off_by_default_then_sells_into_the_report():
 
     scanner.store.settings[sc.SETTINGS_KEY] = {
         "min_ic_credit": 0.15,
-        "max_bp_share": 0.1,
+        "max_bp_share": 0.2,
         "earnings_play": True,
         "earnings_play_risk": "undefined",
         # The test chain's strikes stop at 550/630: half the ±33.81 expected move away.
@@ -668,7 +682,7 @@ async def test_earnings_play_is_off_by_default_then_sells_into_the_report():
 @pytest.mark.anyio
 async def test_a_proposed_earnings_play_carries_its_tag():
     scanner, auto, _ = harness(
-        {"min_ic_credit": 0.15, "max_bp_share": 0.1, "earnings_play": True, "level": "propose"}
+        {"min_ic_credit": 0.15, "max_bp_share": 0.2, "earnings_play": True, "level": "propose"}
     )
     scanner.earnings = EarningsAt({"AAPL": "2026-11-11"})
     await scanner.scan("sim", act=True)
