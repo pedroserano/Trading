@@ -63,6 +63,12 @@ export function ivrTitle(v: IvRank | null | undefined): string {
       `Used until this app has a year of its own IV` +
       (v.recorded_days ? ` (${v.recorded_days} days so far).` : ".")
     );
+  if (v.source.startsWith("Cboe "))
+    return (
+      `IV rank from ${v.source} (Cboe's volatility index for it) as of ${v.as_of}: ${v.iv}% in a 52-week range of ${v.low}–${v.high}%. ` +
+      `Used until this app has a year of its own IV` +
+      (v.recorded_days ? ` (${v.recorded_days} days so far).` : ".")
+    );
   if (v.source === "VIX") return `IV rank over ${v.days} days of VIX; percentile ${v.percentile}`;
   return `IV rank over ${v.days} days of recorded IV` + (v.percentile !== null ? `; percentile ${v.percentile}` : "");
 }

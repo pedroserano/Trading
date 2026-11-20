@@ -126,3 +126,46 @@ def test_a_symbol_with_a_year_of_its_own_is_not_asked_for():
         assert await ref.refresh() == 0 and queries == [] and ref.rank("SPY") is None
 
     asyncio.run(go())
+
+
+def _cboe_csv(n, last):
+    rows = ["DATE,OPEN,HIGH,LOW,CLOSE"]
+    for i in range(n):
+        d = date.fromordinal(TODAY.toordinal() - n + i)
+        close = last if i == n - 1 else 20 + (i % 20)  # 20..39 over the year
+        rows.append(f"{d.month:02d}/{d.day:02d}/{d.year},0,0,0,{close:.6f}")
+    return "\n".join(rows)
+
+
+def test_parse_cboe_is_the_last_close_against_a_year_of_sessions():
+    e = ivref.parse_cboe(_cboe_csv(400, 30.0))
+    assert e["date"] == "2026-11-18" and e["iv"] == 0.30
+    assert e["high"] == 0.39 and e["low"] == 0.20  # only the last 252 sessions count
+    assert rank_from(e)["rank"] == 52.6
+    assert ivref.parse_cboe("DATE,GVZ\n11/18/2026,28.7") is None  # too short
+    # GVZ and others give the close as the only column.
+    two = "\n".join(_cboe_csv(30, 25.0).split("\n")).replace(",0,0,0,", ",")
+    assert ivref.parse_cboe(two)["iv"] == 0.25
+
+
+def test_etfs_dolthub_lacks_take_cboes_volatility_index():
+    queries = []
+    dolt = fake_dolthub(queries)
+
+    async def handler(request: httpx.Request):
+        if request.url.host.endswith("cboe.com"):
+            name = request.url.path.rsplit("/", 1)[1]
+            assert name == "VXN_History.csv"  # QQQ; SPY came from DoltHub, XYZ has none
+            return httpx.Response(200, text=_cboe_csv(300, 30.0))
+        return await dolt._transport.handle_async_request(request)
+
+    async def symbols():
+        return ["SPY", "QQQ", "XYZ"]
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ref = IvReference(MemoryStore(), symbols, clock=clock, client=client)
+    assert asyncio.run(ref.refresh()) == 2
+    assert ref.rank("SPY")["source"] == "DoltHub"
+    q = ref.rank("QQQ")
+    assert q["source"] == "Cboe VXN" and q["iv"] == 30.0 and q["as_of"] == "2026-11-18"
+    assert ref.rank("XYZ") is None

@@ -298,6 +298,7 @@ function UnderGroup(props: {
                 <span className="sub"> ({u.ivr.days}d)</span>
               ) : null}
               {u.ivr.source === "DoltHub" ? <span className="sub"> D</span> : null}
+              {u.ivr.source.startsWith("Cboe ") ? <span className="sub"> C</span> : null}
             </span>
           ) : null}
           {detail && u.beta !== null ? (

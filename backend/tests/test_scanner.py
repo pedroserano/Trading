@@ -910,3 +910,17 @@ async def test_finds_moving_with_a_big_holding_are_noted_and_placed_last(monkeyp
     assert "moves with QQQ (0.91)" in spy["label"]
     others = [c for c in r["candidates"] if c["symbol"] != "SPY"]
     assert all(c["moves_with"] == [] for c in others)
+
+
+@pytest.mark.anyio
+async def test_a_saved_quiet_gap_of_60_becomes_80_once():
+    scanner, _, _ = harness({"quiet_gap_days": 60, "contracts": 2})
+    s = await scanner.settings()
+    assert s["quiet_gap_days"] == 80 and s["contracts"] == 2
+    # A value set after the upgrade stays, 60 too.
+    saved = scanner.store.settings[sc.SETTINGS_KEY]
+    saved["quiet_gap_days"] = 60
+    assert (await scanner.settings())["quiet_gap_days"] == 60
+    # Any other saved value is left as it was.
+    other, _, _ = harness({"quiet_gap_days": 90})
+    assert (await other.settings())["quiet_gap_days"] == 90

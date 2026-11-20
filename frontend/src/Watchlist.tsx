@@ -325,7 +325,7 @@ export default function Watchlist() {
               {th("range", "52w", "Where the price sits in its 52-week range of closes, 0% at the low")}
               {th("move", "Move", "The last few sessions' move against the move implied volatility expected, in standard deviations")}
               {th("iv30", "IV30", "30-day at-the-money implied volatility")}
-              {th("ivr", "IVR", "IV rank over a year: from DoltHub (D) until this app has recorded a year of its own")}
+              {th("ivr", "IVR", "IV rank over a year: from DoltHub (D), or for ETFs it lacks a Cboe volatility index (C), until this app has recorded a year of its own")}
               <th title="IV percentile">IVP</th>
               <th title="Put skew: how much more implied volatility the 25-delta put carries than the 25-delta call, in volatility points. High after a drop means puts are especially expensive, part of the scanner's drop signal.">
                 Skew
@@ -422,6 +422,7 @@ export default function Watchlist() {
                     <span className="sub"> ({r.ivr.days}d)</span>
                   ) : null}
                   {r.ivr?.source === "DoltHub" ? <span className="sub"> D</span> : null}
+                  {r.ivr?.source.startsWith("Cboe ") ? <span className="sub"> C</span> : null}
                 </td>
                 <td>{r.ivr?.percentile !== null && r.ivr?.percentile !== undefined ? Math.round(r.ivr.percentile) : "–"}</td>
                 <td>{r.skew === null || r.skew === undefined ? "–" : num(r.skew, 1)}</td>

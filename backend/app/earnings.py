@@ -5,7 +5,8 @@ Sources:
 - Dates you enter on the Watchlist (stored as lines: SYMBOL YYYY-MM-DD bmo|amc). These win.
 - Nasdaq's earnings calendar (free, no key): one request per weekday, about five weeks
   ahead (dates companies have announced, with before the open or after the close), and the
-  last few weeks back, so a stock that has just reported is known to have.
+  last few weeks back, so a stock that has just reported is known to have. Dates are kept
+  here once read, until they pass, so a pass that misses one does not lose it.
 Each stock's industry (for the Portfolio screen's sectors and the scanner's per-sector cap)
 comes from Nasdaq's stock screener, one request for every listed company, once a day.
 
@@ -428,11 +429,19 @@ class EarningsService:
             for sym, t in day.items():
                 if sym not in ahead:
                     ahead[sym] = {"date": d.isoformat(), "time": t, "source": "Nasdaq"}
-        # Dates on the days that could not be read are kept from the last pass.
+        # A date once read is kept until it passes: Nasdaq's calendar drops companies from a
+        # day now and then, or answers a day with nothing, and a pass that missed one must
+        # not forget it. Nasdaq's latest date for a stock wins (dates move); a date that has
+        # passed becomes the stock's last report.
+        today_s = today.isoformat()
+        kept: dict = {}
         for sym, info in self.nasdaq.items():
-            if info["date"] in failed and (sym not in ahead or info["date"] < ahead[sym]["date"]):
-                ahead[sym] = info
-        self.nasdaq = ahead
+            if info["date"] < today_s:
+                if self.past.get(sym, "") < info["date"]:
+                    self.past[sym] = info["date"]
+            else:
+                kept[sym] = info
+        self.nasdaq = {**kept, **ahead}
         for d in weekdays(today - timedelta(days=NASDAQ_BACK_DAYS), today - timedelta(days=1)):
             if d.isoformat() in self.nasdaq_done:
                 continue

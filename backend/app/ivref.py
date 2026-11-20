@@ -6,6 +6,10 @@ spans a year, its rank comes from DoltHub's free `post-no-preference/options` da
 day's IV with its 52-week high and low, per symbol. DoltHub's rank is used as it stands (its
 IV against its own range), as of its last close, because its IV is worked out differently from
 the app's and the two are not mixed. Once the app's own history spans a year, it takes over.
+
+DoltHub carries few ETFs (SPY, DIA and some sector funds, not QQQ, IWM, GLD or TLT). For those
+it lacks, a Cboe volatility index stands in where one exists (CBOE below): its latest close
+against its range over the past year.
 """
 
 import asyncio
@@ -27,6 +31,29 @@ LOOKBACK_DAYS = 10  # the latest day DoltHub has, looked for this far back
 FILL_DAYS = 3  # trading days read, for symbols whose latest row lacks the year range
 MAX_AGE_DAYS = 7  # older than this and the rank is not used: the source has stopped
 OWN_YEAR_DAYS = 365  # the app's own history takes over once it spans this
+# ETFs DoltHub does not carry: Cboe's volatility indexes, free daily history, a 30-day IV
+# like the app's. GVZ, OVX, VXEEM, VXSLV, VXGDX, VXFXI, VXEWZ, VXTLT, VXHYG, VXSMH and VXEFA
+# are worked out from the ETF's own options; VXN, RVX and VXD from the index the ETF tracks
+# (Nasdaq-100, Russell 2000, Dow), and VIX from the S&P 500's.
+CBOE_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{}_History.csv"
+CBOE = {
+    "SPY": "VIX",
+    "QQQ": "VXN",
+    "IWM": "RVX",
+    "DIA": "VXD",
+    "GLD": "GVZ",
+    "USO": "OVX",
+    "EEM": "VXEEM",
+    "SLV": "VXSLV",
+    "GDX": "VXGDX",
+    "FXI": "VXFXI",
+    "EWZ": "VXEWZ",
+    "TLT": "VXTLT",
+    "HYG": "VXHYG",
+    "SMH": "VXSMH",
+    "EFA": "VXEFA",
+}
+YEAR_SESSIONS = 252
 # Only plain tickers go into a query, so a symbol can never change the SQL.
 _TICKER = re.compile(r"^[A-Z0-9.]{1,12}$")
 
@@ -49,8 +76,37 @@ def rank_from(entry: dict) -> dict | None:
         "low": round(lo, 2),
         "high": round(hi, 2),
         "iv": round(iv, 2),
-        "source": "DoltHub",
+        "source": entry.get("source", "DoltHub"),
         "as_of": entry["date"],
+    }
+
+
+def parse_cboe(text: str) -> dict | None:
+    """The latest close of a Cboe volatility index and its range over the past year of
+    sessions, as an entry like DoltHub's (fractions). The CSV's last column is the close."""
+    rows = []
+    for line in (text or "").splitlines()[1:]:
+        parts = line.strip().split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            m, d, y = parts[0].split("/")
+            day = date(int(y), int(m), int(d))
+            close = float(parts[-1])
+        except ValueError:
+            continue
+        if close > 0:
+            rows.append((day, close))
+    rows.sort()
+    year = rows[-YEAR_SESSIONS:]
+    if len(year) < 20:
+        return None
+    closes = [c for _, c in year]
+    return {
+        "date": year[-1][0].isoformat(),
+        "iv": closes[-1] / 100,
+        "high": max(closes) / 100,
+        "low": min(closes) / 100,
     }
 
 
@@ -158,48 +214,69 @@ class IvReference:
         own = self.client is None
         client = self.client or httpx.AsyncClient(timeout=60)
         found: dict[str, dict] = {}
+        dolt_error: Exception | None = None
+        latest = None
         try:
-            days = await self._trading_days(client)
-            if not days:
-                raise RuntimeError(f"no data in the last {LOOKBACK_DAYS} days")
-            latest = days[0]
-            missing = list(names)
-            # A day's row sometimes lacks the year range: those symbols are read from the
-            # trading day before, and the one before that.
-            for when in days:
-                if not missing:
-                    break
-                day = when.isoformat()
-                for i in range(0, len(missing), BATCH):
-                    batch = missing[i : i + BATCH]
-                    listed = ",".join(f"'{s}'" for s in batch)
-                    rows = await self._query(
-                        client,
-                        "SELECT act_symbol, date, iv_current, iv_year_high, iv_year_low "  # noqa: S608 - a date and checked tickers
-                        f"FROM volatility_history WHERE date = '{day}' "
-                        f"AND act_symbol IN ({listed})",
-                    )
-                    for row in rows:
-                        e = {
-                            "date": row["date"],
-                            "iv": _num(row.get("iv_current")),
-                            "high": _num(row.get("iv_year_high")),
-                            "low": _num(row.get("iv_year_low")),
-                        }
-                        if rank_from(e):
-                            found[names[row["act_symbol"]]] = e
-                missing = [d for d in missing if names[d] not in found]
+            try:
+                days = await self._trading_days(client)
+                if not days:
+                    raise RuntimeError(f"no data in the last {LOOKBACK_DAYS} days")
+                latest = days[0]
+                missing = list(names)
+                # A day's row sometimes lacks the year range: those symbols are read from the
+                # trading day before, and the one before that.
+                for when in days:
+                    if not missing:
+                        break
+                    day = when.isoformat()
+                    for i in range(0, len(missing), BATCH):
+                        batch = missing[i : i + BATCH]
+                        listed = ",".join(f"'{s}'" for s in batch)
+                        rows = await self._query(
+                            client,
+                            "SELECT act_symbol, date, iv_current, iv_year_high, iv_year_low "  # noqa: S608 - a date and checked tickers
+                            f"FROM volatility_history WHERE date = '{day}' "
+                            f"AND act_symbol IN ({listed})",
+                        )
+                        for row in rows:
+                            e = {
+                                "date": row["date"],
+                                "iv": _num(row.get("iv_current")),
+                                "high": _num(row.get("iv_year_high")),
+                                "low": _num(row.get("iv_year_low")),
+                            }
+                            if rank_from(e):
+                                found[names[row["act_symbol"]]] = e
+                    missing = [d for d in missing if names[d] not in found]
+            except Exception as e:  # Cboe below still covers its ETFs
+                dolt_error = e
+            # ETFs DoltHub does not have: their Cboe volatility index, each read once.
+            for sym in needed:
+                index = CBOE.get(sym)
+                if not index or sym in found:
+                    continue
+                try:
+                    r = await client.get(CBOE_URL.format(index), follow_redirects=True)
+                    r.raise_for_status()
+                    e = parse_cboe(r.text)
+                except Exception as err:  # a refinement: the app's own history remains
+                    log.warning("Cboe %s for %s not read: %s", index, sym, err)
+                    continue
+                if e and rank_from(e):
+                    found[sym] = {**e, "source": f"Cboe {index}"}
         finally:
             if own:
                 await client.aclose()
+        if dolt_error is not None and not found:
+            raise dolt_error
         # A symbol missing today keeps its last row; choose() stops using it once it is old.
         self.data.update(found)
         self.refreshed_at = time.time()
-        self.error = None
+        self.error = f"DoltHub: {dolt_error}" if dolt_error is not None else None
         await self.store.set_setting(
             CACHE_KEY, {"symbols": self.data, "refreshed_at": self.refreshed_at}
         )
-        log.info("DoltHub IV: %d of %d symbols as of %s", len(found), len(wanted), latest)
+        log.info("IV reference: %d of %d symbols (DoltHub %s)", len(found), len(wanted), latest)
         return len(found)
 
 

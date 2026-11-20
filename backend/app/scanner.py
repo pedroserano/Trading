@@ -40,6 +40,7 @@ DEFAULTS = {
     "level_sim": "propose",
     "level_live": "off",
     "level_by_account": {},  # every other Schwab account's level, by account key
+    "upgrades": [],  # one-time changes to saved settings already made (see Scanner.settings)
     "min_ivr": 30,
     "undefined_ivr": 50,
     "target_dte": 45,
@@ -822,7 +823,15 @@ class Scanner:
         self.errors: dict[str, str | None] = {}  # account -> why the last scan by hand failed
 
     async def settings(self) -> dict:
-        return merged(await self.store.get_setting(SETTINGS_KEY))
+        saved = await self.store.get_setting(SETTINGS_KEY)
+        if saved and "quiet_gap_80" not in saved.get("upgrades", []):
+            # Saved while the default was 60: 80 clears just-reported stocks for the quarter
+            # (reports come about 90 days apart). Once only; a value set after stays.
+            if saved.get("quiet_gap_days") == 60:
+                saved["quiet_gap_days"] = 80
+            saved["upgrades"] = [*saved.get("upgrades", []), "quiet_gap_80"]
+            await self.store.set_setting(SETTINGS_KEY, saved)
+        return merged(saved)
 
     async def _state(self) -> dict:
         return await self.store.get_setting(STATE_KEY) or {}

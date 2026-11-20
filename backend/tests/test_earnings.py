@@ -296,3 +296,42 @@ async def test_nasdaq_dropped_connections_are_retried_and_one_bad_day_is_skipped
 def test_errors_with_no_text_still_say_what_they_are():
     assert er._why(httpx.ReadError("")) == "ReadError"
     assert er._why(ValueError("bad")) == "ValueError: bad"
+
+
+@pytest.mark.anyio
+async def test_a_date_once_read_is_kept_until_it_passes():
+    """Nasdaq drops a company from a day's calendar now and then (COF, GM, GE, UAL and NFLX
+    lost their dates that way): the date read before stays until Nasdaq gives another."""
+    seen: list = []
+    days = {d.isoformat(): [] for d in er.weekdays(date(2026, 10, 1), date(2026, 12, 31))}
+    days["2026-11-20"] = [("COF", "time-after-hours"), ("GM", "time-pre-market")]
+    days["2026-11-13"] = [("UAL", "time-after-hours")]
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_nasdaq_handler(days, seen)))
+    now = [datetime(2026, 11, 11, 12, tzinfo=ET)]
+
+    async def symbols():
+        return {"COF", "GM", "UAL"}
+
+    store = MemoryStore()
+    e = er.EarningsService(
+        store, Quotes(), symbols, clock=lambda: now[0], client=client, nasdaq=True
+    )
+    e.pace = 0
+    await e.refresh()
+    assert e.info("COF")["date"] == "2026-11-20" and e.info("UAL")["date"] == "2026-11-13"
+    # Next pass: COF missing from its day, GM moved a week later.
+    days["2026-11-20"] = []
+    days["2026-11-27"] = [("GM", "time-pre-market")]
+    await e.refresh()
+    assert e.info("COF")["date"] == "2026-11-20" and e.info("COF")["time"] == "amc"
+    assert e.info("GM")["date"] == "2026-11-27"
+    # Kept across a restart too.
+    again = er.EarningsService(
+        store, Quotes(), symbols, clock=lambda: now[0], client=client, nasdaq=True
+    )
+    await again.load()
+    assert again.info("COF")["date"] == "2026-11-20"
+    # Once passed, a kept date is the last report, not the next.
+    now[0] = datetime(2026, 11, 16, 12, tzinfo=ET)
+    await e.refresh()
+    assert e.info("UAL") is None and e.last_report("UAL") == "2026-11-13"

@@ -90,7 +90,8 @@ export interface IvRank {
   low: number;
   high: number;
   /** DoltHub: its IV against its own 52-week range, until our recorded history spans a year. */
-  source: "VIX" | "recorded" | "DoltHub";
+  /** "Cboe VXN" and the like: an ETF's Cboe volatility index, where DoltHub has none. */
+  source: "VIX" | "recorded" | "DoltHub" | `Cboe ${string}`;
   /** DoltHub: the close it is as of, and its IV then. */
   as_of?: string;
   iv?: number;
