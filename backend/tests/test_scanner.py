@@ -924,3 +924,22 @@ async def test_a_saved_quiet_gap_of_60_becomes_80_once():
     # Any other saved value is left as it was.
     other, _, _ = harness({"quiet_gap_days": 90})
     assert (await other.settings())["quiet_gap_days"] == 90
+
+
+@pytest.mark.anyio
+async def test_finds_and_their_proposals_are_cleared_once_the_date_changes():
+    scanner, auto, _ = harness()
+    await scanner.scan("sim")
+    assert (await scanner.view("sim"))["last"]["candidates"]
+    later = datetime(2026, 11, 11, 23, 59, tzinfo=ET)  # after the close, the same day: kept
+    scanner.clock = auto.clock = lambda: later
+    assert (await scanner.view("sim"))["last"]["candidates"]
+    await auto.tick()
+    assert (await auto.view())["proposals"]
+    nxt = datetime(2026, 11, 12, 0, 1, tzinfo=ET)  # the next day, market closed: cleared
+    scanner.clock = auto.clock = lambda: nxt
+    assert (await scanner.view("sim"))["last"]["candidates"] == []
+    assert (await auto.view())["proposals"] == []  # left out before any pass
+    await auto.tick()
+    assert [p["status"] for p in (await auto.load())["proposals"]] == ["expired"]
+    assert (await auto.view())["proposals"] == []

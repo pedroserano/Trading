@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from . import chain as chain_mod
 from . import dividends, plain, portfolio_view, targets
-from .automation import LEVELS, Action, _hm
+from .automation import LEVELS, Action, _hm, scan_lapsed
 from .correlation import Correlations, big_underlyings
 from .earnings import sessions_until
 from .extremes import compute as compute_extreme
@@ -846,10 +846,19 @@ class Scanner:
 
     async def view(self, account: str) -> dict:
         """The last scan, less what has been dealt with: a proposal placed or dismissed (on
-        Positions or here), a trade placed by itself, or a find dismissed here."""
+        Positions or here), a trade placed by itself, or a find dismissed here. Its finds are
+        cleared once the date changes."""
         s = await self.settings()
         st = await self._state()
         last = st.get(account)
+        ran = (
+            (last.get("ran_on") or datetime.fromtimestamp(last["at"], ET).date().isoformat())
+            if last
+            else None
+        )
+        if last and scan_lapsed(ran, self.clock()):
+            # Found on an earlier day: cleared once the date changes.
+            last = {**last, "candidates": []}
         if last:
             auto = self.automations.get(account)
             props = {p["key"]: p for p in (await auto.load())["proposals"]} if auto else {}
@@ -1359,6 +1368,7 @@ class Scanner:
                         bp_today += c["bp"] or 0
             result = {
                 "at": time.time(),
+                "ran_on": today,  # its finds are cleared once the date changes
                 "day": today if act else prev.get("day"),
                 "new_today": placed_today,
                 "bp_today": bp_today,

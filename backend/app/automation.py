@@ -517,6 +517,12 @@ def early_close(d: date) -> bool:
     return (d.month, d.day) == (7, 3) and date(d.year, 7, 4).weekday() != 5
 
 
+def scan_lapsed(day: str | None, now: datetime) -> bool:
+    """A scanner find, and its proposal, last for the day it was found (ET): once the date
+    changes, it is cleared."""
+    return not day or day < now.astimezone(ET).date().isoformat()
+
+
 def in_window(now: datetime, settings: dict) -> bool:
     et = now.astimezone(ET)
     if et.weekday() >= 5:
@@ -1817,7 +1823,15 @@ class AutomationService:
             else "automatic Schwab orders need LIVE_TRADING=true and LIVE_AUTO=true in .env",
             "account": self.account,
             "trades": st["trades"],
-            "proposals": [p for p in st["proposals"] if p["status"] == "pending"],
+            # The scanner's from an earlier day are left out even before a pass clears them.
+            "proposals": [
+                p
+                for p in st["proposals"]
+                if p["status"] == "pending"
+                and not (
+                    p["rule"] == "scan" and scan_lapsed(p["key"].rsplit(":", 1)[-1], self.clock())
+                )
+            ],
             "log": st["log"][-150:][::-1] if log else [],
             "orders_today": st["counts"].get(today, 0),
             "in_window": in_window(self.clock(), settings),
@@ -1846,6 +1860,19 @@ class AutomationService:
             done: list[str] = []
             snap = self.portfolio.snapshot or {}
             now = self.clock()
+            # The scanner's new trades last for the day they were found: cleared once the
+            # date changes, paused or not, in the window or not.
+            lapsed = False
+            for p in st["proposals"]:
+                if (
+                    p["status"] == "pending"
+                    and p["rule"] == "scan"
+                    and scan_lapsed(p["key"].rsplit(":", 1)[-1], now)
+                ):
+                    p["status"] = "expired"
+                    lapsed = True
+            if lapsed:
+                await self._save()
             if not self.broker.state:
                 return done
             # Fills are recorded, and new trades switched on, at any time: paused or not, in
@@ -1935,17 +1962,12 @@ class AutomationService:
                         acts = [a for a in acts if a.rule == "expiry"]
                     for action in acts:
                         await self._handle(s, u, action, levels[action.rule], settings, rules, done)
-            # Proposals for trades that have closed no longer apply; the scanner's new
-            # trades last for the day they were found.
-            today = now.date().isoformat()
+            # Proposals for trades that have closed no longer apply (the scanner's own are
+            # cleared by date, above).
             for p in st["proposals"]:
-                if p["status"] != "pending":
-                    continue
-                if p["rule"] == "scan":
-                    if not p["key"].endswith(today):
+                if p["status"] == "pending" and p["rule"] != "scan":
+                    if p["trade_id"] not in open_ids:
                         p["status"] = "expired"
-                elif p["trade_id"] not in open_ids:
-                    p["status"] = "expired"
             await self._save()
             return done
 
