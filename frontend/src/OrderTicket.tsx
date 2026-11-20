@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, postJson } from "./api";
 import PayoffChart from "./PayoffChart";
-import { money, num, pct, shortDate, strike } from "./format";
+import { money, num, pct, shortDate, signed, strike } from "./format";
 import type { Chain, Expiration, OrderLeg, Preview, ProposalBody, SimOrder, StrategyView } from "./types";
 
 export interface TicketSpec {
@@ -188,6 +188,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [chain, setChain] = useState<Chain | null>(null);
   // The strike each leg rolls to, as chosen on the ticket; unset legs keep their strike.
   const [pick, setPick] = useState<Record<string, number>>({});
+  const [rollBuilt, setRollBuilt] = useState(false);
   const current = spec.roll?.numbers.expiration ?? null;
 
   useEffect(() => {
@@ -225,6 +226,31 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     [strikes, pick],
   );
 
+  // Each strike's contract in the new expiration, for its delta.
+  const contract = useCallback(
+    (pc: string | null, k: number | null) => {
+      const r = chain?.rows.find((x) => x.strike === k);
+      return (pc === "P" ? r?.put : r?.call) ?? null;
+    },
+    [chain],
+  );
+  // The trade's delta in shares now, and after the roll: the rolled legs swapped for the new
+  // ones at their delta in the new expiration. Other legs (the side not rolled, shares) stay.
+  const rollDelta = useMemo(() => {
+    const r = spec.roll;
+    if (!r || r.numbers.delta === null || !chain) return null;
+    let after = r.numbers.delta;
+    for (const l of r.legs) {
+      if (l.kind !== "OPTION" || l.strike === null) continue;
+      const to = newStrike(l.symbol, l.strike);
+      if (rollExp === l.expiration && to === l.strike) continue; // not moved: its delta stays
+      const d = contract(l.put_call, to)?.delta;
+      if (l.delta === null || d === null || d === undefined) return null;
+      after += l.quantity * 100 * (d - l.delta);
+    }
+    return { now: r.numbers.delta, after };
+  }, [spec.roll, chain, contract, newStrike, rollExp]);
+
   useEffect(() => {
     if (!spec.roll || !rollExp || !strikes.length) return;
     const opening: OrderLeg[] = spec.roll.legs
@@ -234,13 +260,22 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         quantity: l.quantity,
         effect: "open" as const,
       }));
-    setLegs([...spec.legs, ...opening]);
+    // A leg left at its own expiration and strike is not part of the roll: closing and
+    // reopening the same contract would only cost commission, and is one contract twice.
+    const kept = new Set(opening.map((o) => o.symbol).filter((sym) => spec.legs.some((c) => c.symbol === sym)));
+    setLegs([...spec.legs, ...opening].filter((l) => !kept.has(l.symbol)));
+    setRollBuilt(true);
     setLimit(null);
   }, [spec.roll, spec.legs, spec.underlying, rollExp, strikes, newStrike]);
 
   const run = useCallback(
     async (lim: number | null) => {
-      if (spec.roll && legs.length === spec.legs.length) return; // roll legs not built yet
+      if (spec.roll && !rollBuilt) return; // roll legs not built yet
+      if (!legs.length) {
+        setPreview(null);
+        setError("Nothing to roll: pick a different expiration or strike");
+        return;
+      }
       setBusy(true);
       try {
         const p = await postJson<Preview>("/api/orders/preview", {
@@ -260,7 +295,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         setBusy(false);
       }
     },
-    [legs, duration, spec],
+    [legs, duration, spec, rollBuilt],
   );
 
   // Preview on open, and again (debounced) when anything on the ticket changes.
@@ -446,7 +481,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                           {to === null ? <option value="">…</option> : null}
                           {strikes.map((k) => (
                             <option key={k} value={k}>
-                              {strike(k)}
+                              {strike(k)} · Δ {num(contract(l.put_call, k)?.delta ?? null, 2)}
                               {k === l.strike ? " · same" : ""}
                             </option>
                           ))}
@@ -454,6 +489,13 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                       </span>
                     );
                   })}
+                <span
+                  className="roll-delta"
+                  title="The trade's delta in shares, now and after this roll, at the new legs' deltas in the chosen expiration"
+                >
+                  Δ {signed(rollDelta?.now ?? spec.roll.numbers.delta, 0)} → <b>{signed(rollDelta?.after ?? null, 0)}</b>
+                  <span className="sub"> shares after roll</span>
+                </span>
               </div>
             ) : null}
 
