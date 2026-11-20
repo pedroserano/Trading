@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import reduce
 
+from .analytics import _valid_vol
 from .options import Leg, parse_option_symbol
 from .strategies import group
 
@@ -38,6 +39,7 @@ class TicketLeg:
     ask: float | None = None
     mark: float | None = None
     oi: int | None = None  # open interest at the strike, when the quote has it
+    iv: float | None = None  # the contract's implied volatility in percent, when quoted
     equity: bool = False  # shares: closing orders only, alone in their order
 
     @classmethod
@@ -143,6 +145,7 @@ def apply_quotes(t: Ticket, quotes: dict) -> None:
         leg.mark = _num(q.get("mark"))
         oi = _num(q.get("openInterest"))
         leg.oi = int(oi) if oi is not None else None
+        leg.iv = _valid_vol(q.get("volatility"))
         if leg.mark is None and leg.bid is not None and leg.ask is not None:
             leg.mark = (leg.bid + leg.ask) / 2
 

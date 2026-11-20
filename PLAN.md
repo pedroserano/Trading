@@ -768,3 +768,9 @@ entered in Settings.
   long it took, how many paced Schwab requests it made and how long they waited for the
   limit; the scanner's details show it ("Last scan took 2m 14s: 17 Schwab requests, 1m 59s
   of it waiting for Schwab's request limit").
+
+- Reviewed scanner finds clear themselves: closing the ticket opened from a find (placed or
+  closed with ×) takes the find off the list. A proposal reviewed on Positions reloads the list
+  once placed. The order ticket shows the profit and loss chart (as on the Trade page) after the
+  Send button, at the limit set, for opening trades; the preview now prices it with each
+  contract's own quoted IV instead of a flat 20%.

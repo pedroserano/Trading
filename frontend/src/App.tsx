@@ -268,7 +268,13 @@ export default function App() {
               ) : null}
             </main>
             {ticket ? (
-              <OrderTicket spec={ticket} onClose={() => setTicket(null)} />
+              <OrderTicket
+                spec={ticket}
+                onClose={(placed) => {
+                  setTicket(null);
+                  ticket.onClosed?.(placed);
+                }}
+              />
             ) : null}
           </AutomationContext.Provider>
         </AccountsContext.Provider>

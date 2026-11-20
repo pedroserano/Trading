@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getJson, postJson } from "./api";
+import PayoffChart from "./PayoffChart";
 import { money, num, pct, shortDate, strike } from "./format";
 import type { Chain, Expiration, OrderLeg, Preview, ProposalBody, SimOrder, StrategyView } from "./types";
 
@@ -19,6 +20,8 @@ export interface TicketSpec {
   view?: string | null;
   /** An earnings play from the scanner: automanage closes it after the report. */
   play?: string | null;
+  /** Called when the ticket closes, with the order if one was placed. */
+  onClosed?: (placed?: SimOrder) => void;
 }
 
 /** A proposed order (from automanage or the scanner) as a ticket, to read in full first. */
@@ -575,6 +578,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                 </button>
               )}
             </div>
+            {preview?.payoff && preview.spot ? <PayoffChart a={preview.payoff} spot={preview.spot} /> : null}
           </>
         )}
       </div>

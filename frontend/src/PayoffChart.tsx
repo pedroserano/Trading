@@ -15,7 +15,13 @@ function ticks(lo: number, hi: number, n: number): number[] {
   return out;
 }
 
-export default function PayoffChart({ a, spot }: { a: Analysis; spot: number }) {
+export default function PayoffChart({
+  a,
+  spot,
+}: {
+  a: Pick<Analysis, "curve" | "breakevens" | "dte" | "expected_move">;
+  spot: number;
+}) {
   const { x, expiry, today } = a.curve;
   const ref = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);

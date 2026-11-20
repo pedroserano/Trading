@@ -235,8 +235,8 @@ export default function Scanner() {
                       type="button"
                       className="small primary"
                       onClick={() =>
-                        openTicket(
-                          proposalSpec(
+                        openTicket({
+                          ...proposalSpec(
                             {
                               id: c.proposal_id,
                               underlying: c.symbol,
@@ -247,7 +247,9 @@ export default function Scanner() {
                             c.body!,
                             account,
                           ),
-                        )
+                          // Reviewed: placed or closed, the find comes off the list.
+                          onClosed: () => dismiss(c.symbol),
+                        })
                       }
                     >
                       Review

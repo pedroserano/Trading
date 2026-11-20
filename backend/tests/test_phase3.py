@@ -470,6 +470,10 @@ def test_api_preview_place_activity_cancel(client):
     assert pv["errors"] == [] and pv["limit_net"] == pv["prices"]["mid"]
     assert pv["schwab_json"]["orderLegCollection"][0]["instruction"] == "SELL_TO_OPEN"
     assert pv["schwab_preview"]["ok"] is True and pv["bp_effect"] > 0, pv["schwab_preview"]
+    # The ticket's profit and loss chart, as on the Trade page.
+    pay = pv["payoff"]
+    assert len(pay["curve"]["x"]) == len(pay["curve"]["expiry"]) > 10
+    assert pay["breakevens"] == pv["breakevens"] and pay["expected_move"] > 0
     # A far-away limit rests; then cancel it.
     order = client.post("/api/orders", json={**body, "limit_net": pv["prices"]["far"]}).json()
     assert order["status"] == "WORKING"
@@ -485,7 +489,7 @@ def test_api_preview_place_activity_cancel(client):
     # A fat-finger limit is refused.
     bad = client.post("/api/orders", json={**body, "limit_net": 0.01})
     assert bad.status_code == 400 and "natural" in bad.json()["detail"]
-    # No live orders in demo mode, whatever the switches say.
+    # No live orders without LIVE_TRADING, whatever the switches say.
     live = client.post(
         "/api/orders", json={**body, "account": "live", "limit_net": pv["limit_net"]}
     )

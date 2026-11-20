@@ -1590,7 +1590,10 @@ def create_app(
         bp, defined, a = None, True, None
         if spot and t.intent in ("open", "adjust") and all(x.mark is not None for x in t.legs):
             tl = price_at_limit(
-                [TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark) for x in t.legs],
+                [
+                    TradeLeg(x.put_call, x.strike, x.expiration, x.quantity, x.mark, iv=x.iv)
+                    for x in t.legs
+                ],
                 t.limit_net,
                 t.units,
             )
@@ -1875,6 +1878,10 @@ def create_app(
             # Probability of profit and break-evens at the limit set (opening trades only).
             "pop": a["pop"] if a else None,
             "breakevens": a["breakevens"] if a else None,
+            # The profit and loss chart at the limit set, as on the Trade page.
+            "payoff": {k: a[k] for k in ("curve", "breakevens", "dte", "expected_move")}
+            if a
+            else None,
             "entry": entry,
             "defined_risk": defined,
             "bp_used_after": after,

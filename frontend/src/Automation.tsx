@@ -103,7 +103,16 @@ export function AutoBar() {
           <div className="proposal-actions">
             {p.bodies.length === 1 ? (
               // One order: open it on the ticket, to see the legs, price, risk and checks first.
-              <button type="button" className="small primary" disabled={busy} onClick={() => openTicket(proposalSpec(p, p.bodies[0], view.account))}>
+              <button type="button" className="small primary" disabled={busy} onClick={() =>
+                  openTicket({
+                    ...proposalSpec(p, p.bodies[0], view.account),
+                    // Placed: the proposal is settled, so read the list again.
+                    onClosed: (placed) => {
+                      if (placed)
+                        getJson<AutomationView>(`/api/automation?account=${view.account}&log=0`).then(update, () => {});
+                    },
+                  })
+                }>
                 Review order
               </button>
             ) : (

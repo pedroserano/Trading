@@ -330,6 +330,8 @@ export interface Preview {
   /** Probability of profit at expiration and break-evens, at the limit set; opening trades. */
   pop?: number | null;
   breakevens?: number[] | null;
+  /** The profit and loss chart at the limit set; opening trades. */
+  payoff?: Pick<Analysis, "curve" | "breakevens" | "dte" | "expected_move"> | null;
   defined_risk: boolean;
   bp_used_after: number | null;
   commission: number;
