@@ -112,16 +112,14 @@ function greek(v: number | null | undefined, c: Col): string {
   return Math.abs(v) < 0.5 * 10 ** -d ? "0" : signed(v, d);
 }
 
-interface Row {
-  under: UnderlyingView;
-  st: StrategyView;
-}
 
 type View = "underlying" | "dte";
 
 export default function PositionsTable(props: {
   s: Snapshot;
+  /** "dte": underlyings ordered by their soonest expiration. */
   view: View;
+  onSort: (v: View) => void;
   flaggedOnly: boolean;
   detail: boolean;
 }) {
@@ -146,22 +144,19 @@ export default function PositionsTable(props: {
       })),
     [s],
   );
-  const flat: Row[] = useMemo(
-    () =>
-      unders
-        .flatMap((u) => u.strategies.map((st) => ({ under: u, st })))
-        .filter((r) => filter(r.st))
-        .sort(
-          (a, b) => (a.st.numbers.dte ?? 9999) - (b.st.numbers.dte ?? 9999),
-        ),
-    [unders, flaggedOnly],
-  );
+  // Tap DTE to order the underlyings by their soonest expiration (each underlying's trades
+  // already run soonest first); tap again for the usual order.
+  const shown = useMemo(() => {
+    if (view !== "dte") return unders;
+    const soonest = (u: (typeof unders)[number]) =>
+      Math.min(...u.strategies.filter(filter).map((st) => st.numbers.dte ?? 9999), 9999);
+    return [...unders].sort((a, b) => soonest(a) - soonest(b));
+  }, [unders, view, flaggedOnly]);
 
   if (s.underlyings.length === 0) {
     return <div className="empty">{s.needs ? "" : "No open positions."}</div>;
   }
   const cols = COLS[compact ? "compact" : detail ? "detail" : "simple"];
-  const showUnder = view === "dte";
   const t = s.totals;
   const totals: Partial<Record<Col, number | null | undefined>> = {
     pl: t.pl,
@@ -180,11 +175,21 @@ export default function PositionsTable(props: {
               <th
                 key={c}
                 className={`c-${c} ${c === "name" || c === "flags" ? "l" : ""}`}
-                title={HEAD[c][1]}
+                title={c === "dte" ? `${HEAD[c][1]}. Tap to order by the soonest expiration` : HEAD[c][1]}
               >
-                {c === "name" && showUnder && !compact
-                  ? "Underlying / strategy"
-                  : HEAD[c][0]}
+                {c === "dte" ? (
+                  <button
+                    type="button"
+                    className={`sort-th ${view === "dte" ? "on" : ""}`}
+                    aria-pressed={view === "dte"}
+                    onClick={() => props.onSort(view === "dte" ? "underlying" : "dte")}
+                  >
+                    {HEAD[c][0]}
+                    {view === "dte" ? " ▲" : ""}
+                  </button>
+                ) : (
+                  HEAD[c][0]
+                )}
               </th>
             ))}
           </tr>
@@ -215,8 +220,7 @@ export default function PositionsTable(props: {
           </tr>
         </thead>
         <tbody>
-          {view === "underlying"
-            ? unders.map((u) => {
+          {shown.map((u) => {
                 const sts = u.strategies.filter(filter);
                 if (!sts.length) return null;
                 return (
@@ -231,20 +235,7 @@ export default function PositionsTable(props: {
                     cols={cols}
                   />
                 );
-              })
-            : flat.map((r, i) => (
-                <StrategyRows
-                  key={`${r.under.symbol}-${i}`}
-                  id={`${r.under.symbol}-${r.st.name}-${r.st.numbers.expiration}-${i}`}
-                  st={r.st}
-                  under={r.under.symbol}
-                  earnings={r.under.earnings}
-                  open={open}
-                  toggle={toggle}
-                  compact={compact}
-                  cols={cols}
-                />
-              ))}
+              })}
         </tbody>
       </table>
     </div>

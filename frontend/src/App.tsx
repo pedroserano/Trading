@@ -263,24 +263,18 @@ function PositionsPage(props: {
   automations: Record<string, AutomationCtx>;
 }) {
   const { s, risk, accounts, automations } = props;
+  // "dte": tap the DTE heading to order underlyings by their soonest expiration.
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
   const [flaggedOnly, setFlaggedOnly] = usePersisted<"0" | "1">("positions.flagged", "0");
   // Simple: the columns that say how a trade is doing; Detail: every number.
   const [cols, setCols] = usePersisted<"simple" | "detail">("positions.cols", "simple");
-  const group = (v: View) => {
-    setView(v);
-    window.location.hash = "#/";
-  };
   return (
     <>
       <MarketStrip />
       <div className="toolbar">
         <div className="seg" role="group" aria-label="Group positions">
-          <button aria-pressed={!risk && view === "underlying"} onClick={() => group("underlying")}>
+          <button aria-pressed={!risk} onClick={() => (window.location.hash = "#/")}>
             By underlying
-          </button>
-          <button aria-pressed={!risk && view === "dte"} onClick={() => group("dte")}>
-            By DTE
           </button>
           <button
             aria-pressed={risk}
@@ -335,7 +329,7 @@ function PositionsPage(props: {
           ) : (
             <AutoBar />
           )}
-          <PositionsTable s={s} view={view} flaggedOnly={flaggedOnly === "1"} detail={cols === "detail"} />
+          <PositionsTable s={s} view={view} onSort={setView} flaggedOnly={flaggedOnly === "1"} detail={cols === "detail"} />
           <p className="footnote">
             Positions are grouped by their trade history, including trades placed in thinkorswim;
             credit includes every roll. Positions with no known history are grouped by their legs.

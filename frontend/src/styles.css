@@ -94,6 +94,9 @@ table.positions.compact { min-width: 0; }
 .positions th { font-size: 11px; font-weight: 500; color: var(--dim); text-transform: uppercase;
   letter-spacing: .04em; border-bottom: 1px solid var(--line); background: var(--panel); }
 .positions .l { text-align: left; }
+.sort-th { background: none; border: 0; padding: 0; color: inherit; font: inherit;
+  text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.sort-th.on { color: var(--accent); }
 tr.under td { background: var(--panel); border-top: 1px solid var(--line); font-weight: 500; }
 tr.under .sym { font-weight: 700; margin-right: 10px; }
 tr.under .px { margin-right: 8px; }
