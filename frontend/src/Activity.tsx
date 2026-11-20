@@ -339,7 +339,7 @@ function OrderTable({
 }) {
   return (
     <div className="table-wrap">
-      <table className="positions orders fit oneline">
+      <table className="positions orders fit oneline ph-h1">
         <thead>
           <tr>
             <th className="l">#</th>
@@ -371,12 +371,12 @@ function OrderTable({
                 ) : o.placed_by_app ? (
                   <span className="sub"> · placed by the app</span>
                 ) : null}
-                {o.reason ? <span className="sub"> · {o.reason}</span> : null}
+                {o.reason ? <span className="sub ph-off"> · {o.reason}</span> : null}
               </td>
               <td>{net(o.limit_net)}</td>
               <td className={`l status ${o.status.toLowerCase()}`}>
                 {(o.schwab_status ?? o.status).toLowerCase().replace(/_/g, " ")}
-                {o.filled_at ? <span className="sub"> {when(o.filled_at)}</span> : null}
+                {o.filled_at ? <span className="sub ph-off"> {when(o.filled_at)}</span> : null}
               </td>
               <td>
                 {onCancel ? (
