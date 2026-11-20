@@ -686,6 +686,10 @@ td > .view-select { margin-left: 0; }
 .shock { margin-left: 4px; color: var(--warn); cursor: help; }
 .shift-to { font-weight: 600; margin-right: 2px; }
 .roll-delta { white-space: nowrap; }
+/* Legs in different expirations: the leg, then its expiration and strike side by side. */
+.roll-pick .shift.multi { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.roll-pick .shift.multi .leg-name { flex-basis: 100%; }
+.roll-pick .shift.multi select { margin-left: 0; }
 .shift-to.down, .shift-to.up { color: var(--accent); }
 
 /* Settings written into their explanation: the numbers, choices and boxes sit in the text. */
