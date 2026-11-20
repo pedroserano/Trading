@@ -75,7 +75,7 @@ export default function OrderCheck() {
       {error || view?.error ? <div className="msg warn">{error || view?.error}</div> : null}
       {view && view.entries.length ? (
         <div className="table-wrap">
-          <table className="positions orders fit ph-h3">
+          <table className="positions orders fit oneline">
             <thead>
               <tr>
                 <th className="l">Entered</th>
