@@ -11,6 +11,45 @@ type Ctx = { view: AutomationView | null; update: (v: AutomationView) => void };
 /** Automanage state, shared by the Positions toolbar and every position's actions row. */
 export const AutomationContext = createContext<Ctx>({ view: null, update: () => {} });
 
+/** Under All: each Schwab account's automation, by account key. */
+export const AutomationsContext = createContext<Record<string, Ctx>>({});
+
+/** A trade's own account's automation: under All, the account it is in. */
+function useAutomationFor(st: StrategyView): Ctx {
+  const one = useContext(AutomationContext);
+  const all = useContext(AutomationsContext);
+  return (st.account && all[st.account]) || one;
+}
+
+/** Every listed account's automation, read every 10 seconds (All in the picker). */
+export function useAllAutomations(accounts: string[]): Record<string, Ctx> {
+  const [views, setViews] = useState<Record<string, AutomationView>>({});
+  const key = accounts.join(",");
+  const load = useCallback(
+    async (current: () => boolean) => {
+      if (!key) return;
+      const out: Record<string, AutomationView> = {};
+      await Promise.all(
+        key.split(",").map(async (a) => {
+          try {
+            out[a] = await getJson<AutomationView>(`/api/automation?account=${a}&log=0`);
+          } catch {
+            /* the next poll retries */
+          }
+        }),
+      );
+      if (current()) setViews(out);
+    },
+    [key],
+  );
+  usePolling(load, 10000);
+  const ctxs: Record<string, Ctx> = {};
+  for (const a of key ? key.split(",") : []) {
+    ctxs[a] = { view: views[a] ?? null, update: (v) => setViews((m) => ({ ...m, [a]: v })) };
+  }
+  return ctxs;
+}
+
 export function useAutomation(account: string): Ctx {
   const [view, setView] = useState<AutomationView | null>(null);
   useEffect(() => setView(null), [account]);
@@ -131,7 +170,7 @@ export function AutoBar() {
 }
 
 export function AutoBadge({ st }: { st: StrategyView }) {
-  const { view } = useContext(AutomationContext);
+  const { view } = useAutomationFor(st);
   if (!view || st.trade_id === null || !view.trades[String(st.trade_id)]?.enabled) return null;
   return (
     <span className="auto-badge" title="Automanage is on for this trade">
@@ -163,7 +202,7 @@ function summary(levels: Record<string, AutoLevel>): string {
 
 /** The Automanage switch for one position; the rules themselves are set in Settings. */
 export function AutoPanel({ st }: { st: StrategyView }) {
-  const { view, update } = useContext(AutomationContext);
+  const { view, update } = useAutomationFor(st);
   const [error, setError] = useState<string | null>(null);
   if (!view || st.trade_id === null) return null;
   const trade = view.trades[String(st.trade_id)];

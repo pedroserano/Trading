@@ -1230,3 +1230,18 @@ def test_a_working_order_is_replaced_from_the_ticket(client):
     far3 = client.post("/api/orders/preview", json=body).json()["prices"]["far"]
     again = client.post("/api/orders", json={**body, "limit_net": far3, "replaces": old["id"]})
     assert again.status_code == 400 and "no longer working" in again.json()["detail"]
+
+
+def test_all_accounts_answer_on_every_combined_page(client):
+    for url in (
+        "/api/snapshot?account=all",
+        "/api/portfolio?account=all",
+        "/api/activity?account=all",
+        "/api/dashboard?account=all",
+    ):
+        r = client.get(url)
+        assert r.status_code == 200, (url, r.text[:300])
+    act = client.get("/api/activity?account=all").json()
+    assert act["account"] == "all" and isinstance(act["orders"], list)
+    # Trading pages still need one account.
+    assert client.get("/api/automation?account=all").status_code == 404

@@ -796,3 +796,16 @@ Schwab's replace call for a live order, and for the simulated account the old or
 replaced by the new one. The old order's profit target carries over. If the order filled or was
 cancelled meanwhile, the replacement is refused. `replaces` on `POST /api/orders`;
 `GET /api/orders/{id}/entry` gives an order's automanage choice for the ticket.
+
+## All accounts
+
+"All" in the account picker (shown with two or more Schwab accounts) puts every Schwab account
+together; the simulated account is never included. The header, Positions, Portfolio, Activity
+and Dashboard combine: net liq, cash, maintenance and Greeks add up (a total with an unknown
+part shows as unknown), BP used is the combined maintenance over the combined net liq, and the
+bands use the first account's targets. Each position, order and trade carries a tag with its
+account, and its actions (close, roll, history, automanage, cancel, replace) go to that account.
+Positions shows each account's automanage line in turn. Trade, Watchlist (the scanner) and
+Settings act in the first Schwab account under All; covered calls there count only that
+account's shares. `account=all` on /api/snapshot, /api/events, /api/portfolio, /api/activity and
+/api/dashboard (combined.py).

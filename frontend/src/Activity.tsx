@@ -4,7 +4,7 @@ import { getJson, postJson } from "./api";
 import { usePolling } from "./usePolling";
 import { useMediaQuery } from "./useMediaQuery";
 import { ChainTimeline, chainSummary, legText, when } from "./ChainHistory";
-import { AccountContext, TicketContext } from "./context";
+import { ALL, TicketContext, ViewContext } from "./context";
 import type { TicketSpec } from "./OrderTicket";
 import { money, pct, signed, tone } from "./format";
 import type { Activity as ActivityData, SimOrder, SimTrade } from "./types";
@@ -63,6 +63,7 @@ function WorkingCompact({
           <div className="work-line">
             <span className="sym-inline">{o.underlying}</span>
             <span className="work-what">{o.intent}</span>
+            {o.account_name ? <span className="acct-tag">{o.account_name}</span> : null}
             <span className="work-limit">{net(o.limit_net)}</span>
             <span className={`work-status status ${o.status.toLowerCase()}`} title={(o.schwab_status ?? o.status).toLowerCase().replace(/_/g, " ")}>
               {shortStatus(o)}
@@ -89,7 +90,9 @@ function WorkingCompact({
 
 export default function Activity() {
   const compact = useMediaQuery("(max-width: 700px)");
-  const account = useContext(AccountContext);
+  // An account, or ALL: every Schwab account, each order and trade tagged with its own.
+  const account = useContext(ViewContext);
+  const all = account === ALL;
   const [data, setData] = useState<ActivityData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -116,9 +119,10 @@ export default function Activity() {
   // replaces it.
   const openTicket = useContext(TicketContext);
   const change = async (o: SimOrder) => {
+    const acct = o.account ?? account;
     let entry = { automanage: false, view: null as string | null, play: null as string | null };
     try {
-      entry = await getJson(`/api/orders/${encodeURIComponent(String(o.id))}/entry?account=${account}`);
+      entry = await getJson(`/api/orders/${encodeURIComponent(String(o.id))}/entry?account=${acct}`);
     } catch {
       /* the ticket's own default */
     }
@@ -130,7 +134,7 @@ export default function Activity() {
     const verb = { open: "Open", close: "Close", roll: "Roll", adjust: "Adjust" }[intent];
     openTicket({
       title: `Replace #${o.id}: ${verb} ${o.underlying} ${o.strategy ?? ""}`.trim(),
-      account,
+      account: acct,
       intent,
       underlying: o.underlying,
       tradeId: o.trade_id,
@@ -149,8 +153,9 @@ export default function Activity() {
 
   const cancel = async (o: SimOrder) => {
     try {
-      if (account !== "sim" && !window.confirm(`Cancel order #${o.id} at Schwab?`)) return;
-      await postJson(`/api/orders/${o.id}/cancel?account=${account}`, {});
+      const acct = o.account ?? account;
+      if (acct !== "sim" && !window.confirm(`Cancel order #${o.id} at Schwab?`)) return;
+      await postJson(`/api/orders/${o.id}/cancel?account=${acct}`, {});
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -168,7 +173,7 @@ export default function Activity() {
       {error ? <div className="banner warn">{error}</div> : null}
       {live ? (
         <div className="sim-summary">
-          <span className="badge live">SCHWAB ACCOUNT</span>
+          <span className="badge live">{all ? "ALL SCHWAB ACCOUNTS" : "SCHWAB ACCOUNT"}</span>
           <span>
             <span className="lbl">History synced</span> {data.synced_at ? when(data.synced_at) : "not yet"}
           </span>
@@ -199,7 +204,7 @@ export default function Activity() {
       )}
 
       {live && data.error ? <div className="msg warn">History sync: {data.error}</div> : null}
-      {live && data.live ? (
+      {live && !all && data.live ? (
         <div className={`msg ${data.live.on ? "warn" : ""}`}>
           Live trading is <b>{data.live.on ? "on" : "off"}</b>
           {data.live.on
@@ -253,7 +258,7 @@ export default function Activity() {
                 <TradeRows
                   key={String(t.id)}
                   t={t}
-                  account={account}
+                  account={t.account ?? account}
                   onChanged={load}
                   open={open.has(String(t.id))}
                   toggle={() =>
@@ -315,7 +320,7 @@ export default function Activity() {
         <p className="dim-text">Statistics appear once trades are closed.</p>
       )}
 
-      {live ? <OrderCheck /> : null}
+      {live && !all ? <OrderCheck /> : null}
 
       <h3>{live ? "Orders at Schwab, last 7 days" : "Order history"}</h3>
       {done.length ? <OrderTable orders={done} /> : <p className="dim-text">No orders yet.</p>}
@@ -358,6 +363,7 @@ function OrderTable({
               <td className="l">
                 <span className="sym-inline">{o.underlying}</span>
                 {[o.intent, o.strategy, o.duration].filter(Boolean).join(" · ")}
+                {o.account_name ? <span className="acct-tag">{o.account_name}</span> : null}
                 {o.placed_by_key ? (
                   <span className="badge ai" title="Placed through the app's API with this key (Settings, Connection, AI access)">
                     AI key: {o.placed_by_key}
@@ -415,6 +421,7 @@ function TradeRows(props: { t: SimTrade; account: string; open: boolean; toggle:
           <span className="caret">{open ? "▾" : "▸"}</span>
           <span className="sym-inline">{t.underlying}</span>
           {t.strategy}
+          {t.account_name ? <span className="acct-tag">{t.account_name}</span> : null}
           {t.carried_in ? (
             <span className="sub" title="Held before the transaction history starts">
               {" "}

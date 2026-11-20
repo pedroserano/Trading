@@ -66,6 +66,9 @@ export interface SideCover {
 export type Cover = Record<"C" | "P", SideCover>;
 
 export interface StrategyView {
+  /** Under All: the account the trade is in, for its actions, and its name. */
+  account?: string;
+  account_name?: string;
   trade_id: number | string | null;
   rolls: number;
   name: string;
@@ -348,6 +351,9 @@ export interface Preview {
 }
 
 export interface SimOrder {
+  /** Under All: the account the order is in. */
+  account?: string;
+  account_name?: string;
   id: number | string;
   created_at: number | null;
   status: "WORKING" | "FILLED" | "CANCELED" | "EXPIRED" | "REJECTED" | "REPLACED";
@@ -383,6 +389,9 @@ export interface TradeEvent {
 }
 
 export interface SimTrade {
+  /** Under All: the account the trade is in. */
+  account?: string;
+  account_name?: string;
   id: number | string;
   carried_in?: boolean;
   holdings?: Record<string, number>;

@@ -27,7 +27,9 @@ export function lotText(lot: StrategyView): string {
 /** The buttons under an opened position: close, roll, its history, automanage. */
 export function Actions({ st, under }: { st: StrategyView; under: string | undefined }) {
   const open = useContext(TicketContext);
-  const account = useContext(AccountContext);
+  // Under All, the trade's own account.
+  const picked = useContext(AccountContext);
+  const account = st.account ?? picked;
   const [history, setHistory] = useState<StrategyView | null>(null);
   if (!under) return null;
   // A non-standard option is closing only: no roll, no automanage.

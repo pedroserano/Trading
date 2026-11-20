@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+  ALL,
   AccountContext,
   AccountsContext,
   TicketContext,
+  ViewContext,
   type Account,
   type SchwabAccount,
 } from "./context";
@@ -12,7 +14,9 @@ import MarketStrip from "./MarketStrip";
 import {
   AutoBar,
   AutomationContext,
+  AutomationsContext,
   PauseSwitch,
+  useAllAutomations,
   useAutomation,
 } from "./Automation";
 import Dashboard from "./Dashboard";
@@ -138,15 +142,21 @@ export default function App() {
   const read = useSchwabAccounts();
   const accounts = read?.accounts ?? null;
   const hideSim = read?.hide_sim ?? false;
+  const first = accounts?.[0]?.key ?? "live";
+  // All: every Schwab account together, once there is more than one.
+  const all = stored === ALL && (accounts === null || accounts.length > 1);
   // A remembered account no longer in use (or the simulated one, hidden in Settings)
-  // falls back to the first Schwab account.
+  // falls back to the first Schwab account. Under All, trading acts in the first one.
   const account =
-    (stored === "sim" && !hideSim) ||
-    accounts === null ||
-    accounts.some((a) => a.key === stored)
-      ? stored
-      : (accounts[0]?.key ?? "live");
-  const { snapshot, link } = useSnapshot(account);
+    stored === ALL
+      ? first
+      : (stored === "sim" && !hideSim) ||
+          accounts === null ||
+          accounts.some((a) => a.key === stored)
+        ? stored
+        : first;
+  const shown = all ? ALL : account;
+  const { snapshot, link } = useSnapshot(shown);
   const route = useRoute();
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
   const [view, setView] = usePersisted<View>("positions.view", "underlying");
@@ -160,6 +170,7 @@ export default function App() {
     "simple",
   );
   const automation = useAutomation(account);
+  const automations = useAllAutomations(all ? (accounts ?? []).map((a) => a.key) : []);
 
   if (!snapshot) {
     return (
@@ -173,111 +184,128 @@ export default function App() {
   return (
     <TicketContext.Provider value={setTicket}>
       <AccountContext.Provider value={account}>
-        <AccountsContext.Provider value={accounts ?? []}>
-          <AutomationContext.Provider value={automation}>
-            <Header
-              s={snapshot}
-              link={link}
-              route={route}
-              account={account}
-              setAccount={setAccount}
-              accounts={accounts ?? []}
-              hideSim={hideSim}
-            />
-            <main>
-              <Banner s={snapshot} />
-              {route.page === "watchlist" ? <Watchlist /> : null}
-              {route.page === "portfolio" ? <Portfolio /> : null}
-              {route.page === "activity" ? <Activity /> : null}
-              {route.page === "dashboard" ? <Dashboard /> : null}
-              {route.page === "settings" ? (
-                <Settings section={route.section} />
-              ) : null}
-              {route.page === "trade" ? (
-                <Trade
-                  symbol={route.symbol}
-                  cover={coverHeld(snapshot, route.symbol)}
+        <ViewContext.Provider value={shown}>
+          <AccountsContext.Provider value={accounts ?? []}>
+            <AutomationsContext.Provider value={automations}>
+              <AutomationContext.Provider value={automation}>
+                <Header
+                  s={snapshot}
+                  link={link}
+                  route={route}
+                  account={shown}
+                  setAccount={setAccount}
+                  accounts={accounts ?? []}
+                  hideSim={hideSim}
                 />
-              ) : null}
-              {route.page === "positions" ? (
-                <>
-                  <MarketStrip />
-                  <div className="toolbar">
-                    <div
-                      className="seg"
-                      role="group"
-                      aria-label="Group positions"
-                    >
-                      <button
-                        aria-pressed={view === "underlying"}
-                        onClick={() => setView("underlying")}
-                      >
-                        By underlying
-                      </button>
-                      <button
-                        aria-pressed={view === "dte"}
-                        onClick={() => setView("dte")}
-                      >
-                        By DTE
-                      </button>
-                    </div>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={flaggedOnly === "1"}
-                        onChange={(e) =>
-                          setFlaggedOnly(e.target.checked ? "1" : "0")
-                        }
+                <main>
+                  <Banner s={snapshot} />
+                  {route.page === "watchlist" ? <Watchlist /> : null}
+                  {route.page === "portfolio" ? <Portfolio /> : null}
+                  {route.page === "activity" ? <Activity /> : null}
+                  {route.page === "dashboard" ? <Dashboard /> : null}
+                  {route.page === "settings" ? (
+                    <Settings section={route.section} />
+                  ) : null}
+                  {route.page === "trade" ? (
+                    <Trade
+                      symbol={route.symbol}
+                      cover={coverHeld(snapshot, route.symbol, all ? account : null)}
+                    />
+                  ) : null}
+                  {route.page === "positions" ? (
+                    <>
+                      <MarketStrip />
+                      <div className="toolbar">
+                        <div
+                          className="seg"
+                          role="group"
+                          aria-label="Group positions"
+                        >
+                          <button
+                            aria-pressed={view === "underlying"}
+                            onClick={() => setView("underlying")}
+                          >
+                            By underlying
+                          </button>
+                          <button
+                            aria-pressed={view === "dte"}
+                            onClick={() => setView("dte")}
+                          >
+                            By DTE
+                          </button>
+                        </div>
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={flaggedOnly === "1"}
+                            onChange={(e) =>
+                              setFlaggedOnly(e.target.checked ? "1" : "0")
+                            }
+                          />
+                          Flagged only ({snapshot.totals.flags})
+                        </label>
+                        <div
+                          className="seg cols-toggle"
+                          role="group"
+                          aria-label="Columns"
+                        >
+                          <button
+                            aria-pressed={cols === "simple"}
+                            onClick={() => setCols("simple")}
+                            title="How each trade is doing"
+                          >
+                            Simple
+                          </button>
+                          <button
+                            aria-pressed={cols === "detail"}
+                            onClick={() => setCols("detail")}
+                            title="Every number: prices, Greeks, short deltas, max loss"
+                          >
+                            Detail
+                          </button>
+                        </div>
+                      </div>
+                      {all ? (
+                        // Each account's automanage line and proposals, under its name.
+                        (accounts ?? []).map((x) =>
+                          automations[x.key] ? (
+                            <AutomationContext.Provider key={x.key} value={automations[x.key]}>
+                              <div className="auto-acct">
+                                <AutoBar />
+                              </div>
+                            </AutomationContext.Provider>
+                          ) : null,
+                        )
+                      ) : (
+                        <AutoBar />
+                      )}
+                      <PositionsTable
+                        s={snapshot}
+                        view={view}
+                        flaggedOnly={flaggedOnly === "1"}
+                        detail={cols === "detail"}
                       />
-                      Flagged only ({snapshot.totals.flags})
-                    </label>
-                    <div
-                      className="seg cols-toggle"
-                      role="group"
-                      aria-label="Columns"
-                    >
-                      <button
-                        aria-pressed={cols === "simple"}
-                        onClick={() => setCols("simple")}
-                        title="How each trade is doing"
-                      >
-                        Simple
-                      </button>
-                      <button
-                        aria-pressed={cols === "detail"}
-                        onClick={() => setCols("detail")}
-                        title="Every number: prices, Greeks, short deltas, max loss"
-                      >
-                        Detail
-                      </button>
-                    </div>
-                  </div>
-                  <AutoBar />
-                  <PositionsTable
-                    s={snapshot}
-                    view={view}
-                    flaggedOnly={flaggedOnly === "1"}
-                    detail={cols === "detail"}
+                      <p className="footnote">
+                        Positions are grouped by their trade history, including
+                        trades placed in thinkorswim; credit includes every roll.
+                        Positions with no known history are grouped by their legs.
+                      </p>
+                    </>
+                  ) : null}
+                </main>
+                {ticket ? (
+                  <OrderTicket
+                    spec={ticket}
+                    onClose={(placed) => {
+                      setTicket(null);
+                      ticket.onClosed?.(placed);
+                    }}
                   />
-                  <p className="footnote">
-                    Positions are grouped by their trade history, including
-                    trades placed in thinkorswim; credit includes every roll.
-                    Positions with no known history are grouped by their legs.
-                  </p>
-                </>
-              ) : null}
-            </main>
-            {ticket ? (
-              <OrderTicket
-                spec={ticket}
-                onClose={(placed) => {
-                  setTicket(null);
-                  ticket.onClosed?.(placed);
-                }}
-              />
-            ) : null}
-          </AutomationContext.Provider>
-        </AccountsContext.Provider>
+                ) : null}
+              </AutomationContext.Provider>
+            </AutomationsContext.Provider>
+          </AccountsContext.Provider>
+        </ViewContext.Provider>
       </AccountContext.Provider>
     </TicketContext.Provider>
   );
@@ -286,8 +314,13 @@ export default function App() {
 /** What a new covered call or put can be written against: shares (long for calls, short
  * for puts) not already under an option, and ZEBRAs of that type (100 shares a unit, for
  * options expiring no later than the ZEBRA). Mirrors the server's cover_calls. */
-function coverHeld(s: Snapshot, symbol: string): Cover {
-  const u = s.underlyings.find((x) => x.symbol === symbol);
+function coverHeld(s: Snapshot, symbol: string, only: string | null): Cover {
+  const found = s.underlyings.find((x) => x.symbol === symbol);
+  // Under All, only the account the ticket trades in covers.
+  const u =
+    found && only
+      ? { ...found, strategies: found.strategies.filter((st) => !st.account || st.account === only) }
+      : found;
   const side = (pc: "C" | "P"): SideCover => {
     const [stockName, zebraName, coveredName] =
       pc === "C"
@@ -530,6 +563,15 @@ function Header(props: {
       <div className="brand">
         <strong>Trading</strong>
         <div className="seg acct-switch" role="group" aria-label="Account">
+          {props.accounts.length > 1 ? (
+            <button
+              aria-pressed={props.account === ALL}
+              onClick={() => props.setAccount(ALL)}
+              title="Every Schwab account together (not the simulated one)"
+            >
+              All
+            </button>
+          ) : null}
           {(props.accounts.length
             ? props.accounts
             : [{ key: "live", name: "Schwab", last4: "" }]
@@ -552,9 +594,9 @@ function Header(props: {
             </button>
           )}
         </div>
-        <PauseSwitch />
+        {props.account === ALL ? null : <PauseSwitch />}
         <DataLight s={s} link={link} />
-        {a ? (
+        {a && props.account !== ALL ? (
           <span className="acct">
             …{a.last4} {a.type ? a.type.toLowerCase() : ""}
           </span>

@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useState } from "react";
 import { getJson } from "./api";
 import { usePolling } from "./usePolling";
-import { AccountContext } from "./context";
+import { ViewContext } from "./context";
 import { money, pct, shortDate, signed, tone } from "./format";
 import type { Band, Bands } from "./types";
 
@@ -97,7 +97,7 @@ function BandLine({ label, b, digits }: { label: string; b: Band | undefined; di
 
 /** Portfolio screen: where buying power, delta and theta sit, and what reaches 21 DTE when. */
 export default function Portfolio() {
-  const account = useContext(AccountContext);
+  const account = useContext(ViewContext);
   const [data, setData] = useState<PortfolioData | null>(null);
   const [error, setError] = useState<string | null>(null);
 

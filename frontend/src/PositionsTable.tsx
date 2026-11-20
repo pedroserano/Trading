@@ -435,6 +435,7 @@ function StrategyRows(props: {
         <span className="caret">{expanded ? "▾" : "▸"}</span>
         {props.under ? <span className="sym-inline">{props.under}</span> : null}
         {title}
+        {st.account_name ? <span className="acct-tag">{st.account_name}</span> : null}
       </span>
       <div className="meta">
         {st.lots ? (
@@ -469,6 +470,7 @@ function StrategyRows(props: {
       <span className="caret">{expanded ? "▾" : "▸"}</span>
       {props.under ? <span className="sym-inline">{props.under}</span> : null}
       {title}
+      {st.account_name ? <span className="acct-tag">{st.account_name}</span> : null}
       {st.lots ? (
         <span className="sub"> · {st.lots.length} purchases</span>
       ) : null}

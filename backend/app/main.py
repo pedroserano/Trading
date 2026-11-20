@@ -2,6 +2,7 @@ import asyncio
 import copy
 import functools
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -29,6 +30,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import (
     apikeys,
+    combined,
     guards,
     guides,
     indexweights,
@@ -1284,8 +1286,18 @@ def create_app(
         except SchwabError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
 
+    def all_snapshot() -> dict:
+        """The Schwab accounts' snapshots as one ("All" in the picker; never the simulated
+        account), each strategy tagged with its account."""
+        parts = [(k, n, portfolios[k].snapshot) for k, n in schwab_accounts() if k in portfolios]
+        if not parts:
+            return {"pending": True}
+        return combined.combine(parts, portfolios[parts[0][0]].rules)
+
     @app.get("/api/snapshot", dependencies=[Depends(require_login)])
     async def api_snapshot(account: str = "live"):
+        if account == combined.ALL:
+            return JSONResponse(all_snapshot())
         known(account)
         return JSONResponse(portfolios[account].snapshot or {"pending": True})
 
@@ -1381,8 +1393,11 @@ def create_app(
 
     @app.get("/api/portfolio", dependencies=[Depends(require_login)])
     async def api_portfolio(account: str = "live"):
-        known(account)
-        snap = portfolios[account].snapshot or {}
+        if account == combined.ALL:
+            snap = all_snapshot()
+        else:
+            known(account)
+            snap = portfolios[account].snapshot or {}
         rules = await preferences.rules()
         return portfolio_view.build(
             snap, portfolio.clock().date(), earnings.industries, rules.manage_dte
@@ -2567,6 +2582,8 @@ def create_app(
         source: Literal["all", "sheet", "schwab"] = "all",
         limit: int = 300,
     ):
+        if account == combined.ALL:
+            return await all_activity(source, limit)
         known(account)
         limit = max(1, min(limit, 20000))
         if account != "sim":
@@ -2620,6 +2637,41 @@ def create_app(
             "stats": stats(st["trades"]),
         }
 
+    async def all_activity(source: str, limit: int) -> dict:
+        """Every Schwab account's Activity as one, each order and trade tagged."""
+        parts = [(k, n, await api_activity(k, source, limit)) for k, n in schwab_accounts()]
+        first = parts[0][2]
+        orders = [o for k, n, a in parts for o in combined.tag(a["orders"], k, n)]
+        orders.sort(key=lambda o: (o["status"] != "WORKING", -(o["created_at"] or 0)))
+        trades = [t for k, n, a in parts for t in combined.tag(a["trades"], k, n)]
+        trades.sort(key=lambda c: (c["status"] != "open", -(c["closed_at"] or c["opened_at"] or 0)))
+        counts: dict[str, int] = {}
+        for _, _, a in parts:
+            for c, v in (a.get("trade_counts") or {}).items():
+                counts[c] = counts.get(c, 0) + v
+        everything = [c for k, _, _ in parts for c in chains[k].result["chains"]]
+        errors = [f"{n}: {a['error']}" for _, n, a in parts if a.get("error")]
+        sheet_errors = [f"{n}: {a['sheet']['error']}" for _, n, a in parts if a["sheet"]["error"]]
+        synced = [a["synced_at"] for _, _, a in parts if a.get("synced_at")]
+        return {
+            **first,
+            "account": combined.ALL,
+            "name": "All accounts",
+            "orders": orders[:400],
+            "trades": trades[:limit],
+            "trade_counts": counts,
+            "trades_shown_of": sum(a["trades_shown_of"] for _, _, a in parts),
+            "sheet": {
+                "rows": sum(a["sheet"]["rows"] for _, _, a in parts),
+                "error": "; ".join(sheet_errors) or None,
+            },
+            "stats": stats(everything),
+            "proposals": [p for k, n, a in parts for p in combined.tag(a["proposals"], k, n)],
+            "mismatches": [m for k, n, a in parts for m in combined.tag(a["mismatches"], k, n)],
+            "synced_at": min(synced) if synced else None,
+            "error": "; ".join(errors) or None,
+        }
+
     # Trading history and dashboard ------------------------------------------------------
 
     prices_service = PriceHistoryService(
@@ -2635,14 +2687,30 @@ def create_app(
         source: Literal["all", "sheet", "schwab"] = "all",
         futures: bool = False,
     ):
-        known(account)
-        if account == "sim":
+        closed_by_raw: dict = {}
+        if account == combined.ALL:
+            # Every Schwab account's history together.
+            chs, realized, fut, starts = [], [], [], []
+            for k, n in schwab_accounts():
+                h = chains[k].history
+                chs += combined.tag(chains[k].result["chains"], k, n)
+                realized += h["realized"]
+                fut += h["futures"]
+                if h["window_start"]:
+                    starts.append(h["window_start"])
+                closed_by_raw.update((await automations[k].load()).get("closed_by") or {})
+            window = min(starts) if starts else None
+        elif account == "sim":
+            known(account)
             chs = sim_chains(await broker.snapshot())
             realized, fut, window = [], [], None
         else:
+            known(account)
             h = chains[account].history
             chs = chains[account].result["chains"]
             realized, fut, window = h["realized"], h["futures"], h["window_start"]
+        if account != combined.ALL:
+            closed_by_raw = (await automations[account].load()).get("closed_by") or {}
         symbols = {dash.price_symbol(c["underlying"]) for c in chs} | {"$VIX"}
         prices = await store.prices(symbols)
         out = dash.build(
@@ -2653,12 +2721,7 @@ def create_app(
             prices,
             source=source if account != "sim" else "all",
             include_futures=futures,
-            closed_by={
-                tid: RULES.get(rule, rule)
-                for tid, rule in (
-                    (await automations[account].load()).get("closed_by") or {}
-                ).items()
-            },
+            closed_by={tid: RULES.get(rule, rule) for tid, rule in closed_by_raw.items()},
         )
         out["prices_pending"] = prices_service.status.get("pending")
         out["account"] = account
@@ -2686,8 +2749,43 @@ def create_app(
         await reset_sim(body.start_cash)
         return {"ok": True}
 
+    async def all_events(request: Request):
+        """All accounts' snapshot, sent again whenever any Schwab account's changes."""
+        pfs = [portfolios[k] for k, _ in schwab_accounts() if k in portfolios]
+        queues = [(pf, pf.subscribe()) for pf in pfs]
+        wake: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+        async def forward(q: asyncio.Queue) -> None:
+            while True:
+                await q.get()
+                if not wake.full():
+                    wake.put_nowait(True)
+
+        tasks = [asyncio.create_task(forward(q)) for _, q in queues]
+        try:
+            snap = all_snapshot()
+            if not snap.get("pending"):
+                yield f"data: {json.dumps(snap, default=str)}\n\n"
+            while not await request.is_disconnected():
+                try:
+                    await asyncio.wait_for(wake.get(), timeout=15)
+                    yield f"data: {json.dumps(all_snapshot(), default=str)}\n\n"
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            for t in tasks:
+                t.cancel()
+            for pf, q in queues:
+                pf.unsubscribe(q)
+
     @app.get("/api/events", dependencies=[Depends(require_login)])
     async def api_events(request: Request, account: str = "live"):
+        if account == combined.ALL:
+            return StreamingResponse(
+                all_events(request),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         known(account)
         pf = portfolios[account]
         queue = pf.subscribe()

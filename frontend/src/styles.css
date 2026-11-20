@@ -934,3 +934,7 @@ form.earn-edit { position: sticky; left: 10px; display: inline-flex; flex-wrap: 
 .settings-page .reset-sim input[type="number"] { width: 110px; }
 .settings-page .reset-sim input[name="confirm"] { width: 100px; }
 .settings-page .reset-sim button.danger { background: var(--bad); border: 1px solid var(--bad); color: #fff; border-radius: 6px; padding: 4px 12px; }
+
+/* All accounts: which account a trade or order is in */
+.acct-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px;
+  font-size: 11px; color: var(--dim); white-space: nowrap; vertical-align: 1px; }

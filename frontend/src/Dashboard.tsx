@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getJson } from "./api";
-import { AccountContext } from "./context";
+import { ALL, ViewContext } from "./context";
 import { pct, signed } from "./format";
 
 interface Stats {
@@ -76,7 +76,7 @@ function compact(v: number): string {
 type Tab = "overview" | "worked";
 
 export default function Dashboard() {
-  const account = useContext(AccountContext);
+  const account = useContext(ViewContext);
   const [tab, setTab] = useState<Tab>("overview");
   const [futures, setFutures] = useState(false);
   const [data, setData] = useState<DashData | null>(null);
@@ -121,7 +121,7 @@ export default function Dashboard() {
         ) : (
           <span className="dim-text">Simulated account</span>
         )}
-        {account !== "sim" ? <ExportForm account={account} /> : null}
+        {account !== "sim" && account !== ALL ? <ExportForm account={account} /> : null}
       </div>
       {error ? <div className="banner warn">{error}</div> : null}
       {data && data.prices_pending ? (
