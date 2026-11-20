@@ -390,9 +390,11 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             f"flies at {pct(rules.profit_target_straddle)}; front ratios at "
             f"{pct(rules.profit_target_ratio)} of their max profit, the width plus the credit "
             f"(Tony Battista, tastylive: at least 10%); calendars and diagonals at "
-            f"{pct(rules.profit_target_calendar)} of the debit; butterflies and broken-wing "
-            f"butterflies at {pct(rules.profit_target_fly)} of their max profit, the near "
-            "wing's width plus any credit (tastylive: 25% to 50%); a covered call at "
+            f"{pct(rules.profit_target_calendar)} of the debit, a poor man's covered call at "
+            f"{pct(rules.profit_target)} of its estimated max profit (tastylive's strategy "
+            "guide); butterflies and broken-wing butterflies at "
+            f"{pct(rules.profit_target_fly)} of their max profit, the near wing's width plus "
+            "any credit (tastylive: 25% to 50%); a covered call at "
             f"{pct(rules.profit_target)} of the call's credit, closing the call and keeping the "
             "shares. All set on the Rules tab. ZEBRAs are held like shares, with no target; "
             "debit verticals and long options are not tastylive trades and are left alone. "
@@ -931,7 +933,7 @@ def _exp(st: dict) -> date:
 
 
 def profit_target(st: dict, rules) -> float:
-    return target_for(st["name"], rules)
+    return target_for(st["name"], rules, bool(st["numbers"].get("pmcc")))
 
 
 def auto_fields(
@@ -1005,7 +1007,8 @@ AUTO_STEPS = [
             "Close a credit trade at ⟦rules:profit_target⟧ of what it can make; straddles and "
             "iron flies at ⟦rules:profit_target_straddle⟧; front ratios at "
             "⟦rules:profit_target_ratio⟧ of the width plus the credit; calendars at "
-            "⟦rules:profit_target_calendar⟧ of the debit; butterflies and broken-wing "
+            "⟦rules:profit_target_calendar⟧ of the debit, a poor man's covered call at "
+            "⟦rules:profit_target⟧ of its estimated max profit; butterflies and broken-wing "
             "butterflies at ⟦rules:profit_target_fly⟧ of their max profit; a covered call at "
             "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
             "(⟦levels:profit⟧; at Auto a closing order "
@@ -1306,7 +1309,8 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
         ),
         (
             "Calendar / diagonal",
-            f"{pct(rules.profit_target_calendar)} of debit",
+            f"{pct(rules.profit_target_calendar)} of debit; a poor man's covered call "
+            f"{pct(rules.profit_target)} of its estimated max profit",
             "Close (front month)",
             "Notify",
             "Notify",
@@ -1526,9 +1530,12 @@ def profit_basis(st: dict) -> tuple[float, float] | None:
     if name in COVERED_KINDS:
         opt = n.get("option_open_value")
         return (opt, opt) if opt and opt > 0 else None
+    mp = n.get("max_profit")
+    if n.get("pmcc"):
+        # A poor man's covered call: a share of its estimated max profit (tastylive's guide).
+        return (mp, opened) if mp and mp > 0 and opened < 0 else None
     if name in CALENDARS:
         return (-opened, opened) if opened < 0 else None
-    mp = n.get("max_profit")
     # Ratios and butterflies (debit or credit): a share of the most they can make.
     if opened > 0 or ((name in RATIOS or name in FLIES) and mp):
         return (mp if mp and mp > 0 else opened, opened)

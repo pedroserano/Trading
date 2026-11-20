@@ -1242,3 +1242,18 @@ def test_big_lizards_and_double_calendars_take_their_targets():
     assert auto.profit_basis(dc) == (400.0, -400.0)
     # At 21 DTE the front month is closed, never rolled, like a calendar.
     assert ("dte", "close") in kinds(decide(dc, 590, r, merged_settings(None), ALL))
+
+
+def test_poor_mans_covered_call_target_order_is_half_its_estimated_max_profit():
+    st = strat(
+        name="Diagonal",
+        defined=True,
+        open_value=-9500.0,
+        legs=[leg("C", 500, 1, 0.9, exp=NEXT), leg("C", 620, -1, 0.2)],
+    )
+    st["numbers"].update(pmcc=True, max_profit=2700.0)
+    assert auto.profit_basis(st) == (2700.0, -9500.0)
+    # Sells the diagonal back for the debit plus half the estimated max profit.
+    assert auto.target_limit(st, Rules()) == round((0.5 * 2700 + 9500) / 100, 2)
+    plain = strat(name="Diagonal", defined=True, open_value=-400.0, legs=st["legs"])
+    assert auto.profit_basis(plain) == (400.0, -400.0)

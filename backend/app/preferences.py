@@ -72,7 +72,9 @@ RULE_NOTES = {
     "width plus the credit. That is only realistic in the last days, so the target is a small "
     "share of it: at least 10%, per Tony Battista (tastylive).",
     "profit_target_calendar": "A share of the debit paid. tastylive's calendar studies found "
-    "10% the best exit for success rate and P/L per day; they aim for 10% to 25%.",
+    "10% the best exit for success rate and P/L per day; they aim for 10% to 25%. Not a poor "
+    "man's covered call: it takes the credit-trade target of its estimated max profit (the "
+    "width less the debit, plus the long call's time value left), as tastylive's guide says.",
     "profit_target_fly": "A share of the most a butterfly can make: the near wing's width "
     "plus any credit, reached only with the price at the body on expiration day. tastylive "
     "aims for 25% to 50% of it. Broken-wing butterflies too, debit or credit.",

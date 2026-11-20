@@ -79,7 +79,7 @@
   <form method="post" action="/rules">
     <input type="hidden" name="_form" value="rules">
     {% call group("Managing trades", "The tastytrade management rules. Positions shows a flag when a trade reaches one; Automation decides what happens then.") %}
-      {{ num("r", rule_map.profit_target, rules.profit_target, rule_defaults.profit_target, "%", "Close at this share of the credit received, including rolls: strangles, single short options, verticals, iron condors, jade and reverse jade lizards, and a covered call or collar on its call alone. Super bulls, super bears, delta busters and back ratios have no target: tastylive gives none. tastytrade: 50%.", true) }}
+      {{ num("r", rule_map.profit_target, rules.profit_target, rule_defaults.profit_target, "%", "Close at this share of the credit received, including rolls: strangles, single short options, verticals, iron condors, jade and reverse jade lizards, a covered call or collar on its call alone, and a poor man's covered call on its estimated max profit. Super bulls, super bears, delta busters and back ratios have no target: tastylive gives none. tastytrade: 50%.", true) }}
       {{ num("r", rule_map.profit_target_straddle, rules.profit_target_straddle, rule_defaults.profit_target_straddle, "%", "Straddles, iron flies and big lizards (either way) carry more credit and more risk; tastytrade manages them at 25%.", true) }}
       {{ num("r", rule_map.profit_target_ratio, rules.profit_target_ratio, rule_defaults.profit_target_ratio, "%", rule_notes.profit_target_ratio, true) }}
       {{ num("r", rule_map.profit_target_calendar, rules.profit_target_calendar, rule_defaults.profit_target_calendar, "%", rule_notes.profit_target_calendar, true) }}

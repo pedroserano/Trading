@@ -4,11 +4,12 @@ Schwab reports positions leg by leg. Grouping is a best guess from the legs alon
 held in several strategies at once can be split differently from how it was traded.
 """
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
-from .options import NONSTANDARD, Leg, day_pl
+from .options import NONSTANDARD, Leg, bs, day_pl
 
 
 @dataclass
@@ -600,7 +601,33 @@ def not_tasty(name: str, open_value: float) -> bool:
     return name in ("Put vertical", "Call vertical") and open_value < 0
 
 
-def target_for(name: str, rules: Rules) -> float:
+def pmcc_parts(name: str, legs: list[Leg]) -> tuple[Leg, Leg] | None:
+    """(long call, short call) of a poor man's covered call: a diagonal of calls whose long,
+    further out in time, has the lower strike; else None."""
+    if name != "Diagonal":
+        return None
+    longs = [x for x in legs if x.is_option and not x.short]
+    shorts = [x for x in legs if x.is_option and x.short]
+    if len(longs) != 1 or len(shorts) != 1:
+        return None
+    lg, sh = longs[0], shorts[0]
+    if lg.put_call == sh.put_call == "C" and lg.strike < sh.strike:
+        return lg, sh
+    return None
+
+
+def pmcc_extrinsic(lg: Leg, sh: Leg) -> float:
+    """The long call's estimated time value per share when the short expires with the stock at
+    the short strike (the best case), from the long's own implied volatility; 0 without it.
+    Rounded down to 0.25 so small moves in IV do not keep changing the target."""
+    if not lg.iv or lg.iv <= 0:
+        return 0.0
+    years = (lg.expiration - sh.expiration).days / 365
+    value = bs("C", sh.strike, lg.strike, years, lg.iv)["price"]
+    return math.floor(max(value - (sh.strike - lg.strike), 0.0) * 4) / 4
+
+
+def target_for(name: str, rules: Rules, pmcc: bool = False) -> float:
     """The profit target for a kind of trade, as a share of its basis: max profit for credit
     trades, ratios and butterflies, the debit for calendars, the call's credit for a covered
     call."""
@@ -610,6 +637,9 @@ def target_for(name: str, rules: Rules) -> float:
         return rules.profit_target_straddle
     if name in RATIOS:
         return rules.profit_target_ratio
+    if pmcc:
+        # tastylive's strategy guide: 50% of the estimated max profit.
+        return rules.profit_target
     if name in CALENDARS:
         return rules.profit_target_calendar
     return rules.profit_target
@@ -683,6 +713,12 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
             if s_ and l_:
                 gap = max(gap, (s_[0] - l_[0]) if pc == "P" else (l_[0] - s_[0]))
         max_loss = -open_value + gap * 100 * contracts
+        if pmcc := pmcc_parts(name, legs):
+            # A poor man's covered call (tastylive's strategy guide): the width less the
+            # debit, plus the long call's estimated time value left when the short expires.
+            lg, sh = pmcc
+            q = abs(sh.quantity)
+            max_profit = ((sh.strike - lg.strike) + pmcc_extrinsic(lg, sh)) * 100 * q + open_value
     elif name in BIG_LIZARDS or name == "Super bull" or name in BEARS:
         # A lizard: at most the credit. A super bull: the call spread's width plus the credit;
         # its loss is defined only with the long put (the modified version). A super bear or
@@ -755,7 +791,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         if option_open > 0 and all(x.mark is not None for x in managed):
             opt_pl = sum(x.quantity * x.mark * x.multiplier for x in managed) + option_open
             pct = opt_pl / option_open
-    elif name in CALENDARS and open_value < 0 and pl is not None:
+    elif name in CALENDARS and open_value < 0 and pl is not None and not pmcc_parts(name, legs):
         pct = pl / -open_value  # a share of the debit paid
     elif name in ("Jade lizard", "Big lizard"):
         calls = sorted(x.strike for x in opts if x.put_call == "C")
@@ -791,6 +827,8 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "option_open_value": None if option_open is None else round(option_open, 2),
         # A ZEBRA unit moves like 100 shares: long for calls, short for puts.
         "shares_like": _shares_like(name, opts),
+        # A poor man's covered call: its target is a share of its estimated max profit.
+        "pmcc": bool(pmcc_parts(name, legs)),
         # A covered call or put written against shares or a ZEBRA held separately, and the
         # ZEBRA's expiration: the option is never rolled past it.
         "covered_by": st.meta.get("covered_by"),
@@ -798,7 +836,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     }
 
     flags = []
-    target = target_for(name, rules)
+    target = target_for(name, rules, st.numbers["pmcc"])
     if (
         pct is not None
         and pct >= target
@@ -806,7 +844,9 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         and name not in NO_TARGET
     ):
         basis = (
-            "of the debit"
+            "of the estimated max profit"
+            if st.numbers["pmcc"]
+            else "of the debit"
             if name in CALENDARS
             else "of the call's credit"
             if name in ("Covered call", "Collar")
@@ -815,7 +855,15 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
             else "max"
         )
         # The flag stays short; the detail says what the share is of.
-        short = "debit" if name in CALENDARS else "credit" if name in COVERED_KINDS else "max"
+        short = (
+            "max"
+            if st.numbers["pmcc"]
+            else "debit"
+            if name in CALENDARS
+            else "credit"
+            if name in COVERED_KINDS
+            else "max"
+        )
         flags.append(
             {
                 "kind": "profit",

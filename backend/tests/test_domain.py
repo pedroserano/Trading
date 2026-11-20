@@ -715,3 +715,33 @@ def test_numbers_and_targets_of_the_new_structures():
     # The target is on the call's credit alone (60% made), the put left out.
     assert co.numbers["option_open_value"] == 500.0 and co.numbers["pct_max_profit"] == 0.6
     assert any(f["kind"] == "profit" for f in co.flags)
+
+
+def test_poor_mans_covered_call_targets_half_its_estimated_max_profit():
+    from app.strategies import pmcc_extrinsic
+
+    far = date(2027, 6, 18)
+    long_c = opt("C", 500, 1, 98.0, mark=100.0, exp=far)
+    long_c.iv = 0.20
+    short_c = opt("C", 620, -1, 3.0, mark=2.0)
+    st = group([long_c, short_c])[0]
+    assert st.name == "Diagonal"
+    evaluate(st, TODAY, 590.0, Rules())
+    n = st.numbers
+    ext = pmcc_extrinsic(long_c, short_c)
+    assert ext > 0 and ext * 4 == int(ext * 4)  # rounded down to 0.25
+    # The width less the 95.00 debit, plus the long's time value left.
+    assert n["pmcc"] and n["open_value"] == -9500.0
+    assert n["max_profit"] == round((120 + ext) * 100 - 9500, 2)
+    assert n["pct_max_profit"] == round(n["pl"] / n["max_profit"], 4)
+    # The target is 50% of that, not the calendar's 10% of the debit: not reached yet.
+    assert not any(f["kind"] == "profit" for f in st.flags)
+    long_c.mark = 140.0
+    st = group([long_c, short_c])[0]
+    evaluate(st, TODAY, 630.0, Rules())
+    assert st.numbers["pct_max_profit"] >= 0.5
+    assert any(f["detail"].startswith("Profit target 50% of the estimated max") for f in st.flags)
+    # A put diagonal and a call diagonal with the long above the short keep the calendar rule.
+    other = group([opt("C", 620, 1, 5.0, exp=far), opt("C", 600, -1, 3.0)])[0]
+    evaluate(other, TODAY, 590.0, Rules())
+    assert other.name == "Diagonal" and not other.numbers["pmcc"]
