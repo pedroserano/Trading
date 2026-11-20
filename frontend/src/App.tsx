@@ -164,6 +164,13 @@ export default function App() {
   const { snapshot, link } = useSnapshot(shown);
   const route = useRoute();
   const [ticket, setTicket] = useState<TicketSpec | null>(null);
+  // A line after an order is placed, at the top for a few seconds; a tap dismisses it.
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
   const automation = useAutomation(account);
   const automations = useAllAutomations(all ? (accounts ?? []).map((a) => a.key) : []);
 
@@ -236,12 +243,18 @@ export default function App() {
                     />
                   ) : null}
                 </main>
+                {toast ? (
+                  <div className="toast" role="status" onClick={() => setToast(null)}>
+                    {toast}
+                  </div>
+                ) : null}
                 {ticket ? (
                   <OrderTicket
                     spec={ticket}
-                    onClose={(placed) => {
+                    onClose={(placed, note) => {
                       setTicket(null);
                       ticket.onClosed?.(placed);
+                      if (note) setToast(note);
                     }}
                   />
                 ) : null}

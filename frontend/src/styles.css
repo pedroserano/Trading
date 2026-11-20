@@ -970,3 +970,9 @@ form.earn-edit { position: sticky; left: 10px; display: inline-flex; flex-wrap: 
 .quick button .dir.bull { color: var(--pos); }
 .quick button .dir.bear { color: var(--neg); }
 .quick button .dir.neutral { color: var(--dim); }
+
+/* A short note after an order is placed: at the top, gone after a few seconds. */
+.toast { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 50%; transform: translateX(-50%);
+  z-index: 1000; max-width: calc(100vw - 32px); padding: 9px 14px; border-radius: 8px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--ok);
+  box-shadow: 0 4px 16px #0006; font-size: 14px; cursor: pointer; }

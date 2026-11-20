@@ -180,7 +180,14 @@ function occ(underlying: string, exp: string, pc: string, k: number): string {
   return `${underlying.padEnd(6, " ")}${y.slice(2)}${m}${d}${pc}${String(Math.round(k * 1000)).padStart(8, "0")}`;
 }
 
-export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClose: (placed?: SimOrder) => void }) {
+export default function OrderTicket({
+  spec,
+  onClose,
+}: {
+  spec: TicketSpec;
+  /** placed: the order, if one was; note: a line saying so, shown for a moment. */
+  onClose: (placed?: SimOrder, note?: string) => void;
+}) {
   const [legs, setLegs] = useState<OrderLeg[]>(spec.legs);
   const [limit, setLimit] = useState<number | null>(spec.limit ?? null);
   const [duration, setDuration] = useState<"DAY" | "GTC">(spec.duration ?? "DAY");
@@ -473,6 +480,16 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         } catch (e) {
           results.push({ name: c.name, live: c.account !== "sim", error: (e as Error).message });
         }
+      }
+      // Placed, and every copy too: the ticket closes with a line saying so. A copy that
+      // failed keeps it open, to read why.
+      if (results.every((r) => r.order)) {
+        const done = o.status === "FILLED" ? ` at ${netLabel(o.fill_net)}` : ` at ${netLabel(o.limit_net)}`;
+        const what = `${live ? "Schwab order" : "Simulated order"} #${o.id} ${live ? "sent" : o.status.toLowerCase()}${done}`;
+        const replaced = o.replaces?.length ? `, replacing #${o.replaces.join(", #")}` : "";
+        const copies = results.length ? ` · copies: ${results.map((r) => r.name).join(", ")}` : "";
+        onClose(o, `${what}${replaced}${copies}`);
+        return;
       }
       setCopied(results);
       setPlaced(o);
