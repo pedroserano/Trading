@@ -692,7 +692,7 @@ def test_what_runs_by_itself_counts_rules_on_auto_and_links_to_them(settings):
     with make_client(settings, FakeSchwab(connected=True)) as c:
         login(c)
         page = c.get("/connect").text
-        assert '1 rule on Auto (see <a href="#/settings/automation">automation</a>)' in page
+        assert '1 rule on Auto (see <a href="#/settings/auto-rules">automation</a>)' in page
         assert "rules at Auto" not in page
 
 

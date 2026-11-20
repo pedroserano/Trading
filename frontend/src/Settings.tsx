@@ -34,6 +34,16 @@ function markChanged(root: ParentNode) {
   }
 }
 
+/** Unfolds every folded section around a target (and the target itself, if folded), then
+ * scrolls to it. */
+function reveal(target: HTMLElement) {
+  for (let d = target.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+    (d as HTMLDetailsElement).open = true;
+  }
+  if (target instanceof HTMLDetailsElement) target.open = true;
+  window.setTimeout(() => target.scrollIntoView({ block: "start" }), 50);
+}
+
 export default function Settings({ section }: { section: string | null }) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,13 +85,9 @@ export default function Settings({ section }: { section: string | null }) {
       const own = panels.find((p) => p.dataset.tab === section);
       const holder = own ?? document.getElementById(section)?.closest<HTMLElement>(".tab-panel");
       if (holder?.dataset.tab) pick = holder.dataset.tab;
-      // A setting inside a folded step: open the step so the jump lands on it.
+      // A setting inside a folded section: unfold it so the jump lands on it.
       const target = own ? null : document.getElementById(section);
-      const step = target?.closest<HTMLDetailsElement>("details.step");
-      if (step) {
-        step.open = true;
-        window.setTimeout(() => target?.scrollIntoView({ block: "center" }), 50);
-      }
+      if (target) reveal(target);
     }
     setActive(pick);
     markChanged(el);
@@ -123,6 +129,19 @@ export default function Settings({ section }: { section: string | null }) {
       }
     };
     const onClick = (e: Event) => {
+      // A link to something on this page (say "see automation" to the rules): switch to its
+      // tab and unfold it, even when the address already points there.
+      const link = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[href^='#/settings/']");
+      const id = link?.getAttribute("href")?.split("/")[2];
+      const target = id ? document.getElementById(id) : null;
+      if (link && id && target && !target.classList.contains("tab-panel")) {
+        e.preventDefault();
+        const tab = target.closest<HTMLElement>(".tab-panel")?.dataset.tab;
+        if (tab) setActive(tab);
+        window.history.replaceState(null, "", `#/settings/${id}`);
+        reveal(target);
+        return;
+      }
       // "Open every step" / "Fold every step" for the step lists on Automation and Scanner.
       const all = (e.target as HTMLElement).closest<HTMLButtonElement>("button.steps-all");
       if (all) {

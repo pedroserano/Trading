@@ -2315,7 +2315,7 @@ def create_app(
             parts.append(
                 Markup(  # noqa: S704 - only numbers and fixed words
                     f"{k} rule{'' if k == 1 else 's'} on Auto "
-                    '(see <a href="#/settings/automation">automation</a>)'
+                    '(see <a href="#/settings/auto-rules">automation</a>)'
                 )
             )
             parts.append(f"scanner {scanner.level(scan_s, acct).capitalize()}")
