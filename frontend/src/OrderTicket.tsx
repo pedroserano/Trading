@@ -494,7 +494,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                   title="The trade's delta in shares, now and after this roll, at the new legs' deltas in the chosen expiration"
                 >
                   Δ {signed(rollDelta?.now ?? spec.roll.numbers.delta, 0)} → <b>{signed(rollDelta?.after ?? null, 0)}</b>
-                  <span className="sub"> shares after roll</span>
+                  <span className="sub"> after roll</span>
                 </span>
               </div>
             ) : null}
