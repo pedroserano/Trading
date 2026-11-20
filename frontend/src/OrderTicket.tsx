@@ -142,6 +142,12 @@ export function actionsFor(st: StrategyView): { close: Side[]; roll: Side[] } {
   return { close, roll };
 }
 
+/** An OCC option symbol read back: expiration (ISO), put or call, strike. */
+function parseOcc(sym: string): { exp: string; pc: "P" | "C"; strike: number } | null {
+  const m = /^.{6}(\d{2})(\d{2})(\d{2})([PC])(\d{8})$/.exec(sym);
+  return m ? { exp: `20${m[1]}-${m[2]}-${m[3]}`, pc: m[4] as "P" | "C", strike: Number(m[5]) / 1000 } : null;
+}
+
 function occ(underlying: string, exp: string, pc: string, k: number): string {
   const [y, m, d] = exp.split("-");
   return `${underlying.padEnd(6, " ")}${y.slice(2)}${m}${d}${pc}${String(Math.round(k * 1000)).padStart(8, "0")}`;
@@ -189,12 +195,31 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   // The strike each leg rolls to, as chosen on the ticket; unset legs keep their strike.
   const [pick, setPick] = useState<Record<string, number>>({});
   const [rollBuilt, setRollBuilt] = useState(false);
-  const current = spec.roll?.numbers.expiration ?? null;
+  // The legs whose expiration and strike can be chosen: a roll's, or a working order's
+  // opening option legs when they share one expiration (its closing legs stay as they are).
+  const editLegs = useMemo(() => {
+    if (spec.roll)
+      return spec.roll.legs
+        .filter((l) => l.kind === "OPTION" && l.strike !== null && l.put_call !== null)
+        .map((l) => ({ symbol: l.symbol, put_call: l.put_call!, strike: l.strike!, quantity: l.quantity, expiration: l.expiration }));
+    if (spec.replaces === undefined) return [];
+    const opens = spec.legs.filter((l) => l.effect === "open").map((l) => ({ l, o: parseOcc(l.symbol) }));
+    if (!opens.length || opens.some((x) => !x.o) || new Set(opens.map((x) => x.o!.exp)).size !== 1) return [];
+    return opens.map(({ l, o }) => ({ symbol: l.symbol, put_call: o!.pc, strike: o!.strike, quantity: l.quantity, expiration: o!.exp }));
+  }, [spec.roll, spec.replaces, spec.legs]);
+  const editing = editLegs.length > 0;
+  const current = spec.roll?.numbers.expiration ?? (editing ? editLegs[0].expiration : null);
 
   useEffect(() => {
-    if (!spec.roll) return;
+    if (!editing) return;
     getJson<{ expirations: Expiration[] }>(`/api/trade/${encodeURIComponent(spec.underlying)}/expirations`)
       .then((r) => {
+        setExps(r.expirations);
+        // A working order starts where it is.
+        if (!spec.roll) {
+          setRollExp(current);
+          return;
+        }
         // Every expiration, the current and nearer ones too: rolling up or down in the same
         // expiration, or in to a nearer one, is a roll as well. The default is still out.
         setExps(r.expirations);
@@ -205,14 +230,14 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         else if (current) setRollExp(current);
       })
       .catch((e) => setError((e as Error).message));
-  }, [spec.roll, spec.underlying, current]);
+  }, [editing, spec.roll, spec.underlying, current]);
 
   useEffect(() => {
-    if (!spec.roll || !rollExp) return;
+    if (!editing || !rollExp) return;
     getJson<Chain>(`/api/trade/${encodeURIComponent(spec.underlying)}/chain?expiration=${rollExp}`)
       .then(setChain)
       .catch((e) => setError((e as Error).message));
-  }, [spec.roll, rollExp, spec.underlying]);
+  }, [editing, rollExp, spec.underlying]);
 
   const strikes = useMemo(() => (chain ? chain.rows.map((r) => r.strike) : []), [chain]);
   // The new strike for a leg: the one chosen on the ticket, else the same strike; the nearest
@@ -252,7 +277,23 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   }, [spec.roll, chain, contract, newStrike, rollExp]);
 
   useEffect(() => {
-    if (!spec.roll || !rollExp || !strikes.length) return;
+    if (!editing || !rollExp || !strikes.length) return;
+    if (!spec.roll) {
+      // A working order: its opening legs at the chosen expiration and strikes.
+      const to = new Map(
+        editLegs.map((e) => [e.symbol, occ(spec.underlying, rollExp, e.put_call, newStrike(e.symbol, e.strike)!)]),
+      );
+      const next = spec.legs.map((l) => (to.has(l.symbol) ? { ...l, symbol: to.get(l.symbol)! } : l));
+      // Closing and opening the same contract: neither is needed.
+      const closing = new Set(next.filter((l) => l.effect === "close").map((l) => l.symbol));
+      const same = new Set(next.filter((l) => l.effect === "open" && closing.has(l.symbol)).map((l) => l.symbol));
+      const out = next.filter((l) => !same.has(l.symbol));
+      setLegs(out);
+      setRollBuilt(true);
+      // Its own price until a leg changes; then the new legs' mid.
+      if (out.length !== spec.legs.length || out.some((l, i) => l.symbol !== spec.legs[i].symbol)) setLimit(null);
+      return;
+    }
     const opening: OrderLeg[] = spec.roll.legs
       .filter((l) => l.kind === "OPTION" && l.strike !== null)
       .map((l) => ({
@@ -266,11 +307,11 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
     setLegs([...spec.legs, ...opening].filter((l) => !kept.has(l.symbol)));
     setRollBuilt(true);
     setLimit(null);
-  }, [spec.roll, spec.legs, spec.underlying, rollExp, strikes, newStrike]);
+  }, [editing, editLegs, spec.roll, spec.legs, spec.underlying, rollExp, strikes, newStrike]);
 
   const run = useCallback(
     async (lim: number | null) => {
-      if (spec.roll && !rollBuilt) return; // roll legs not built yet
+      if (editing && !rollBuilt) return; // the chosen legs not built yet
       if (!legs.length) {
         setPreview(null);
         setError("Nothing to roll: pick a different expiration or strike");
@@ -295,7 +336,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         setBusy(false);
       }
     },
-    [legs, duration, spec, rollBuilt],
+    [legs, duration, spec, rollBuilt, editing],
   );
 
   // Preview on open, and again (debounced) when anything on the ticket changes.
@@ -468,10 +509,10 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
           </div>
         ) : (
           <>
-            {spec.roll ? (
+            {editing ? (
               <div className="roll-pick">
                 <label>
-                  Roll to
+                  {spec.roll ? "Roll to" : "Expiration"}
                   <select value={rollExp ?? ""} onChange={(e) => setRollExp(e.target.value)}>
                     {exps.map((e) => (
                       <option key={e.date} value={e.date}>
@@ -481,9 +522,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                     ))}
                   </select>
                 </label>
-                {spec.roll.legs
-                  .filter((l) => l.kind === "OPTION")
-                  .map((l) => {
+                {editLegs.map((l) => {
                     const to = l.strike !== null ? newStrike(l.symbol, l.strike) : null;
                     const moved = to !== null && l.strike !== null && to !== l.strike;
                     return (
@@ -493,7 +532,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                         <select
                           className={`shift-to ${moved ? (to! < l.strike! ? "down" : "up") : ""}`}
                           aria-label={`New strike for the ${l.put_call === "P" ? "put" : "call"} ${strike(l.strike)}`}
-                          title="The strike this leg rolls to in the chosen expiration"
+                          title={spec.roll ? "The strike this leg rolls to in the chosen expiration" : "This leg's strike in the chosen expiration"}
                           value={to ?? ""}
                           disabled={to === null}
                           onChange={(e) => setPick({ ...pick, [l.symbol]: Number(e.target.value) })}
@@ -509,6 +548,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                       </span>
                     );
                   })}
+                {spec.roll ? (
                 <span
                   className="roll-delta"
                   title="The trade's delta in shares, now and after this roll, at the new legs' deltas in the chosen expiration"
@@ -516,6 +556,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                   Δ {signed(rollDelta?.now ?? spec.roll.numbers.delta, 0)} → <b>{signed(rollDelta?.after ?? null, 0)}</b>
                   <span className="sub"> after roll</span>
                 </span>
+                ) : null}
               </div>
             ) : null}
 
