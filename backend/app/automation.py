@@ -1641,6 +1641,21 @@ class AutomationService:
                 self._enable_pending(self.portfolio.snapshot or {})
             await self._save()
 
+    async def entry(self, order_id) -> dict | None:
+        """An order's "automanage on fill" (its view and play), if it was placed with it."""
+        async with self.lock:
+            e = (await self.load())["orders"].get(str(order_id))
+            return dict(e) if e and e.get("automanage_on_fill") else None
+
+    async def forget_entry(self, order_id) -> None:
+        """A replaced order's "automanage on fill" is dropped; its replacement has its own."""
+        async with self.lock:
+            st = await self.load()
+            e = st["orders"].get(str(order_id))
+            if e and e.get("automanage_on_fill"):
+                del st["orders"][str(order_id)]
+                await self._save()
+
     async def set_paused(self, paused: bool, why: str = "by you") -> None:
         async with self.lock:
             st = await self.load()

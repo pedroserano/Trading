@@ -20,6 +20,11 @@ export interface TicketSpec {
   view?: string | null;
   /** An earnings play from the scanner: automanage closes it after the report. */
   play?: string | null;
+  /** A working order this ticket changes: placing sends the new one in its place. */
+  replaces?: number | string;
+  /** Start from this limit and duration (a working order's) instead of the mid and Day. */
+  limit?: number;
+  duration?: "DAY" | "GTC";
   /** Called when the ticket closes, with the order if one was placed. */
   onClosed?: (placed?: SimOrder) => void;
 }
@@ -144,8 +149,8 @@ function occ(underlying: string, exp: string, pc: string, k: number): string {
 
 export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClose: (placed?: SimOrder) => void }) {
   const [legs, setLegs] = useState<OrderLeg[]>(spec.legs);
-  const [limit, setLimit] = useState<number | null>(null);
-  const [duration, setDuration] = useState<"DAY" | "GTC">("DAY");
+  const [limit, setLimit] = useState<number | null>(spec.limit ?? null);
+  const [duration, setDuration] = useState<"DAY" | "GTC">(spec.duration ?? "DAY");
   // "Automanage on fill": the default comes from Settings, Automation. The Profit target rule
   // then closes the trade at its target (50%, 25% for straddles), at the level set there.
   const [manage, setManage] = useState(false);
@@ -168,7 +173,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<SimOrder | null>(null);
   // Copies of an opening order to the other accounts, each sized to its own net liq.
-  const canCopy = spec.intent === "open" && !spec.roll;
+  const canCopy = spec.intent === "open" && !spec.roll && spec.replaces === undefined;
   const [copies, setCopies] = useState<CopyRow[]>([]);
   const [copyOn, setCopyOn] = useState<Record<string, boolean>>({});
   const [copyUnits, setCopyUnits] = useState<Record<string, number>>({});
@@ -309,6 +314,7 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
         view: spec.intent === "open" && manage && tradeView !== "portfolio" ? tradeView : null,
         play: spec.intent === "open" && manage ? (spec.play ?? null) : null,
         proposal_id: spec.proposalId ?? null,
+        replaces: spec.replaces ?? null,
       });
       // Then each copy, in its own account, with the same price, duration and automanage.
       const results: CopyResult[] = [];
@@ -717,7 +723,9 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                       ? `Place, and send copies to Schwab: ${copyText}`
                       : toCopy.length
                         ? `Place simulated order + ${toCopy.length} ${toCopy.length === 1 ? "copy" : "copies"}`
-                        : "Place simulated order"}
+                        : spec.replaces !== undefined
+                          ? `Replace order #${spec.replaces}`
+                          : "Place simulated order"}
                 </button>
               ) : liveBlocks.length ? (
                 <span className="dim-text">Preview only: see the red box.</span>
@@ -732,10 +740,12 @@ export default function OrderTicket({ spec, onClose }: { spec: TicketSpec; onClo
                   {busy
                     ? "Sending…"
                     : confirming
-                      ? `Send to Schwab: ${netLabel(limit)}${toCopy.length ? ` · copies: ${copyText}` : ""}`
+                      ? `${spec.replaces !== undefined ? `Replace #${spec.replaces} at Schwab` : "Send to Schwab"}: ${netLabel(limit)}${toCopy.length ? ` · copies: ${copyText}` : ""}`
                       : toCopy.length
                         ? `Place live order + ${toCopy.length} ${toCopy.length === 1 ? "copy" : "copies"}`
-                        : "Place live order"}
+                        : spec.replaces !== undefined
+                          ? `Replace order #${spec.replaces}`
+                          : "Place live order"}
                 </button>
               )}
             </div>

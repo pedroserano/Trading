@@ -167,6 +167,19 @@ async def test_a_new_close_replaces_the_working_close_on_the_same_contracts():
     assert [a["action"] for a in await b.audit()][:3] == ["cancel", "replace", "place"]
 
 
+@pytest.mark.anyio
+async def test_a_working_opening_order_is_replaced_by_its_changed_ticket():
+    b, schwab, _ = broker()
+    first = await b.place(ticket(STRANGLE, limit_net=1.40), profit_target=0.5)
+    second = await b.place(ticket(STRANGLE, limit_net=1.25, duration="GTC"), replaces=first["id"])
+    assert ("replace", first["id"]) in schwab.calls and second["replaces"] == [first["id"]]
+    assert [o["id"] for o in await b.working()] == [second["id"]]
+    # The profit target the first was placed with stays with its replacement.
+    assert (await b._load())["tracked"][second["id"]]["profit_target"] == 0.5
+    with pytest.raises(ValueError, match="no longer working"):
+        await b.place(ticket(STRANGLE, limit_net=1.30), replaces=first["id"])
+
+
 def test_normalize_reads_prices_both_ways():
     credit = schwab_order(ticket(STRANGLE, limit_net=1.25))
     debit = schwab_order(ticket([(sym("P", 555), 1, "close")], limit_net=-0.40))

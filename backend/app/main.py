@@ -169,6 +169,8 @@ class OrderIn(BaseModel):
     play: str | None = Field(None, max_length=32)
     # Placed from a proposal's Review: that proposal is then done.
     proposal_id: str | None = Field(None, max_length=64)
+    # A working order this one replaces (changed on the ticket from the Activity page).
+    replaces: int | str | None = None
 
 
 class LinkIn(BaseModel):
@@ -2025,14 +2027,17 @@ def create_app(
                     trade_id=body.trade_id,
                     profit_target=t.profit_target,
                     entry=result["entry"],
+                    replaces=body.replaces,
                 )
             except SchwabError as e:
                 raise _schwab_errors(e) from e
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
             portfolios[body.account].refresh_soon()
             chains[body.account].refresh_soon()
             return order
         try:
-            order = await broker.place(t, quotes, entry=result["entry"])
+            order = await broker.place(t, quotes, entry=result["entry"], replaces=body.replaces)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         sim_portfolio.refresh_soon()
@@ -2045,6 +2050,9 @@ def create_app(
         if key is not None:
             await mark_key_order(body.account, order.get("id"), key["name"])
             await key_order_notice(key, body)
+        if body.replaces is not None:
+            # The old order's "automanage on fill" goes with it; the ticket's choice stands.
+            await automations[body.account].forget_entry(body.replaces)
         if body.automanage and body.intent == "open":
             view = body.view if body.view in targets.VIEWS else None
             await automations[body.account].watch_entry(order, view, body.play)
@@ -2389,6 +2397,18 @@ def create_app(
         return {
             "accounts": [a for a in registry.in_use() if a["key"] in portfolios],
             "hide_sim": bool(await store.get_setting(HIDE_SIM_KEY)),
+        }
+
+    @app.get("/api/orders/{order_id}/entry", dependencies=[Depends(require_login)])
+    async def api_order_entry(order_id: str, account: Acct = "sim"):
+        """Whether a working order turns automanage on when it fills, and with which view
+        and play: the ticket that replaces it starts from the same choice."""
+        known(account)
+        e = await automations[account].entry(order_id)
+        return {
+            "automanage": e is not None,
+            "view": (e or {}).get("view"),
+            "play": (e or {}).get("play"),
         }
 
     @app.post("/api/orders/{order_id}/cancel", dependencies=[Depends(require_login)])

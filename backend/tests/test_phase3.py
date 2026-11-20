@@ -1197,3 +1197,36 @@ def test_an_opening_order_copies_to_the_other_accounts_by_net_liq(client):
     # Closing orders aren't copied.
     bad = client.post("/api/orders/copies", json={"order": {**order, "intent": "close"}})
     assert bad.status_code == 400
+
+
+def test_a_working_order_is_replaced_from_the_ticket(client):
+    put = first_put(client)
+    body = {
+        "account": "sim",
+        "intent": "open",
+        "legs": [{"symbol": put, "quantity": -1, "effect": "open"}],
+    }
+    pv = client.post("/api/orders/preview", json=body).json()
+    old = client.post(
+        "/api/orders", json={**body, "limit_net": pv["prices"]["far"], "automanage": True}
+    ).json()
+    assert old["status"] == "WORKING"
+    entry = client.get(f"/api/orders/{old['id']}/entry?account=sim").json()
+    assert entry["automanage"] is True
+    # Changed on the ticket: a new price, GTC, in place of the old order.
+    far2 = client.post("/api/orders/preview", json=body).json()["prices"]["far"]
+    new = client.post(
+        "/api/orders",
+        json={**body, "limit_net": far2, "duration": "GTC", "replaces": old["id"]},
+    ).json()
+    assert new["replaces"] == [old["id"]] and new["status"] == "WORKING"
+    assert new["duration"] == "GTC" and new["limit_net"] == far2
+    orders = {o["id"]: o for o in client.get("/api/activity?account=sim").json()["orders"]}
+    assert orders[old["id"]]["status"] == "REPLACED"
+    # The old order's automanage went with it; the ticket left it off this time.
+    assert client.get(f"/api/orders/{old['id']}/entry?account=sim").json()["automanage"] is False
+    assert client.get(f"/api/orders/{new['id']}/entry?account=sim").json()["automanage"] is False
+    # An order that no longer works can't be replaced.
+    far3 = client.post("/api/orders/preview", json=body).json()["prices"]["far"]
+    again = client.post("/api/orders", json={**body, "limit_net": far3, "replaces": old["id"]})
+    assert again.status_code == 400 and "no longer working" in again.json()["detail"]

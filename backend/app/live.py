@@ -314,14 +314,28 @@ class LiveBroker:
         trade_id=None,
         profit_target: float | None = None,
         entry: dict | None = None,
+        replaces=None,
     ) -> dict:
-        """Sends the order to Schwab. The caller has already checked guards and gates."""
+        """Sends the order to Schwab. The caller has already checked guards and gates.
+        With replaces, Schwab's replace call swaps that working order for this one."""
         async with self.lock:
             mem = await self._load()
             account = await self.resolve_account()
             body = schwab_order(t)
             replaced = None
-            if t.intent in ("close", "roll"):
+            if replaces is not None:
+                await self.refresh()
+                if not any(str(o["id"]) == str(replaces) for o in await self.working()):
+                    raise ValueError(
+                        f"Order #{replaces} is no longer working: it filled or was cancelled"
+                    )
+                replaced = replaces
+                old = mem["tracked"].get(str(replaces)) or {}
+                if profit_target is None and t.intent == "open":
+                    profit_target = old.get("profit_target")
+                if trade_id is None:
+                    trade_id = old.get("trade_id")
+            elif t.intent in ("close", "roll"):
                 await self.refresh()
                 symbols = {x.symbol for x in t.legs}
                 old = [

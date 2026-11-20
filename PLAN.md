@@ -787,3 +787,12 @@ while the rest go ahead. The copies go at the same limit and duration with the t
 automanage, view and earnings play. A live copy needs the second tap on Send, which names every
 account and size. Closes and rolls are not copied: each account's automanage manages its own
 trade. `POST /api/orders/copies`.
+
+## Replace a working order from Activity
+
+Tapping a working order on Activity opens it on the order ticket at its own limit and duration,
+with its own "Automanage on fill" choice. Placing it there sends the new order in its place:
+Schwab's replace call for a live order, and for the simulated account the old order is marked
+replaced by the new one. The old order's profit target carries over. If the order filled or was
+cancelled meanwhile, the replacement is refused. `replaces` on `POST /api/orders`;
+`GET /api/orders/{id}/entry` gives an order's automanage choice for the ticket.

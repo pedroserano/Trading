@@ -117,11 +117,31 @@ class SimBroker:
     # Orders --------------------------------------------------------------------------
 
     async def place(
-        self, t: Ticket, quotes: dict, parent_id: int | None = None, entry: dict | None = None
+        self,
+        t: Ticket,
+        quotes: dict,
+        parent_id: int | None = None,
+        entry: dict | None = None,
+        replaces=None,
     ) -> dict:
-        """Records a working order and tries to fill it at once."""
+        """Records a working order and tries to fill it at once. With replaces, the new
+        order takes the place of that working order (changed from the Activity page)."""
         async with self.lock:
             st = await self.load()
+            old = None
+            if replaces is not None:
+                old = next(
+                    (
+                        o
+                        for o in st["orders"]
+                        if str(o["id"]) == str(replaces) and o["status"] == "WORKING"
+                    ),
+                    None,
+                )
+                if old is None:
+                    raise ValueError(
+                        f"Order #{replaces} is no longer working: it filled or was cancelled"
+                    )
             trade = None
             if t.intent in ("close", "roll", "adjust"):
                 trade = next(
@@ -157,6 +177,13 @@ class SimBroker:
                 # Conditions when the order was placed, for the dashboard.
                 "entry": entry,
             }
+            if old is not None:
+                old["status"] = "REPLACED"
+                old["reason"] = f"Replaced by #{order['id']}"
+                order["replaces"] = [old["id"]]
+                if order["profit_target"] is None and t.intent == "open":
+                    order["profit_target"] = old.get("profit_target")
+                self._audit("replace", order_id=old["id"], by=order["id"])
             if t.intent in ("close", "roll"):
                 symbols = {x.symbol for x in t.legs}
                 for o in st["orders"]:

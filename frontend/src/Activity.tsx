@@ -4,7 +4,8 @@ import { getJson, postJson } from "./api";
 import { usePolling } from "./usePolling";
 import { useMediaQuery } from "./useMediaQuery";
 import { ChainTimeline, chainSummary, legText, when } from "./ChainHistory";
-import { AccountContext } from "./context";
+import { AccountContext, TicketContext } from "./context";
+import type { TicketSpec } from "./OrderTicket";
 import { money, pct, signed, tone } from "./format";
 import type { Activity as ActivityData, SimOrder, SimTrade } from "./types";
 
@@ -43,12 +44,22 @@ function shortStatus(o: SimOrder): string {
   return s.split(" ")[0];
 }
 
+const CHANGE = "Tap to change the price or duration and replace the order";
+
 /** Working orders on a phone: each fits the screen, Cancel in reach without scrolling. */
-function WorkingCompact({ orders, onCancel }: { orders: SimOrder[]; onCancel: (o: SimOrder) => void }) {
+function WorkingCompact({
+  orders,
+  onCancel,
+  onOpen,
+}: {
+  orders: SimOrder[];
+  onCancel: (o: SimOrder) => void;
+  onOpen: (o: SimOrder) => void;
+}) {
   return (
     <ul className="work-list">
       {orders.map((o) => (
-        <li key={o.id}>
+        <li key={o.id} className="tappable" title={CHANGE} onClick={() => onOpen(o)}>
           <div className="work-line">
             <span className="sym-inline">{o.underlying}</span>
             <span className="work-what">{o.intent}</span>
@@ -56,7 +67,14 @@ function WorkingCompact({ orders, onCancel }: { orders: SimOrder[]; onCancel: (o
             <span className={`work-status status ${o.status.toLowerCase()}`} title={(o.schwab_status ?? o.status).toLowerCase().replace(/_/g, " ")}>
               {shortStatus(o)}
             </span>
-            <button type="button" className="small" onClick={() => onCancel(o)}>
+            <button
+              type="button"
+              className="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCancel(o);
+              }}
+            >
               Cancel
             </button>
           </div>
@@ -93,6 +111,41 @@ export default function Activity() {
 
   useEffect(() => setData(null), [account]);
   usePolling(load, 5000);
+
+  // A working order on the ticket again, at its own price and duration: placing it there
+  // replaces it.
+  const openTicket = useContext(TicketContext);
+  const change = async (o: SimOrder) => {
+    let entry = { automanage: false, view: null as string | null, play: null as string | null };
+    try {
+      entry = await getJson(`/api/orders/${encodeURIComponent(String(o.id))}/entry?account=${account}`);
+    } catch {
+      /* the ticket's own default */
+    }
+    const opens = o.legs.some((l) => l.effect === "open");
+    const closes = o.legs.some((l) => l.effect === "close");
+    const intent = (
+      ["open", "close", "roll", "adjust"].includes(o.intent) ? o.intent : opens && closes ? "roll" : closes ? "close" : "open"
+    ) as TicketSpec["intent"];
+    const verb = { open: "Open", close: "Close", roll: "Roll", adjust: "Adjust" }[intent];
+    openTicket({
+      title: `Replace #${o.id}: ${verb} ${o.underlying} ${o.strategy ?? ""}`.trim(),
+      account,
+      intent,
+      underlying: o.underlying,
+      tradeId: o.trade_id,
+      legs: o.legs.map((l) => ({ symbol: l.symbol, quantity: l.quantity, effect: l.effect })),
+      replaces: o.id,
+      limit: o.limit_net,
+      duration: o.duration,
+      automanage: entry.automanage,
+      view: entry.view,
+      play: entry.play,
+      onClosed: (placed) => {
+        if (placed) load();
+      },
+    });
+  };
 
   const cancel = async (o: SimOrder) => {
     try {
@@ -159,9 +212,9 @@ export default function Activity() {
       <h3>{live ? "Working orders at Schwab" : "Working orders"}</h3>
       {working.length ? (
         compact ? (
-          <WorkingCompact orders={working} onCancel={cancel} />
+          <WorkingCompact orders={working} onCancel={cancel} onOpen={change} />
         ) : (
-          <OrderTable orders={working} onCancel={cancel} />
+          <OrderTable orders={working} onCancel={cancel} onOpen={change} />
         )
       ) : (
         <p className="dim-text">
@@ -270,7 +323,15 @@ export default function Activity() {
   );
 }
 
-function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: SimOrder) => void }) {
+function OrderTable({
+  orders,
+  onCancel,
+  onOpen,
+}: {
+  orders: SimOrder[];
+  onCancel?: (o: SimOrder) => void;
+  onOpen?: (o: SimOrder) => void;
+}) {
   return (
     <div className="table-wrap">
       <table className="positions orders fit oneline ph-h1">
@@ -287,7 +348,12 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
         </thead>
         <tbody>
           {orders.map((o) => (
-            <tr key={o.id}>
+            <tr
+              key={o.id}
+              className={onOpen ? "tappable" : undefined}
+              title={onOpen ? CHANGE : undefined}
+              onClick={onOpen ? () => onOpen(o) : undefined}
+            >
               <td className="l">{o.id}</td>
               <td className="l">
                 <span className="sym-inline">{o.underlying}</span>
@@ -308,7 +374,14 @@ function OrderTable({ orders, onCancel }: { orders: SimOrder[]; onCancel?: (o: S
               </td>
               <td>
                 {onCancel ? (
-                  <button type="button" className="small" onClick={() => onCancel(o)}>
+                  <button
+                    type="button"
+                    className="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCancel(o);
+                    }}
+                  >
                     Cancel
                   </button>
                 ) : o.schwab_json === undefined ? null : (
