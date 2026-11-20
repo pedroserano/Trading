@@ -429,7 +429,7 @@ def test_zebras_are_recognised_and_left_to_run():
     evaluate(pz[0], TODAY, 589.0, Rules())
     assert pz[0].numbers["shares_like"] == -200
     # Not a ZEBRA: longs further out of the money (a back ratio), or one-for-one (a vertical).
-    assert group([opt("C", 600, 2, 3.0), opt("C", 590, -1, 8.0)])[0].name == "Call vertical"
+    assert group([opt("C", 600, 2, 3.0), opt("C", 590, -1, 8.0)])[0].name == "Call back ratio"
     assert group([opt("C", 570, 1, 22.0), opt("C", 590, -1, 9.0)])[0].name == "Call vertical"
     # Extra longs beyond two per short stay as long calls.
     extra = group([opt("C", 570, 3, 22.0), opt("C", 590, -1, 9.0)])
@@ -585,3 +585,120 @@ def test_butterflies_and_broken_wings_are_one_defined_risk_trade():
     assert two.name == "Call butterfly" and [x.quantity for x in two.legs] == [2, -4, 2]
     names = [s.name for s in group([opt("C", 590, 1, 6.0), opt("C", 600, -2, 3.0)])]
     assert names == ["Call ratio 1×2"]
+
+
+# More tastylive structures -----------------------------------------------------------------
+
+
+def test_lizards_super_bulls_back_ratios_double_calendars_and_collars_are_recognised():
+    far = date(2027, 1, 15)
+    cases = [
+        ([opt("P", 590, -1, 8), opt("C", 590, -1, 7), opt("C", 600, 1, 3)], "Big lizard"),
+        ([opt("P", 590, -1, 8), opt("C", 590, -1, 7), opt("P", 580, 1, 4)], "Reverse big lizard"),
+        ([opt("C", 610, -1, 3), opt("P", 570, -1, 4), opt("P", 565, 1, 3)], "Reverse jade lizard"),
+        ([opt("P", 570, -1, 4), opt("C", 590, 1, 9), opt("C", 600, -1, 5)], "Super bull"),
+        ([opt("C", 600, -1, 5), opt("C", 610, 2, 2)], "Call back ratio"),
+        ([opt("P", 580, -1, 5), opt("P", 570, 2, 2)], "Put back ratio"),
+        (
+            [opt("P", 570, -1, 3), opt("P", 570, 1, 5, exp=far)]
+            + [opt("C", 610, -1, 3), opt("C", 610, 1, 5, exp=far)],
+            "Double calendar",
+        ),
+        (
+            [opt("P", 570, -1, 3), opt("P", 565, 1, 4, exp=far)]
+            + [opt("C", 610, -1, 3), opt("C", 615, 1, 4, exp=far)],
+            "Double diagonal",
+        ),
+        (
+            [stock(100, 590, 590, "SPY"), opt("P", 570, 1, 4), opt("C", 610, -1, 5)],
+            "Collar",
+        ),
+    ]
+    for legs, name in cases:
+        assert [x.name for x in group(legs)] == [name], name
+    # Not mistaken for them: a long iron condor is two verticals; a modified super bull with
+    # its long put is still one trade.
+    assert sorted(
+        names(
+            group(
+                [
+                    opt("P", 565, -1, 1),
+                    opt("P", 570, 1, 2),
+                    opt("C", 610, 1, 2),
+                    opt("C", 615, -1, 1),
+                ]
+            )
+        )
+    ) == [("Call vertical", 1), ("Put vertical", 1)]
+    mod = group(
+        [opt("P", 565, 1, 2), opt("P", 570, -1, 4), opt("C", 590, 1, 9), opt("C", 600, -1, 5)]
+    )
+    assert [(x.name, x.defined_risk) for x in mod] == [("Super bull", True)]
+
+
+def test_numbers_and_targets_of_the_new_structures():
+    r = Rules()
+    # Big lizard: 12.00 credit against a 10-wide call spread, no upside risk; target 25%.
+    bl = group(
+        [
+            opt("P", 590, -1, 8, mark=4),
+            opt("C", 590, -1, 7, mark=4),
+            opt("C", 600, 1, 3, mark=1),
+        ]
+    )[0]
+    evaluate(bl, TODAY, 590.0, r)
+    assert bl.numbers["max_profit"] == 1200.0 and bl.numbers["upside_risk"] == 0
+    assert bl.numbers["pl"] == 500.0 and bl.numbers["pct_max_profit"] == round(500 / 1200, 4)
+    assert any(f["kind"] == "profit" for f in bl.flags)  # past 25%
+    # Reverse jade lizard: 4.00 credit against a 5-wide put spread: 1.00 of downside risk.
+    rj = group([opt("C", 610, -1, 2), opt("P", 570, -1, 3), opt("P", 565, 1, 1)])[0]
+    evaluate(rj, TODAY, 590.0, r)
+    assert rj.numbers["downside_risk"] == 100.0 and rj.numbers["upside_risk"] is None
+    # Super bull: 10-wide call spread for 4.00, paid by a 5.00 short put: 1.00 credit.
+    sb = group(
+        [opt("P", 570, -1, 5, mark=1), opt("C", 590, 1, 9, mark=12), opt("C", 600, -1, 5, mark=6)]
+    )[0]
+    evaluate(sb, TODAY, 600.0, r)
+    assert sb.numbers["max_profit"] == 1100.0 and sb.numbers["max_loss"] is None
+    # Well past 50% of max, yet no target (tastylive gives none) and no loss rule.
+    assert sb.numbers["pct_max_profit"] > 0.5
+    assert not {"profit", "loss"} & {f["kind"] for f in sb.flags}
+    # With its long put (modified): the loss is the put spread less the credit.
+    msb = group(
+        [opt("P", 565, 1, 1), opt("P", 570, -1, 5), opt("C", 590, 1, 9), opt("C", 600, -1, 5)]
+    )[0]
+    evaluate(msb, TODAY, 590.0, r)
+    assert msb.numbers["max_loss"] == 500.0 - 0.0  # 5 wide, opened for 0.00
+    # Call back ratio: sell the 600 for 5.00, buy two 610s for 2.00: 1.00 credit; worst at 610.
+    br = group([opt("C", 600, -1, 5), opt("C", 610, 2, 2)])[0]
+    evaluate(br, TODAY, 590.0, r)
+    assert br.numbers["max_loss"] == 900.0 and br.numbers["max_profit"] is None
+    # Put back ratio: sell the 580 for 5.00, buy two 570s for 2.00; most if it goes to zero.
+    pb = group([opt("P", 580, -1, 5), opt("P", 570, 2, 2)])[0]
+    evaluate(pb, TODAY, 590.0, r)
+    assert pb.numbers["max_loss"] == 900.0 and pb.numbers["max_profit"] == 56100.0
+    # Double diagonal: 2.00 debit (4.00 paid, 6.00 in... per side), longs 5 further out.
+    dd = group(
+        [
+            opt("P", 570, -1, 3, mark=3),
+            opt("P", 565, 1, 4, mark=4.4, exp=date(2027, 1, 15)),
+            opt("C", 610, -1, 3, mark=3),
+            opt("C", 615, 1, 4, mark=4.4, exp=date(2027, 1, 15)),
+        ]
+    )[0]
+    evaluate(dd, TODAY, 590.0, r)
+    assert dd.numbers["open_value"] == -200.0 and dd.numbers["max_loss"] == 700.0
+    assert dd.numbers["pct_max_profit"] == 0.4 and any(f["kind"] == "profit" for f in dd.flags)
+    # Collar: 100 shares at 590, 570 put for 4.00, 610 call for 5.00. Most at 610, least at 570.
+    co = group(
+        [
+            stock(100, 590, 595, "SPY"),
+            opt("P", 570, 1, 4, mark=2),
+            opt("C", 610, -1, 5, mark=2),
+        ]
+    )[0]
+    evaluate(co, TODAY, 595.0, r)
+    assert co.numbers["max_profit"] == 2100.0 and co.numbers["max_loss"] == 1900.0
+    # The target is on the call's credit alone (60% made), the put left out.
+    assert co.numbers["option_open_value"] == 500.0 and co.numbers["pct_max_profit"] == 0.6
+    assert any(f["kind"] == "profit" for f in co.flags)

@@ -1837,14 +1837,16 @@ def create_app(
                     "Not a tastylive trade: debit verticals and long options are not managed "
                     "by automanage"
                 )
-            if kind == "Jade lizard":
-                calls = sorted(x.strike for x in t.legs if x.put_call == "C")
+            if kind in ("Jade lizard", "Big lizard", "Reverse jade lizard", "Reverse big lizard"):
+                pc = "P" if kind.startswith("Reverse") else "C"
+                ks = sorted(x.strike for x in t.legs if x.put_call == pc)
+                spread, side = ("put", "downside") if pc == "P" else ("call", "upside")
                 credit = body.limit_net if body.limit_net is not None else p.get("mid")
-                if credit is not None and credit < calls[-1] - calls[0] - 1e-9:
+                if credit is not None and credit < ks[-1] - ks[0] - 1e-9:
                     warnings.append(
-                        f"The {credit:.2f} credit is less than the call spread's "
-                        f"{calls[-1] - calls[0]:g} width, so the upside is not free of risk: "
-                        "a jade lizard wants a credit of at least the width"
+                        f"The {credit:.2f} credit is less than the {spread} spread's "
+                        f"{ks[-1] - ks[0]:g} width, so the {side} is not free of risk: "
+                        f"a {kind.lower()} wants a credit of at least the width"
                     )
         body_json = None
         try:

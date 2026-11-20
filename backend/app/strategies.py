@@ -109,6 +109,37 @@ def group(legs: list[Leg]) -> list[Strategy]:
     def add(name, taken, defined):
         out.append(Strategy(name, underlying, taken, defined))
 
+    # Double calendars and double diagonals: a short put and a short call in one expiration
+    # against a long put and a long call further out. Only when the front expiration holds no
+    # long options, which would make its shorts part of a condor, a vertical or a lizard, and
+    # the back expiration no short ones.
+    for front in pool.expirations():
+        if pool.options(None, False, front):
+            continue
+        while True:
+            sp = _first(pool.options("P", True, front), key=lambda x: -x.strike)
+            sc = _first(pool.options("C", True, front), key=lambda x: x.strike)
+            if not (sp and sc and sp.strike <= sc.strike):
+                break
+            found = None
+            # The back month holds the longs alone: with shorts there, its longs belong to
+            # its own condors and spreads.
+            for back in [
+                e for e in pool.expirations() if e > front and not pool.options(None, True, e)
+            ]:
+                lp = _first(pool.options("P", False, back), key=lambda x: abs(x.strike - sp.strike))
+                lc = _first(pool.options("C", False, back), key=lambda x: abs(x.strike - sc.strike))
+                if lp and lc and lp.strike <= lc.strike:
+                    found = (lp, lc)
+                    break
+            if not found:
+                break
+            lp, lc = found
+            q = min(abs(x.quantity) for x in (sp, sc, lp, lc))
+            taken = [pool.take(x, q) for x in (lp, sp, sc, lc)]
+            same = lp.strike == sp.strike and lc.strike == sc.strike
+            add("Double calendar" if same else "Double diagonal", taken, True)
+
     for exp in pool.expirations():
         # Iron condors and iron flies.
         while True:
@@ -129,6 +160,74 @@ def group(legs: list[Leg]) -> list[Strategy]:
             q = min(abs(x.quantity) for x in (lp, sp, sc, lc))
             taken = [pool.take(x, q) for x in (lp, sp, sc, lc)]
             add("Iron fly" if sp.strike == sc.strike else "Iron condor", taken, True)
+
+        # Super bulls: a long call spread paid for by a short put below it; with a long put
+        # below that (the modified super bull) the risk is defined.
+        while True:
+            sp = _first(pool.options("P", True, exp), key=lambda x: -x.strike)
+            lc = sp and _first(
+                [x for x in pool.options("C", False, exp) if x.strike > sp.strike],
+                key=lambda x: x.strike,
+            )
+            sc = lc and _first(
+                [x for x in pool.options("C", True, exp) if x.strike > lc.strike],
+                key=lambda x: x.strike,
+            )
+            # A long put between them makes the short put half of a put spread instead (a
+            # long iron condor).
+            if not (sp and lc and sc) or any(
+                sp.strike < x.strike < sc.strike for x in pool.options("P", False, exp)
+            ):
+                break
+            lp = _first(
+                [x for x in pool.options("P", False, exp) if x.strike < sp.strike],
+                key=lambda x: -x.strike,
+            )
+            parts = [x for x in (lp, sp, lc, sc) if x]
+            q = min(abs(x.quantity) for x in parts)
+            add("Super bull", [pool.take(x, q) for x in parts], lp is not None)
+
+        # Big lizards: a short straddle with a long call above it; reverse big lizards: with a
+        # long put below it.
+        while True:
+            sp = _first(pool.options("P", True, exp), key=lambda x: -x.strike)
+            sc = sp and _first(
+                [x for x in pool.options("C", True, exp) if x.strike == sp.strike],
+                key=lambda x: x.strike,
+            )
+            if not (sp and sc):
+                break
+            lc = _first(
+                [x for x in pool.options("C", False, exp) if x.strike > sc.strike],
+                key=lambda x: x.strike,
+            )
+            lp = _first(
+                [x for x in pool.options("P", False, exp) if x.strike < sp.strike],
+                key=lambda x: -x.strike,
+            )
+            if lc and not pool.options("P", False, exp):
+                q = min(abs(x.quantity) for x in (sp, sc, lc))
+                add("Big lizard", [pool.take(x, q) for x in (sp, sc, lc)], False)
+            elif lp and not pool.options("C", False, exp):
+                q = min(abs(x.quantity) for x in (lp, sp, sc))
+                add("Reverse big lizard", [pool.take(x, q) for x in (lp, sp, sc)], False)
+            else:
+                break
+
+        # Reverse jade lizards (twisted sisters): a short call above a short put spread.
+        while True:
+            sp = _first(pool.options("P", True, exp), key=lambda x: -x.strike)
+            sc = _first(pool.options("C", True, exp), key=lambda x: x.strike)
+            if not (sp and sc and sp.strike < sc.strike) or pool.options("C", False, exp):
+                break
+            lp = _first(
+                [x for x in pool.options("P", False, exp) if x.strike < sp.strike],
+                key=lambda x: -x.strike,
+            )
+            if not lp:
+                break
+            q = min(abs(x.quantity) for x in (lp, sp, sc))
+            add("Reverse jade lizard", [pool.take(x, q) for x in (lp, sp, sc)], False)
 
         # Jade lizards: a short put below a short call spread.
         while True:
@@ -221,6 +320,29 @@ def group(legs: list[Leg]) -> list[Strategy]:
                 kind = "Put" if pc == "P" else "Call"
                 add(f"{kind} ZEBRA", sorted(taken, key=lambda x: x.strike), True)
 
+        # Back ratios (1x2): one short, two longs further out of the money, same type and
+        # expiration (a ZEBRA's longs are deeper in the money instead).
+        for pc in ("P", "C"):
+            while True:
+                found = None
+                for s in pool.options(pc, True, exp):
+                    outside = [
+                        lg
+                        for lg in pool.options(pc, False, exp)
+                        if (lg.strike < s.strike if pc == "P" else lg.strike > s.strike)
+                        and abs(lg.quantity) >= 2 * abs(s.quantity)
+                    ]
+                    if outside:
+                        found = (s, min(outside, key=lambda x: abs(x.strike - s.strike)))
+                        break
+                if not found:
+                    break
+                s, lg = found
+                q = abs(s.quantity)
+                taken = [pool.take(s, q), pool.take(lg, 2 * q)]
+                kind = "Put" if pc == "P" else "Call"
+                add(f"{kind} back ratio", sorted(taken, key=lambda x: x.strike), True)
+
         # Verticals: pair each short with the nearest long of the same type and expiration.
         for pc in ("P", "C"):
             while True:
@@ -262,6 +384,24 @@ def group(legs: list[Leg]) -> list[Strategy]:
             q = min(abs(s.quantity), abs(lg.quantity))
             taken = [pool.take(s, q), pool.take(lg, q)]
             add("Calendar" if s.strike == lg.strike else "Diagonal", taken, True)
+
+    # Collars: 100 long shares per short call and long put of the same expiration.
+    for st in pool.stock():
+        while st.quantity >= 100:
+            found = None
+            for sc in sorted(pool.options("C", True), key=lambda x: x.expiration):
+                lp = _first(
+                    [x for x in pool.options("P", False, sc.expiration) if x.strike < sc.strike],
+                    key=lambda x: -x.strike,
+                )
+                if lp:
+                    found = (sc, lp)
+                    break
+            if not found:
+                break
+            sc, lp = found
+            q = min(abs(sc.quantity), abs(lp.quantity), st.quantity // 100)
+            add("Collar", [pool.take(st, q * 100), pool.take(lp, q), pool.take(sc, q)], False)
 
     # Covered calls: 100 long shares per short call.
     for st in pool.stock():
@@ -405,8 +545,16 @@ def past_cover(
 
 
 RATIOS = ("Put ratio 1×2", "Call ratio 1×2")
-COVERED_KINDS = ("Covered call", "Covered put")
-CALENDARS = ("Calendar", "Diagonal")
+# Managed on the short option alone; the shares (and a collar's put) stay.
+COVERED_KINDS = ("Covered call", "Covered put", "Collar")
+# Double calendars: tastylive's SPX study found 10% of the debit did best, as for calendars.
+CALENDARS = ("Calendar", "Diagonal", "Double calendar", "Double diagonal")
+# Big lizards: a short straddle with a wing, managed like a straddle (tastylive: at 25%).
+BIG_LIZARDS = ("Big lizard", "Reverse big lizard")
+# Recognised, with their risk, but no profit target: tastylive gives none for these (back
+# ratios it does not route at all, as they are usually a debit). The DTE, tested and
+# expiration rules still apply.
+NO_TARGET = ("Put back ratio", "Call back ratio", "Super bull")
 FLIES = (
     "Put butterfly",
     "Call butterfly",
@@ -431,7 +579,7 @@ def target_for(name: str, rules: Rules) -> float:
     call."""
     if name in FLIES:
         return rules.profit_target_fly
-    if name in ("Straddle", "Iron fly"):
+    if name in ("Straddle", "Iron fly") or name in BIG_LIZARDS:
         return rules.profit_target_straddle
     if name in RATIOS:
         return rules.profit_target_ratio
@@ -495,8 +643,48 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         max_profit, max_loss = open_value, width - open_value
     elif name in ("Strangle", "Straddle", "Short put", "Short call"):
         max_profit = open_value
-    elif name in ("Long put", "Long call", "Calendar", "Diagonal") or name in ZEBRAS:
+    elif name in ("Long put", "Long call") or name in ZEBRAS:
         max_loss = -open_value
+    elif name in CALENDARS:
+        # The debit, plus, for a diagonal whose long sits further out of the money than its
+        # short, that gap: a move through the short to the long at the front expiration (an
+        # upper bound, as the long still has time value then).
+        gap = 0.0
+        for pc in ("P", "C"):
+            s_ = [x.strike for x in opts if x.put_call == pc and x.short]
+            l_ = [x.strike for x in opts if x.put_call == pc and not x.short]
+            if s_ and l_:
+                gap = max(gap, (s_[0] - l_[0]) if pc == "P" else (l_[0] - s_[0]))
+        max_loss = -open_value + gap * 100 * contracts
+    elif name in BIG_LIZARDS or name == "Super bull":
+        # A lizard: at most the credit. A super bull: the call spread's width plus the credit;
+        # its loss is defined only with the long put (the modified version).
+        def width(pc):
+            ks = sorted(x.strike for x in opts if x.put_call == pc)
+            return (ks[-1] - ks[0]) * 100 * contracts if len(ks) > 1 else 0.0
+
+        if name in BIG_LIZARDS:
+            max_profit = open_value
+        else:
+            max_profit = width("C") + open_value
+            if st.defined_risk:
+                max_loss = width("P") - open_value
+    elif name in ("Put back ratio", "Call back ratio"):
+        # Worst at the longs' strike at expiration: the width less the credit (plus the
+        # debit). Calls gain without limit above; puts most at zero.
+        s_ = next(x for x in opts if x.short)
+        l_ = next(x for x in opts if not x.short)
+        q = abs(s_.quantity)
+        max_loss = abs(l_.strike - s_.strike) * 100 * q - open_value
+        if name == "Put back ratio":
+            max_profit = (2 * l_.strike - s_.strike) * 100 * q + open_value
+    elif name == "Collar":
+        # The shares called away at the call's strike, or sold at the put's.
+        shares = sum(x.quantity for x in legs if not x.is_option)
+        call = next(x for x in opts if x.short)
+        put = next(x for x in opts if not x.short)
+        max_profit = shares * call.strike + open_value
+        max_loss = -(shares * put.strike + open_value)
     elif name in FLIES:
         # Most at the body at expiration: the near wing's width plus the credit (less the
         # debit). A wider far wing loses its extra width beyond it (less the credit).
@@ -524,19 +712,24 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     dtes = [leg.dte(today) for leg in opts]
     shorts = [leg for leg in opts if leg.short]
     pct = pl / max_profit if (pl is not None and max_profit and max_profit > 0) else None
-    upside_risk = None
+    upside_risk = downside_risk = None
     option_open = None
     if name in COVERED_KINDS:
         # Managed on the option alone: the shares or the ZEBRA stay.
-        option_open = -sum(x.quantity * x.avg_price * x.multiplier for x in opts)
-        if option_open > 0 and all(x.mark is not None for x in opts):
-            opt_pl = sum(x.quantity * x.mark * x.multiplier for x in opts) + option_open
+        # A collar's target is on its call alone: the put stays as the floor.
+        managed = [x for x in opts if x.short] if name == "Collar" else opts
+        option_open = -sum(x.quantity * x.avg_price * x.multiplier for x in managed)
+        if option_open > 0 and all(x.mark is not None for x in managed):
+            opt_pl = sum(x.quantity * x.mark * x.multiplier for x in managed) + option_open
             pct = opt_pl / option_open
     elif name in CALENDARS and open_value < 0 and pl is not None:
         pct = pl / -open_value  # a share of the debit paid
-    elif name == "Jade lizard":
+    elif name in ("Jade lizard", "Big lizard"):
         calls = sorted(x.strike for x in opts if x.put_call == "C")
         upside_risk = (calls[-1] - calls[0]) * 100 * contracts - open_value
+    elif name in ("Reverse jade lizard", "Reverse big lizard"):
+        puts = sorted(x.strike for x in opts if x.put_call == "P")
+        downside_risk = (puts[-1] - puts[0]) * 100 * contracts - open_value
 
     st.numbers = {
         "open_value": round(open_value, 2),
@@ -559,6 +752,9 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         # A jade lizard loses to the upside only when the credit is less than the call
         # spread's width.
         "upside_risk": None if upside_risk is None else round(max(upside_risk, 0), 2),
+        # A reverse lizard loses to the downside only when the credit is less than the put
+        # spread's width.
+        "downside_risk": None if downside_risk is None else round(max(downside_risk, 0), 2),
         "option_open_value": None if option_open is None else round(option_open, 2),
         # A ZEBRA unit moves like 100 shares: long for calls, short for puts.
         "shares_like": _shares_like(name, opts),
@@ -570,12 +766,17 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
 
     flags = []
     target = target_for(name, rules)
-    if pct is not None and pct >= target and not not_tasty(name, open_value):
+    if (
+        pct is not None
+        and pct >= target
+        and not not_tasty(name, open_value)
+        and name not in NO_TARGET
+    ):
         basis = (
             "of the debit"
             if name in CALENDARS
             else "of the call's credit"
-            if name == "Covered call"
+            if name in ("Covered call", "Collar")
             else "of the put's credit"
             if name == "Covered put"
             else "max"
@@ -622,8 +823,10 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
     # A ratio opens for a small credit, so its loss is measured against what it can make.
     loss_basis = max_profit if name in RATIOS else open_value
     # A covered option's loss is offset by the shares or the ZEBRA behind it: no loss rule.
+    # A super bull opens for about nothing, so a multiple of its credit means little.
     if (
         name not in COVERED_KINDS
+        and name not in NO_TARGET
         and not st.defined_risk
         and shorts
         and pl is not None
@@ -662,6 +865,7 @@ def _nonstandard_numbers(st: Strategy) -> None:
             "gamma": None,
             "short_deltas": [None for _ in st.numbers.get("short_deltas", [])],
             "upside_risk": None,
+            "downside_risk": None,
             "shares_like": None,
             "nonstandard": why,
         }

@@ -21,7 +21,16 @@ from zoneinfo import ZoneInfo
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import plain
-from .strategies import CALENDARS, FLIES, RATIOS, ZEBRAS, not_tasty, target_for
+from .strategies import (
+    CALENDARS,
+    COVERED_KINDS,
+    FLIES,
+    NO_TARGET,
+    RATIOS,
+    ZEBRAS,
+    not_tasty,
+    target_for,
+)
 from .targets import VIEWS
 
 UNSET = object()
@@ -747,13 +756,16 @@ def decide(
                     "a credit",
                 )
             )
-        elif name == "Covered call" and itm and settings.get("roll_single_itm"):
+        elif name in ("Covered call", "Collar") and itm and settings.get("roll_single_itm"):
             out.append(
                 Action(
                     "tested",
                     "roll_calls",
                     "The covered call is in the money: roll the call up and out for a credit; "
-                    "the shares or ZEBRA stay",
+                    "the shares or ZEBRA stay"
+                    if name == "Covered call"
+                    else "The collar's call is in the money: roll the call up and out for a "
+                    "credit; the shares and the put stay",
                 )
             )
         elif name == "Covered put" and itm and settings.get("roll_single_itm"):
@@ -831,12 +843,7 @@ def low_iv_loss(st: dict, ivr: float | None, settings: dict) -> str | None:
     n = st["numbers"]
     pl = n.get("pl")
     name = st["name"]
-    if (
-        st.get("defined_risk")
-        or "loss" in flags
-        or pl is None
-        or name in ("Covered call", "Covered put")
-    ):
+    if st.get("defined_risk") or "loss" in flags or pl is None or name in COVERED_KINDS:
         return None
     basis = profit_basis(st)
     if basis is None or name in CALENDARS:
@@ -1257,6 +1264,47 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "—",
         ),
         (
+            "Big lizard / reverse big lizard",
+            f"{pct(rules.profit_target_straddle)} of credit",
+            out_to,
+            "Notify",
+            "Notify",
+            loss,
+        ),
+        (
+            "Reverse jade lizard",
+            f"{pct(rules.profit_target)} of credit",
+            out_to,
+            "Notify",
+            "Notify",
+            loss,
+        ),
+        (
+            "Collar",
+            f"{pct(rules.profit_target)} of the call's credit (closes the call; the shares and "
+            "put stay)",
+            "Roll the call and put out, same strikes",
+            "Notify",
+            itm("Call up and out; the shares and put stay"),
+            "— (the put is the floor)",
+        ),
+        (
+            "Super bull",
+            "None: tastylive gives no target",
+            out_to,
+            "Notify",
+            "Notify",
+            "—",
+        ),
+        (
+            "Back ratio (put or call)",
+            "None: tastylive does not trade them",
+            defined,
+            "Notify",
+            "Notify",
+            "— (defined risk)",
+        ),
+        (
             "Calendar / diagonal",
             f"{pct(rules.profit_target_calendar)} of debit",
             "Close (front month)",
@@ -1473,9 +1521,9 @@ def profit_basis(st: dict) -> tuple[float, float] | None:
     """
     n = st["numbers"]
     name, opened = st["name"], n["open_value"]
-    if not_tasty(name, opened):
+    if not_tasty(name, opened) or name in NO_TARGET:
         return None
-    if name in ("Covered call", "Covered put"):
+    if name in COVERED_KINDS:
         opt = n.get("option_open_value")
         return (opt, opt) if opt and opt > 0 else None
     if name in CALENDARS:
@@ -1491,6 +1539,9 @@ def sides(st: dict, kind: str) -> list[list[dict]]:
     """The option legs to act on, split by put and call side when one order would exceed
     four legs (a roll closes and reopens every leg, doubling the count)."""
     opts = [x for x in st["legs"] if x["kind"] == "OPTION"]
+    if st["name"] == "Collar" and kind == "close":
+        # A collar closes its call alone: the shares and the put (the floor) stay.
+        opts = [x for x in opts if x["quantity"] < 0]
     factor = 2 if kind == "roll" else 1
     if len(opts) * factor <= MAX_LEGS:
         return [opts]

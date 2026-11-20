@@ -1175,3 +1175,66 @@ def test_untested_rolls_wait_for_a_steady_test_and_respect_the_view():
     assert auto.steady_tested(
         [r2], down, 560, "neutral", None, t0, {"tested_confirm_min": 0}, 0.30
     ) == [r2]
+
+
+def test_collars_act_on_the_call_and_super_bulls_and_back_ratios_have_no_target():
+    on = {**merged_settings(None), "roll_single_itm": True}
+    collar = strat(
+        name="Collar",
+        legs=[
+            {
+                "symbol": "SPY",
+                "kind": "EQUITY",
+                "put_call": None,
+                "strike": None,
+                "expiration": None,
+                "quantity": 100,
+                "delta": 1.0,
+            },
+            leg("P", 570, 1, -0.2),
+            leg("C", 600, -1, 0.7),
+        ],
+        flags=["tested"],
+    )
+    collar["numbers"].update(option_open_value=500.0, open_value=-58600.0)
+    # In the money: the call rolls up and out; the shares and the put stay.
+    acts = decide(collar, 605, Rules(), on, ALL)
+    assert ("tested", "roll_calls") in kinds(acts)
+    # Its profit target is on the call's credit; closing it closes the call alone.
+    assert auto.profit_basis(collar) == (500.0, 500.0)
+    assert [[x["symbol"] for x in side] for side in sides(collar, "close")] == [[sym("C", 600)]]
+    # Rolling at 21 DTE rolls the put with the call.
+    assert len(sides(collar, "roll")[0]) == 2
+    for name, legs in (
+        ("Super bull", [leg("P", 570, -1), leg("C", 590, 1, 0.5), leg("C", 600, -1, 0.3)]),
+        ("Call back ratio", [leg("C", 600, -1, 0.3), leg("C", 610, 2, 0.2)]),
+        ("Put back ratio", [leg("P", 580, -1, -0.3), leg("P", 570, 2, -0.2)]),
+    ):
+        st = strat(name=name, legs=legs, flags=["profit"], open_value=100.0)
+        st["numbers"]["max_profit"] = 1100.0
+        assert auto.profit_basis(st) is None
+        assert ("profit", "close") not in kinds(decide(st, 590, Rules(), on, ALL))
+
+
+def test_big_lizards_and_double_calendars_take_their_targets():
+    from app.strategies import target_for
+
+    r = Rules()
+    assert target_for("Big lizard", r) == target_for("Straddle", r) == 0.25
+    assert target_for("Reverse big lizard", r) == 0.25
+    assert target_for("Double calendar", r) == target_for("Double diagonal", r) == 0.10
+    dc = strat(
+        name="Double calendar",
+        dte=20,
+        defined=True,
+        open_value=-400.0,
+        legs=[
+            leg("P", 570, -1),
+            leg("P", 570, 1, exp=NEXT),
+            leg("C", 610, -1, 0.2),
+            leg("C", 610, 1, 0.2, exp=NEXT),
+        ],
+    )
+    assert auto.profit_basis(dc) == (400.0, -400.0)
+    # At 21 DTE the front month is closed, never rolled, like a calendar.
+    assert ("dte", "close") in kinds(decide(dc, 590, r, merged_settings(None), ALL))
