@@ -951,26 +951,6 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
                 + (" in the money" if itm else f" at or above {rules.tested_delta:.2f} delta"),
             }
         )
-    if inverted:
-        sp_ = max(x.strike for x in shorts if x.put_call == "P")
-        sc_ = min(x.strike for x in shorts if x.put_call == "C")
-        most = st.numbers["max_profit"]
-        flags.append(
-            {
-                "kind": "inverted",
-                "label": f"Inverted {inverted:g}",
-                "detail": f"Short put {sp_:g} above short call {sc_:g}: inverted by "
-                f"{inverted:g}, so it loses at least that at expiration. Most it can make now: "
-                + (
-                    "nothing, a loss of at least " + f"{-most:,.0f}"
-                    if most is not None and most <= 0
-                    else f"{most:,.0f}"
-                    if most is not None
-                    else "–"
-                )
-                + " (the credit less the inversion)",
-            }
-        )
     # A ratio opens for a small credit, so its loss is measured against what it can make.
     loss_basis = max_profit if name in RATIOS else open_value
     # A covered option's loss is offset by the shares or the ZEBRA behind it: no loss rule.

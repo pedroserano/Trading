@@ -422,7 +422,12 @@ function StrategyRows(props: {
     !st.defined_risk &&
     n.covered_by !== "ZEBRA" &&
     st.legs.some((l) => l.quantity < 0);
-  const title = shares ? sharesText(st, false) : st.name;
+  // A roll took the short put above the short call: "Inverted strangle".
+  const title = shares
+    ? sharesText(st, false)
+    : n.inverted
+      ? `Inverted ${st.name.toLowerCase()}`
+      : st.name;
 
   const name = compact ? (
     <>

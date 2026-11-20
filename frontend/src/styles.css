@@ -119,7 +119,6 @@ tr.leg td.l { padding-left: 34px; }
 .flag.dte { color: var(--accent); border-color: var(--accent); }
 .flag.tested { color: var(--warn); border-color: var(--warn); }
 .flag.loss { color: var(--bad); border-color: var(--bad); }
-.flag.inverted { color: var(--warn); border-color: var(--warn); }
 .flag.data { color: var(--dim); border-color: var(--dim); }
 .flag.nonstandard { color: var(--warn); border-color: var(--warn); }
 .empty { padding: 32px; text-align: center; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; }

@@ -1,5 +1,5 @@
 export interface Flag {
-  kind: "profit" | "dte" | "tested" | "loss" | "data" | "inverted";
+  kind: "profit" | "dte" | "tested" | "loss" | "data";
   label: string;
   detail: string;
 }
