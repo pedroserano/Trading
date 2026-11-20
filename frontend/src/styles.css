@@ -88,6 +88,8 @@ table.positions.compact { min-width: 0; }
 .compact td.name, .compact tr.under td.l { white-space: normal; }
 .compact th, .compact td { padding-left: 6px; padding-right: 6px; }
 .compact tr.under .chg, .compact tr.under .ivr { margin-right: 8px; }
+/* Phones: the points alone, so the price and its change stay on one line. */
+.compact tr.under .chg .pct { display: none; }
 .positions th, .positions td { padding: 5px 8px; text-align: right; white-space: nowrap; }
 .positions th { font-size: 11px; font-weight: 500; color: var(--dim); text-transform: uppercase;
   letter-spacing: .04em; border-bottom: 1px solid var(--line); background: var(--panel); }

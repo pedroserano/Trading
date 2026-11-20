@@ -103,6 +103,8 @@ export interface UnderlyingView {
   symbol: string;
   price: number | null;
   change_pct: number | null;
+  /** Today's change in points. */
+  change?: number | null;
   beta: number | null;
   ivr: IvRank | null;
   earnings?: EarningsInfo | null;

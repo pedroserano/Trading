@@ -285,8 +285,12 @@ function UnderGroup(props: {
           <wbr />
           <span className="px">{num(u.price, 2)}</span>
           <wbr />
-          <span className="chg">
-            {u.change_pct === null ? "" : `${signed(u.change_pct, 2)}%`}
+          <span
+            className={`chg ${tone(u.change ?? u.change_pct)}`}
+            title="Today's change in points, and in percent"
+          >
+            {u.change !== null && u.change !== undefined ? `${signed(u.change, 2)} ` : ""}
+            <span className="pct">{u.change_pct === null ? "" : `(${signed(u.change_pct, 2)}%)`}</span>
           </span>
           {detail && u.ivr && u.ivr.rank !== null ? (
             <span

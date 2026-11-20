@@ -687,6 +687,13 @@ class PortfolioService:
                     "symbol": u,
                     "price": price,
                     "change_pct": _num(q.get("netPercentChange")),
+                    # Today, in points: from the price and the last close, which the stream
+                    # keeps current (it does not carry Schwab's netChange).
+                    "change": (
+                        round(price - close, 2)
+                        if price is not None and (close := _num(q.get("closePrice")))
+                        else _num(q.get("netChange"))
+                    ),
                     "beta": None if beta is None else round(beta, 2),
                     "ivr": ivr,
                     "earnings": self.earnings(u) if self.earnings else None,
