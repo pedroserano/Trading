@@ -247,8 +247,11 @@ export default function Scanner() {
                             c.body!,
                             account,
                           ),
-                          // Reviewed: placed or closed, the find comes off the list.
-                          onClosed: () => dismiss(c.symbol),
+                          // Placed: the find comes off the list. Closed without placing, it
+                          // stays, to look elsewhere and come back; × dismisses it.
+                          onClosed: (placed) => {
+                            if (placed) dismiss(c.symbol);
+                          },
                         })
                       }
                     >
