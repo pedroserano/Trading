@@ -390,7 +390,8 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
             f"flies at {pct(rules.profit_target_straddle)}; front ratios at "
             f"{pct(rules.profit_target_ratio)} of their max profit, the width plus the credit "
             f"(Tony Battista, tastylive: at least 10%); calendars and diagonals at "
-            f"{pct(rules.profit_target_calendar)} of the debit, a poor man's covered call at "
+            f"{pct(rules.profit_target_calendar)} of the debit, a poor man's covered call or "
+            "put at "
             f"{pct(rules.profit_target)} of its estimated max profit (tastylive's strategy "
             "guide); butterflies and broken-wing butterflies at "
             f"{pct(rules.profit_target_fly)} of their max profit, the near wing's width plus "
@@ -1007,7 +1008,7 @@ AUTO_STEPS = [
             "Close a credit trade at ⟦rules:profit_target⟧ of what it can make; straddles and "
             "iron flies at ⟦rules:profit_target_straddle⟧; front ratios at "
             "⟦rules:profit_target_ratio⟧ of the width plus the credit; calendars at "
-            "⟦rules:profit_target_calendar⟧ of the debit, a poor man's covered call at "
+            "⟦rules:profit_target_calendar⟧ of the debit, a poor man's covered call or put at "
             "⟦rules:profit_target⟧ of its estimated max profit; butterflies and broken-wing "
             "butterflies at ⟦rules:profit_target_fly⟧ of their max profit; a covered call at "
             "⟦rules:profit_target⟧ of the call's credit, keeping the shares "
@@ -1309,7 +1310,7 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
         ),
         (
             "Calendar / diagonal",
-            f"{pct(rules.profit_target_calendar)} of debit; a poor man's covered call "
+            f"{pct(rules.profit_target_calendar)} of debit; a poor man's covered call or put "
             f"{pct(rules.profit_target)} of its estimated max profit",
             "Close (front month)",
             "Notify",
@@ -1532,7 +1533,7 @@ def profit_basis(st: dict) -> tuple[float, float] | None:
         return (opt, opt) if opt and opt > 0 else None
     mp = n.get("max_profit")
     if n.get("pmcc"):
-        # A poor man's covered call: a share of its estimated max profit (tastylive's guide).
+        # A poor man's covered call or put: a share of its estimated max profit (tastylive's guide).
         return (mp, opened) if mp and mp > 0 and opened < 0 else None
     if name in CALENDARS:
         return (-opened, opened) if opened < 0 else None

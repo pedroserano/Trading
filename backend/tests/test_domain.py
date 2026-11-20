@@ -741,7 +741,20 @@ def test_poor_mans_covered_call_targets_half_its_estimated_max_profit():
     evaluate(st, TODAY, 630.0, Rules())
     assert st.numbers["pct_max_profit"] >= 0.5
     assert any(f["detail"].startswith("Profit target 50% of the estimated max") for f in st.flags)
-    # A put diagonal and a call diagonal with the long above the short keep the calendar rule.
+    # A call diagonal with the long above the short keeps the calendar rule.
     other = group([opt("C", 620, 1, 5.0, exp=far), opt("C", 600, -1, 3.0)])[0]
     evaluate(other, TODAY, 590.0, Rules())
     assert other.name == "Diagonal" and not other.numbers["pmcc"]
+    # A poor man's covered put: the long put deeper in the money, further out.
+    long_p = opt("P", 680, 1, 92.0, mark=92.0, exp=far)
+    long_p.iv = 0.20
+    short_p = opt("P", 560, -1, 3.0, mark=3.0)
+    pm = group([long_p, short_p])[0]
+    evaluate(pm, TODAY, 590.0, Rules())
+    ext = pmcc_extrinsic(long_p, short_p)
+    assert pm.numbers["pmcc"] and ext > 0
+    assert pm.numbers["max_profit"] == round((120 + ext) * 100 - 8900, 2)
+    # A put diagonal with the long below the short keeps the calendar rule.
+    low = group([opt("P", 560, 1, 5.0, exp=far), opt("P", 580, -1, 3.0)])[0]
+    evaluate(low, TODAY, 590.0, Rules())
+    assert not low.numbers["pmcc"]

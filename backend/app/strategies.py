@@ -602,8 +602,8 @@ def not_tasty(name: str, open_value: float) -> bool:
 
 
 def pmcc_parts(name: str, legs: list[Leg]) -> tuple[Leg, Leg] | None:
-    """(long call, short call) of a poor man's covered call: a diagonal of calls whose long,
-    further out in time, has the lower strike; else None."""
+    """(long, short) of a poor man's covered call or put: a diagonal whose long, further out
+    in time, is deeper in the money (a call's strike lower, a put's higher); else None."""
     if name != "Diagonal":
         return None
     longs = [x for x in legs if x.is_option and not x.short]
@@ -611,20 +611,24 @@ def pmcc_parts(name: str, legs: list[Leg]) -> tuple[Leg, Leg] | None:
     if len(longs) != 1 or len(shorts) != 1:
         return None
     lg, sh = longs[0], shorts[0]
-    if lg.put_call == sh.put_call == "C" and lg.strike < sh.strike:
+    if lg.put_call != sh.put_call:
+        return None
+    if lg.strike < sh.strike if lg.put_call == "C" else lg.strike > sh.strike:
         return lg, sh
     return None
 
 
 def pmcc_extrinsic(lg: Leg, sh: Leg) -> float:
-    """The long call's estimated time value per share when the short expires with the stock at
-    the short strike (the best case), from the long's own implied volatility; 0 without it.
+    """The long option's estimated time value per share when the short expires with the stock
+    at the short strike (the best case), from the long's own implied volatility; 0 without it.
     Rounded down to 0.25 so small moves in IV do not keep changing the target."""
     if not lg.iv or lg.iv <= 0:
         return 0.0
     years = (lg.expiration - sh.expiration).days / 365
-    value = bs("C", sh.strike, lg.strike, years, lg.iv)["price"]
-    return math.floor(max(value - (sh.strike - lg.strike), 0.0) * 4) / 4
+    # No interest rate: discounting would price a deep in-the-money put under its intrinsic
+    # value, which an American option never trades at.
+    value = bs(lg.put_call, sh.strike, lg.strike, years, lg.iv, r=0.0)["price"]
+    return math.floor(max(value - abs(sh.strike - lg.strike), 0.0) * 4) / 4
 
 
 def target_for(name: str, rules: Rules, pmcc: bool = False) -> float:
@@ -714,11 +718,12 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
                 gap = max(gap, (s_[0] - l_[0]) if pc == "P" else (l_[0] - s_[0]))
         max_loss = -open_value + gap * 100 * contracts
         if pmcc := pmcc_parts(name, legs):
-            # A poor man's covered call (tastylive's strategy guide): the width less the
-            # debit, plus the long call's estimated time value left when the short expires.
+            # A poor man's covered call or put (tastylive's strategy guide): the width less
+            # the debit, plus the long's estimated time value left when the short expires.
             lg, sh = pmcc
             q = abs(sh.quantity)
-            max_profit = ((sh.strike - lg.strike) + pmcc_extrinsic(lg, sh)) * 100 * q + open_value
+            width = abs(sh.strike - lg.strike)
+            max_profit = (width + pmcc_extrinsic(lg, sh)) * 100 * q + open_value
     elif name in BIG_LIZARDS or name == "Super bull" or name in BEARS:
         # A lizard: at most the credit. A super bull: the call spread's width plus the credit;
         # its loss is defined only with the long put (the modified version). A super bear or
@@ -827,7 +832,7 @@ def evaluate(st: Strategy, today: date, underlying_price: float | None, rules: R
         "option_open_value": None if option_open is None else round(option_open, 2),
         # A ZEBRA unit moves like 100 shares: long for calls, short for puts.
         "shares_like": _shares_like(name, opts),
-        # A poor man's covered call: its target is a share of its estimated max profit.
+        # A poor man's covered call or put: its target is a share of its estimated max profit.
         "pmcc": bool(pmcc_parts(name, legs)),
         # A covered call or put written against shares or a ZEBRA held separately, and the
         # ZEBRA's expiration: the option is never rolled past it.
