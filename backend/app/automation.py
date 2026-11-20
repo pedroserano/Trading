@@ -422,7 +422,9 @@ def rule_hints(rules, settings: dict) -> dict[str, str]:
         ),
         "dte": (
             f"When: {rules.manage_dte} DTE or less (Rules tab; for calendars, the front "
-            "month). Does: calendars, diagonals and butterflies are closed, never rolled; a "
+            "month). Does: a defined-risk trade at a loss is left to run to expiration (its "
+            "loss is capped; the expiration-day rule still closes it before an assignment). "
+            "Otherwise calendars, diagonals and butterflies are closed, never rolled; a "
             f"defined-risk trade is {defined}; an undefined-risk trade (a covered call: the "
             "call only) rolls out to about "
             f"{settings['roll_target_dte']} DTE at the same strikes for a credit, or closes "
@@ -666,7 +668,20 @@ def decide(
         and 0 < dte <= rules.manage_dte
         and st["name"] not in ZEBRAS
     ):
-        if st["name"] in CALENDARS:
+        pl = n.get("pl")
+        if st["defined_risk"] and pl is not None and pl < 0:
+            # The Unlucky Investor's Guide (Julia Spina): a defined-risk loser is better left
+            # to expire, as its loss is capped and it may recover. The expiration-day rule
+            # still closes it before an assignment.
+            out.append(
+                Action(
+                    "dte",
+                    "notify",
+                    f"{dte} DTE at a loss: defined risk, so left to run to expiration (its loss "
+                    "is capped and it may recover)",
+                )
+            )
+        elif st["name"] in CALENDARS:
             out.append(
                 Action(
                     "dte", "close", f"Front month at {dte} DTE: calendars are closed, not rolled"
@@ -1035,7 +1050,9 @@ AUTO_STEPS = [
             "⟦max_rolls⟧ rolls (0: no limit), or when the roll pays under ⟦min_roll_credit⟧ a "
             "unit.",
             "Defined-risk trades are ⟦dte_defined_action⟧; calendars and butterflies are always "
-            "closed.",
+            "closed. A defined-risk trade at a loss is left to run to expiration instead: its "
+            "loss is capped and it may recover (The Unlucky Investor's Guide to Options "
+            "Trading). The expiration-day rule still closes it before an assignment.",
             "An earnings play from the scanner is closed the session its report reaches the "
             "price, after the IV crush; the earnings, DTE, tested and low-IV rules leave it "
             "alone. Acts at: ⟦levels:eplay⟧",
@@ -1152,7 +1169,9 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
     instead.append(f"the roll pays under {least:g} credit" if least else "the roll pays no credit")
     roll_note = "closes instead when " + ", or ".join(instead)
     out_to = f"Roll out to ~{settings['roll_target_dte']} DTE, same strikes"
-    defined = "Close" if settings["dte_defined_action"] == "close" else "Roll out, same strikes"
+    defined = (
+        "Close" if settings["dte_defined_action"] == "close" else "Roll out, same strikes"
+    ) + "; at a loss, run to expiration"
     switch = settings.get("roll_single_itm", False)
     single = (
         "down/up and out, furthest strike that pays"
@@ -1312,7 +1331,7 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
             "Calendar / diagonal",
             f"{pct(rules.profit_target_calendar)} of debit; a poor man's covered call or put "
             f"{pct(rules.profit_target)} of its estimated max profit",
-            "Close (front month)",
+            "Close (front month); at a loss, run to expiration",
             "Notify",
             "Notify",
             "— (defined risk)",
@@ -1320,7 +1339,7 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
         (
             "Butterfly / broken-wing butterfly",
             f"{pct(rules.profit_target_fly)} of max profit",
-            "Close, never rolled",
+            "Close, never rolled; at a loss, run to expiration",
             "Notify",
             "Notify",
             "— (defined risk)",

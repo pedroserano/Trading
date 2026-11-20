@@ -1257,3 +1257,21 @@ def test_poor_mans_covered_call_target_order_is_half_its_estimated_max_profit():
     assert auto.target_limit(st, Rules()) == round((0.5 * 2700 + 9500) / 100, 2)
     plain = strat(name="Diagonal", defined=True, open_value=-400.0, legs=st["legs"])
     assert auto.profit_basis(plain) == (400.0, -400.0)
+
+
+def test_defined_risk_losers_run_to_expiration_winners_are_managed():
+    r, s = Rules(), merged_settings(None)
+    ic = strat(name="Iron condor", dte=20, defined=True)
+    ic["numbers"]["pl"] = -150.0
+    acts = decide(ic, 590, r, s, ALL)
+    assert ("dte", "notify") in kinds(acts) and "run to expiration" in acts[0].reason
+    assert not any(a.kind in ("close", "roll") for a in acts if a.rule == "dte")
+    ic["numbers"]["pl"] = 80.0
+    assert ("dte", "close") in kinds(decide(ic, 590, r, s, ALL))
+    # A calendar at a loss runs too; undefined risk at a loss is still rolled.
+    cal = strat(name="Calendar", dte=20, defined=True, open_value=-300.0)
+    cal["numbers"]["pl"] = -40.0
+    assert ("dte", "notify") in kinds(decide(cal, 590, r, s, ALL))
+    st = strat(dte=20)
+    st["numbers"]["pl"] = -200.0
+    assert ("dte", "roll") in kinds(decide(st, 590, r, s, ALL))
