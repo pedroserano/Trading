@@ -1761,6 +1761,19 @@ def create_app(
             d_theta = a["theta"] / nl if a.get("theta") is not None else None
             band_after = targets.after((pf.snapshot or {}).get("bands"), d_delta, d_theta)
             warnings.extend(band_after["warnings"])
+        # Defined-risk trades should hold at most a quarter of the buying power in short
+        # premium (The Unlucky Investor's Guide to Options Trading).
+        credit = t.limit_net is not None and t.limit_net > 0
+        if opening and defined and credit and bp and any(x.quantity < 0 for x in t.legs):
+            mix = portfolio_view.risk_mix(pf.snapshot or {})
+            after_mix = portfolio_view.mix_of(mix["defined_bp"] + bp, mix["undefined_bp"])
+            if after_mix["over"]:
+                warnings.append(
+                    f"Defined-risk trades would hold {after_mix['defined_share']:.0%} of the "
+                    "buying power in short premium, over the "
+                    f"{portfolio_view.MAX_DEFINED_SHARE:.0%} guide: at least three quarters "
+                    "should be undefined-risk trades, as in The Unlucky Investor's Guide"
+                )
         # A wide or thin market: advice, whatever the order does.
         watch_row = await watchlist.row(t.underlying)
         warnings.extend(guards.liquidity(t, (watch_row or {}).get("atm_oi")))

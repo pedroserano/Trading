@@ -115,3 +115,23 @@ def test_delta_by_position_theta_ladder_and_the_21_dte_calendar():
     # Dec 18 minus 21 days is Nov 27, in the week of Monday Nov 23.
     assert {t["underlying"] for t in weeks["2026-11-23"]["trades"]} == {"SPY", "XLE"}
     assert out["calendar"][-1]["week"] == "later"
+
+
+def test_defined_and_undefined_risk_share_of_short_premium():
+    s = snap()
+    for u in s["underlyings"]:
+        for st in u["strategies"]:
+            st["numbers"]["open_value"] = 150.0  # all opened for a credit
+    mix = pv.risk_mix(s)
+    und = pv.strategy_bp(s["underlyings"][0]["strategies"][0], 600.0) + pv.strategy_bp(
+        s["underlyings"][1]["strategies"][0], 90.0
+    )
+    assert mix["defined_bp"] == 350.0 and mix["undefined_bp"] == round(und, 2)
+    assert mix["defined_share"] == round(350 / (350 + und), 4) and not mix["over"]
+    assert pv.build(s, TODAY)["risk_mix"] == mix
+    # A debit trade (a calendar, a debit spread) is not short premium.
+    s["underlyings"][0]["strategies"][1]["numbers"]["open_value"] = -200.0
+    assert pv.risk_mix(s)["defined_bp"] == 0.0
+    # Over a quarter in defined risk is flagged.
+    assert pv.mix_of(300.0, 700.0)["over"] and not pv.mix_of(250.0, 750.0)["over"]
+    assert pv.mix_of(0.0, 0.0)["defined_share"] is None

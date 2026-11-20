@@ -882,6 +882,13 @@ def test_ticket_warns_on_debit_trades_and_thin_jade_lizards(client):
     wide = max(rows, key=lambda r: r["strike"])
     warn = preview([leg(sp, "put", -1), leg(sc, "call", -1), leg(wide, "call", 1)])
     assert any("upside is not free of risk" in w for w in warn)
+    # A credit spread with nothing undefined held: all of the short premium would be
+    # defined risk, over the quarter the Unlucky Investor's Guide allows.
+    warn = preview([leg(hi, "put", -1), leg(lo, "put", 1)])
+    assert any("Defined-risk trades would hold 100%" in w for w in warn)
+    # A strangle is undefined risk: no such warning.
+    warn = preview([leg(near("put", 0.16), "put", -1), leg(near("call", 0.16), "call", -1)])
+    assert not any("Defined-risk trades would hold" in w for w in warn)
 
 
 def test_a_trades_view_through_the_api(client):

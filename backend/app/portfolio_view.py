@@ -67,6 +67,50 @@ def strategy_bp(st: dict, spot: float | None) -> float | None:
     return bp_estimate(_legs(st), spot, -math.inf)
 
 
+# The Unlucky Investor's Guide to Options Trading (Julia Spina): of the buying power in short
+# premium, at least 75% in undefined-risk trades and at most 25% in defined-risk ones.
+MAX_DEFINED_SHARE = 0.25
+COVERED = ("Covered call", "Covered put", "Collar")
+
+
+def is_short_premium(st: dict) -> bool:
+    """A trade opened for a credit with short options: strangles, condors, verticals sold,
+    lizards and the like. Not covered calls (the shares hold their buying power), calendars
+    or other debit trades."""
+    n = st["numbers"]
+    shorts = any(x["kind"] == "OPTION" and x["quantity"] < 0 for x in st["legs"])
+    return shorts and (n.get("open_value") or 0) > 0 and st["name"] not in COVERED
+
+
+def risk_mix(snap: dict) -> dict:
+    """Buying power in short premium, split by defined and undefined risk."""
+    defined = undefined = 0.0
+    for u in snap.get("underlyings", []):
+        for st in u["strategies"]:
+            if not is_short_premium(st):
+                continue
+            bp = strategy_bp(st, u.get("price"))
+            if bp is None:
+                continue
+            if st["defined_risk"]:
+                defined += bp
+            else:
+                undefined += bp
+    return mix_of(defined, undefined)
+
+
+def mix_of(defined: float, undefined: float) -> dict:
+    total = defined + undefined
+    share = defined / total if total else None
+    return {
+        "defined_bp": round(defined, 2),
+        "undefined_bp": round(undefined, 2),
+        "defined_share": None if share is None else round(share, 4),
+        "max_defined_share": MAX_DEFINED_SHARE,
+        "over": share is not None and share > MAX_DEFINED_SHARE,
+    }
+
+
 def _monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
@@ -214,6 +258,7 @@ def build(
         "margin_balance": acct.get("margin_balance"),
         "free_cash": acct.get("free_cash"),
         "bands": snap.get("bands"),
+        "risk_mix": risk_mix(snap),
         "totals": snap.get("totals"),
         "manage_dte": manage_dte,
         "underlyings": rows,

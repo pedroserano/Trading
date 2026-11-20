@@ -59,6 +59,13 @@ interface PortfolioData {
   free_cash?: number | null;
   bp_ceiling_pct: number | null;
   bands: Bands | null;
+  risk_mix?: {
+    defined_bp: number;
+    undefined_bp: number;
+    defined_share: number | null;
+    max_defined_share: number;
+    over: boolean;
+  };
   manage_dte: number;
   underlyings: Row[];
   sectors: SectorRow[];
@@ -153,6 +160,18 @@ export default function Portfolio() {
             </span>
           </div>
         </div>
+        {data.risk_mix && data.risk_mix.defined_share !== null ? (
+          <div
+            className="stat"
+            title="Of the buying power in short premium (trades opened for a credit), the share in defined-risk trades. The Unlucky Investor's Guide to Options Trading: at most a quarter; at least three quarters undefined risk."
+          >
+            <div className="stat-label">Defined risk</div>
+            <div className="stat-value">
+              <span className={data.risk_mix.over ? "warn-text" : ""}>{pct(data.risk_mix.defined_share)}</span>
+              <span className="sub"> of short premium, at most {pct(data.risk_mix.max_defined_share)}</span>
+            </div>
+          </div>
+        ) : null}
         <BandLine label="β-Δ of net liq" b={data.bands?.delta} digits={1} />
         <BandLine label="Θ of net liq a day" b={data.bands?.theta} digits={2} />
       </div>
