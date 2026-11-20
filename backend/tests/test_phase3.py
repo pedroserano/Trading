@@ -1268,3 +1268,38 @@ def test_one_automation_switch_per_account(client):
     # The old pause switch still works, as Off and back.
     v = client.post("/api/automation/pause?account=sim", json={"paused": False}).json()
     assert v["mode"] == "auto" and v["paused"] is False
+
+
+def test_ticket_warns_when_the_underlying_moves_with_a_big_holding(client, monkeypatch):
+    from app import correlation
+
+    seen = {}
+
+    async def moves_with(self, symbol, big):
+        seen.update(big)
+        return [("QQQ", 0.9, 0.2)]
+
+    monkeypatch.setattr(correlation.Correlations, "moves_with", moves_with)
+    exps = client.get("/api/trade/SPY/expirations").json()
+    rows = client.get(f"/api/trade/SPY/chain?expiration={exps['default']}").json()["rows"]
+    rows = [r for r in rows if r["put"]["delta"] and r["call"]["delta"]]
+
+    def near(side, d):
+        return min(rows, key=lambda r: abs(abs(r[side]["delta"]) - d))
+
+    legs = [
+        {"symbol": near("put", 0.16)["put"]["symbol"], "quantity": -1, "effect": "open"},
+        {"symbol": near("call", 0.16)["call"]["symbol"], "quantity": -1, "effect": "open"},
+    ]
+    body = {"account": "sim", "intent": "open", "legs": legs}
+    # Nothing held yet: no big holding, no warning.
+    warn = client.post("/api/orders/preview", json=body).json()["warnings"]
+    assert not any("has moved with" in w for w in warn) and not seen
+    pv = client.post("/api/orders/preview", json=body).json()
+    assert (
+        client.post("/api/orders", json={**body, "limit_net": pv["limit_net"]}).status_code == 200
+    )
+    client.portal.call(client.app.state.accounts["portfolios"]["sim"].tick)
+    warn = client.post("/api/orders/preview", json=body).json()["warnings"]
+    assert "SPY" in seen
+    assert any(w.startswith("SPY has moved with QQQ (0.90, 20% of net liq)") for w in warn)

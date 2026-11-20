@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from . import chain as chain_mod
 from . import dividends, plain, portfolio_view, targets
 from .automation import LEVELS, Action, _hm
+from .correlation import Correlations, big_underlyings
 from .earnings import sessions_until
 from .extremes import compute as compute_extreme
 from .pacing import background, count_waits, priority
@@ -800,9 +801,11 @@ class Scanner:
         clock=lambda: datetime.now(ET),
         earnings=None,
         history=None,
+        correlations=None,
     ):
         self.store = store
         self.source = source
+        self.correlations = correlations or Correlations(source, lambda: clock().date())
         self.portfolios = portfolios
         self.automations = automations
         self.watchlist = watchlist
@@ -1291,16 +1294,28 @@ class Scanner:
                 if vol["skew"] is not None:
                     candidates[-1]["volatility"] += f" · skew {vol['skew']:.1f}"
                 candidates[-1]["label"] += f" ({candidates[-1]['volatility']})"
+            # Underlyings that move with ones already holding much of the buying power are
+            # noted and placed last (The Unlucky Investor's Guide: diversify underlyings).
+            big = big_underlyings(portfolio_view.bp_by_underlying(snap), net_liq)
+            for c in candidates:
+                with_ = await self.correlations.moves_with(c["symbol"], big) if big else []
+                c["moves_with"] = [{"symbol": u, "correlation": r} for u, r, _ in with_]
+                if with_:
+                    c["label"] += " · moves with " + ", ".join(
+                        f"{u} ({r:.2f})" for u, r, _ in with_
+                    )
             acted = []
             if act and level != "off":
                 # Trades that keep delta in its band first, then those leaning (back toward the
-                # band or against a price extreme), then by IV rank.
+                # band or against a price extreme), then those not moving with a big holding,
+                # then by IV rank.
                 order = sorted(
                     candidates,
                     key=lambda c: (
                         bool(c.get("delta_push")),
                         not c.get("drop_signal"),
                         not c.get("tilt"),
+                        bool(c.get("moves_with")),
                         -c["score"],
                     ),
                 )

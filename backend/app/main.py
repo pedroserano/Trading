@@ -69,6 +69,8 @@ from .automation import (
 )
 from .chain_service import ChainService
 from .config import Settings, get_settings
+from .correlation import Correlations, big_underlyings
+from .correlation import warning as correlation_warning
 from .datasource import SchwabDataSource
 from .earnings import EarningsService
 from .extremes import PriceHistory
@@ -471,6 +473,7 @@ def create_app(
         )
     if source is None:
         source = SchwabDataSource(schwab)
+    correlations = Correlations(source, lambda: portfolio.clock().date())
     notifier = notifier or PushoverNotifier(settings.pushover_user_key, settings.pushover_app_token)
 
     def connection_status() -> ConnectionStatus:
@@ -1774,6 +1777,20 @@ def create_app(
                     f"{portfolio_view.MAX_DEFINED_SHARE:.0%} guide: at least three quarters "
                     "should be undefined-risk trades, as in The Unlucky Investor's Guide"
                 )
+        # An underlying moving with ones already holding much of the buying power (The
+        # Unlucky Investor's Guide: diversify underlyings against outlier losses).
+        if opening and not t.stock:
+            snap_now = pf.snapshot or {}
+            big = big_underlyings(
+                portfolio_view.bp_by_underlying(snap_now),
+                (snap_now.get("account") or {}).get("net_liq"),
+            )
+            if big:
+                w = correlation_warning(
+                    t.underlying, await correlations.moves_with(t.underlying, big)
+                )
+                if w:
+                    warnings.append(w)
         # A wide or thin market: advice, whatever the order does.
         watch_row = await watchlist.row(t.underlying)
         warnings.extend(guards.liquidity(t, (watch_row or {}).get("atm_oi")))
@@ -2413,6 +2430,7 @@ def create_app(
         clock=lambda: portfolio.clock(),
         earnings=earnings,
         history=history,
+        correlations=correlations,
     )
     app.state.scanner = scanner
 

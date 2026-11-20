@@ -891,3 +891,22 @@ def test_presets_set_how_boldly_it_sells_and_leave_the_rest():
     e = scan_mod.merged(scan_mod.apply_preset(c, "earnings"))
     assert e["earnings_play"] and e["fade"] and e["min_ivr"] == 30
     assert scan_mod.preset_of({**e, "min_ivr": 35}) is None  # Custom
+
+
+@pytest.mark.anyio
+async def test_finds_moving_with_a_big_holding_are_noted_and_placed_last(monkeypatch):
+    scanner, _, _ = harness({"min_ic_credit": 0.15})
+
+    class Stub:
+        async def moves_with(self, symbol, big):
+            assert big == {"QQQ": 0.2}
+            return [("QQQ", 0.91, 0.2)] if symbol == "SPY" else []
+
+    scanner.correlations = Stub()
+    monkeypatch.setattr(sc.portfolio_view, "bp_by_underlying", lambda snap: {"QQQ": 20_000.0})
+    r = await scanner.scan("sim", act=False)
+    spy = next(c for c in r["candidates"] if c["symbol"] == "SPY")
+    assert spy["moves_with"] == [{"symbol": "QQQ", "correlation": 0.91}]
+    assert "moves with QQQ (0.91)" in spy["label"]
+    others = [c for c in r["candidates"] if c["symbol"] != "SPY"]
+    assert all(c["moves_with"] == [] for c in others)

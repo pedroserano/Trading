@@ -82,6 +82,21 @@ def is_short_premium(st: dict) -> bool:
     return shorts and (n.get("open_value") or 0) > 0 and st["name"] not in COVERED
 
 
+def bp_by_underlying(snap: dict) -> dict[str, float]:
+    """Buying power each underlying holds, from its trades (unknown ones left out)."""
+    out: dict[str, float] = {}
+    for u in snap.get("underlyings", []):
+        total = 0.0
+        for st in u.get("strategies") or []:
+            if not st.get("legs"):
+                continue
+            bp = strategy_bp(st, u.get("price"))
+            total += bp or 0.0
+        if total:
+            out[u["symbol"]] = total
+    return out
+
+
 def risk_mix(snap: dict) -> dict:
     """Buying power in short premium, split by defined and undefined risk."""
     defined = undefined = 0.0
