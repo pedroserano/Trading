@@ -2749,11 +2749,15 @@ def create_app(
 
     @app.get("/api/export/sheet", dependencies=[Depends(require_login)])
     async def api_export_sheet(start: date, end: date, account: str = "live"):
-        known(account)
         if account == "sim":
             raise HTTPException(status_code=400, detail="Export is for Schwab accounts")
-        label = chains[account].sheet_label() or registry.name(account)
-        rows = export_rows(chains[account].result["chains"], start, end, label)
+        # All: every Schwab account's trades in one sheet, each row with its account.
+        keys = [k for k, _ in schwab_accounts()] if account == combined.ALL else [account]
+        rows = []
+        for k in keys:
+            known(k)
+            label = chains[k].sheet_label() or registry.name(k)
+            rows += export_rows(chains[k].result["chains"], start, end, label)
         content = export_xlsx(rows)
         name = f"trades-{start.isoformat()}-to-{end.isoformat()}.xlsx"
         return StreamingResponse(

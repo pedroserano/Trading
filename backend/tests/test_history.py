@@ -471,6 +471,9 @@ def test_stored_history_feeds_activity_dashboard_and_export(client):
     assert client.get("/api/dashboard?account=sim").json()["count"] == 0
     exp = client.get("/api/export/sheet?start=2020-01-01&end=2030-01-01")
     assert exp.status_code == 200 and exp.content[:2] == b"PK"
+    # All: every Schwab account in one sheet.
+    both = client.get("/api/export/sheet?start=2020-01-01&end=2030-01-01&account=all")
+    assert both.status_code == 200 and both.content[:2] == b"PK"
 
 
 def test_a_failing_sheet_merge_keeps_schwab_trades_and_says_why(client, monkeypatch):

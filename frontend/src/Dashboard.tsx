@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getJson } from "./api";
-import { ALL, ViewContext } from "./context";
+import { ViewContext } from "./context";
 import { pct, signed } from "./format";
 
 interface Stats {
@@ -121,7 +121,7 @@ export default function Dashboard() {
         ) : (
           <span className="dim-text">Simulated account</span>
         )}
-        {account !== "sim" && account !== ALL ? <ExportForm account={account} /> : null}
+        {account !== "sim" ? <ExportForm account={account} /> : null}
       </div>
       {error ? <div className="banner warn">{error}</div> : null}
       {data && data.prices_pending ? (
