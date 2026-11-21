@@ -166,6 +166,26 @@
     <p class="save"><button class="primary" type="submit">Save targets</button></p>
   </form>
 </section>
+<section id="core">
+  <h2>Core shares</h2>
+  <p class="dim small">Stock you hold apart from options trading, one line each: <code>AAPL 200</code>.
+     Up to that many shares, and the covered calls written on them (one per 100), are left out
+     of the portfolio's delta: the header's figure, the delta band, the scanner's lean and
+     automanage's portfolio view. Shares above the number still count, as does every other
+     option on the stock. Net liq, buying power and P/L are unchanged.</p>
+  {% if accounts %}
+  <form method="post" action="/portfolio/core">
+    {% for a in accounts %}
+    <p style="margin:12px 0 4px"><label for="core-{{ a.key }}"><b>{{ a.name }}</b> <span class="dim">…{{ a.last4 }}</span></label></p>
+    <textarea id="core-{{ a.key }}" name="core_{{ a.key }}" rows="3" spellcheck="false" style="width:100%;box-sizing:border-box"
+      autocapitalize="characters" placeholder="AAPL 200">{{ core_text.get(a.key, "") }}</textarea>
+    {% endfor %}
+    <p class="save"><button class="primary" type="submit">Save core shares</button></p>
+  </form>
+  {% else %}
+  <p class="dim">Connect Schwab first: core shares are set per Schwab account.</p>
+  {% endif %}
+</section>
 </div>
 
 {# ------------------------------------------------------------------------------------ #}

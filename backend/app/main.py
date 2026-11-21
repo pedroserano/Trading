@@ -44,6 +44,7 @@ from . import (
 from . import cash as cash_mod
 from . import chain as chain_mod
 from . import chains as chains_mod
+from . import core as core_mod
 from . import dashboard as dash
 from . import scanner as scan_mod
 from .accounts import AccountRegistry
@@ -869,6 +870,7 @@ def create_app(
             {
                 "status": status,
                 "accounts": accounts,
+                "core_text": await store.get_setting(core_mod.KEY) or {},
                 "sheet_labels": registry.sheet_labels,
                 "hide_sim": await sim_hidden(),
                 "sim_start_cash": (await broker.snapshot())["start_cash"],
@@ -1002,6 +1004,32 @@ def create_app(
         except ValueError as e:
             request.session["flash"] = str(e)
         return RedirectResponse(settings_url("account"), status_code=303)
+
+    @app.post("/portfolio/core", dependencies=[Depends(require_login)])
+    async def portfolio_core(request: Request):
+        """Core shares, per account: left out of the portfolio's delta."""
+        form = dict(await request.form())
+        saved = dict(await store.get_setting(core_mod.KEY) or {})
+        bad = []
+        for key in portfolios:
+            field = f"core_{key}"
+            if field not in form:
+                continue
+            text = str(form[field]).strip()
+            _, wrong = core_mod.parse(text)
+            bad += wrong
+            if text:
+                saved[key] = text
+            else:
+                saved.pop(key, None)
+        if bad:
+            request.session["flash"] = "Core shares: could not read " + "; ".join(bad)
+            return RedirectResponse(settings_url("core"), status_code=303)
+        await store.set_setting(core_mod.KEY, saved)
+        for pf in portfolios.values():
+            pf.refresh_soon()
+        request.session["notice"] = "Core shares saved: left out of the portfolio's delta."
+        return RedirectResponse(settings_url("core"), status_code=303)
 
     @app.post("/accounts/hide-sim", dependencies=[Depends(require_login)])
     async def account_hide_sim(request: Request, hide_sim: str = Form("")):

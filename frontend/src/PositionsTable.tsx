@@ -311,7 +311,11 @@ function UnderGroup(props: {
               key={c}
               title={
                 c === "dbw"
-                  ? `Delta ${signed(u.delta, 0)} shares of ${u.symbol}`
+                  ? `Delta ${signed(u.delta, 0)} shares of ${u.symbol}` +
+                    (u.core
+                      ? `; β-Δ leaves out ${u.core.shares} core shares` +
+                        (u.core.calls ? ` and the ${u.core.calls} call${u.core.calls > 1 ? "s" : ""} on them` : "")
+                      : "")
                   : undefined
               }
             >

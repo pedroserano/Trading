@@ -107,6 +107,8 @@ export interface UnderlyingView {
   change_pct: number | null;
   /** Today's change in points. */
   change?: number | null;
+  /** Core shares (Settings, Portfolio) left out of the portfolio's delta, with the calls on them. */
+  core?: { shares: number; calls: number; delta: number | null } | null;
   beta: number | null;
   ivr: IvRank | null;
   earnings?: EarningsInfo | null;

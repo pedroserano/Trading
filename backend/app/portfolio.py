@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from . import analytics, dividends, targets
 from . import cash as cash_mod
 from . import chains as chains_mod
+from . import core as core_mod
 from . import ivref as ivref_mod
 from .datasource import VIX, DataSource
 from .options import Leg, leg_from_schwab_position
@@ -78,6 +79,7 @@ class PortfolioService:
         # Which account, for notification keys and titles (empty: the first Schwab account
         # or the simulated one, whose keys predate several accounts).
         self.account = account
+        self.core: dict[str, int] = {}  # core shares by symbol, from Settings
         self.name = name
         self.source = source
         self.store = store
@@ -210,6 +212,11 @@ class PortfolioService:
             except TimeoutError:
                 pass
 
+    @property
+    def key(self) -> str:
+        """This account's key in the account picker: "live", "sim" or another account's."""
+        return self.account or ("sim" if self.mode == "sim" else "live")
+
     def _session(self) -> str:
         open_today = None
         if self.open_today and self.open_today[0] == self.clock().date():
@@ -218,6 +225,10 @@ class PortfolioService:
 
     async def tick(self) -> None:
         self.needs = None
+        # Core shares for this account: left out of the portfolio's delta.
+        self.core, _ = core_mod.parse(
+            ((await self.store.get_setting(core_mod.KEY)) or {}).get(self.key, "")
+        )
         if self.preferences is not None:
             self.rules = await self.preferences.rules()
             if self.include_watchlist:
@@ -665,9 +676,15 @@ class PortfolioService:
                 if risky:
                     sj["flags"] = [*sj["flags"], dividends.flag(risky, div)]
                 out_strats.append(sj)
+            # Core shares, and the calls on them, are left out of the portfolio's delta.
+            core = core_mod.excluded(strategies, self.core.get(u, 0))
             delta_bw = None
-            if not u_missing["delta"] and bw is not None:
-                delta_bw = u_tot["delta"] * bw
+            if (
+                not u_missing["delta"]
+                and bw is not None
+                and (core is None or core["delta"] is not None)
+            ):
+                delta_bw = (u_tot["delta"] - (core["delta"] if core else 0.0)) * bw
             for k, v in (
                 ("pl", u_tot["pl"]),
                 ("day_pl", u_tot["day_pl"]),
@@ -702,6 +719,7 @@ class PortfolioService:
                     "day_pl": None if u_missing["day_pl"] else round(u_tot["day_pl"], 2),
                     "delta": None if u_missing["delta"] else round(u_tot["delta"], 1),
                     "delta_bw": None if delta_bw is None else round(delta_bw, 1),
+                    "core": core,
                     "theta": None if u_missing["theta"] else round(u_tot["theta"], 2),
                     "vega": None if u_missing["vega"] else round(u_tot["vega"], 1),
                     "gamma": None if u_missing["gamma"] else round(u_tot["gamma"], 2),
