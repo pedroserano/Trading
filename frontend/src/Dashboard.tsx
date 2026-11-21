@@ -75,9 +75,8 @@ function compact(v: number): string {
 
 type Tab = "overview" | "worked";
 
-export default function Dashboard() {
+export default function Dashboard({ tab }: { tab: Tab }) {
   const account = useContext(ViewContext);
-  const [tab, setTab] = useState<Tab>("overview");
   const [futures, setFutures] = useState(false);
   const [data, setData] = useState<DashData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,15 +102,6 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <div className="toolbar">
-        <div className="seg" role="tablist" aria-label="Dashboard view">
-          <button aria-pressed={tab === "overview"} onClick={() => setTab("overview")}>
-            Overview
-          </button>
-          <button aria-pressed={tab === "worked"} onClick={() => setTab("worked")}>
-            What worked
-          </button>
-
-        </div>
         {account !== "sim" ? (
           <>
             <label className="check">

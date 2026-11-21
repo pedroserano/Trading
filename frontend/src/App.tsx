@@ -36,7 +36,7 @@ type Route =
   | { page: "positions"; risk: boolean }
   | { page: "watchlist" }
   /** History: orders and trades (once Activity), or stats (once Dashboard). */
-  | { page: "history"; tab: "orders" | "stats" }
+  | { page: "history"; tab: "orders" | "stats" | "worked" }
   | { page: "settings"; section: string | null }
   | { page: "trade"; symbol: string };
 
@@ -55,7 +55,10 @@ function parseRoute(hash: string): Route {
   if (parts[0] === "activity") return { page: "history", tab: "orders" };
   if (parts[0] === "dashboard") return { page: "history", tab: "stats" };
   if (parts[0] === "history")
-    return { page: "history", tab: parts[1] === "stats" ? "stats" : "orders" };
+    return {
+      page: "history",
+      tab: parts[1] === "stats" ? "stats" : parts[1] === "worked" ? "worked" : "orders",
+    };
   if (parts[0] === "settings")
     return { page: "settings", section: parts[1] || null };
   if (parts[0] === "trade")
@@ -220,9 +223,20 @@ export default function App() {
                           >
                             Stats
                           </a>
+                          <a
+                            className="seg-link"
+                            href="#/history/worked"
+                            aria-pressed={route.tab === "worked"}
+                          >
+                            What worked
+                          </a>
                         </div>
                       </div>
-                      {route.tab === "orders" ? <Activity /> : <Dashboard />}
+                      {route.tab === "orders" ? (
+                        <Activity />
+                      ) : (
+                        <Dashboard tab={route.tab === "worked" ? "worked" : "overview"} />
+                      )}
                     </>
                   ) : null}
                   {route.page === "settings" ? (
