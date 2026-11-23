@@ -124,17 +124,22 @@ class SchwabService:
         if not self._store.exists():
             return
         try:
-            self._client = auth.client_from_access_functions(
-                self._app_key,
-                self._app_secret,
-                token_read_func=self._store.read,
-                token_write_func=self._store.write,
-                asyncio=True,
-            )
+            self._client = self._build()
             self._load_error = None
         except TokenStoreError as e:
             self._load_error = str(e)
             log.warning("Could not load Schwab token: %s", e)
+
+    def _build(self):
+        """A client on the stored token that renews it. schwab-py's sign-in client lacks
+        Schwab's token address, so its first renewal fails (token_invalid); always use this."""
+        return auth.client_from_access_functions(
+            self._app_key,
+            self._app_secret,
+            token_read_func=self._store.read,
+            token_write_func=self._store.write,
+            asyncio=True,
+        )
 
     def status(self) -> ConnectionStatus:
         if self._client is None:
@@ -188,7 +193,8 @@ class SchwabService:
             # Authorization codes are single-use and short-lived; any failure means start over.
             self._auth_context = None
             raise SchwabError(f"Schwab rejected the sign-in: {type(e).__name__}: {e}") from e
-        old, self._client = self._client, client
+        await client.close_async_session()
+        old, self._client = self._client, self._build()
         self._auth_context = None
         self._load_error = None
         self._clear_auth_failure()

@@ -339,6 +339,36 @@ async def test_sign_in_returns_to_the_address_it_was_started_at(tmp_path):
     assert "redirect_uri=https%3A%2F%2F127.0.0.1%3A8182" in svc.authorization_url()
 
 
+@pytest.mark.anyio
+async def test_sign_in_client_can_renew_the_token(tmp_path, monkeypatch):
+    # schwab-py's sign-in client has no token address, so its renewals fail with
+    # token_invalid. The service must swap in a client built from the stored token.
+    import time
+
+    from schwab import auth
+
+    store = TokenStore(tmp_path / "t", SECRET)
+
+    class Bare:
+        async def close_async_session(self):
+            self.closed = True
+
+    bare = Bare()
+
+    def fake_exchange(key, secret, ctx, url, write, asyncio):
+        token = {"access_token": "a", "refresh_token": "r", "expires_at": time.time() + 1800}
+        write({"creation_timestamp": int(time.time()), "token": token})
+        return bare
+
+    monkeypatch.setattr(auth, "client_from_received_url", fake_exchange)
+    svc = SchwabService("k", "s", "https://127.0.0.1:8182", store)
+    svc.authorization_url()
+    await svc.complete_authorization("https://127.0.0.1:8182/?code=a")
+    assert bare.closed
+    assert svc._client.session.metadata["token_endpoint"].endswith("/oauth/token")
+    assert svc.status().connected
+
+
 class _Resp:
     def __init__(self, status, body=b"{}"):
         self.status_code = status
