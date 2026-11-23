@@ -602,6 +602,19 @@ def decide(
         and (spot < x["strike"] if x["put_call"] == "P" else spot > x["strike"])
         for x in at_risk
     )
+    # A long option expiring in the money is exercised automatically (OCC exercise by
+    # exception, $0.01 or more): a debit spread between its strikes would buy (call) or sell
+    # short (put) the shares, on margin. A long put covered by shares only sells them.
+    shares = sum(x["quantity"] for x in st["legs"] if x["kind"] == "EQUITY")
+    long_itm = any(
+        spot is not None
+        and x["strike"] is not None
+        and x.get("dte") == 0
+        and (spot > x["strike"] if x["put_call"] == "C" else spot < x["strike"])
+        and not (x["put_call"] == "P" and shares >= 100 * x["quantity"])
+        for x in st["legs"]
+        if x["kind"] == "OPTION" and x["quantity"] > 0
+    )
     near = (
         not exp_itm
         and margin > 0
@@ -615,7 +628,7 @@ def decide(
     if (
         levels.get("expiry", "off") != "off"
         and dte == 0
-        and (exp_itm or near)
+        and (exp_itm or near or long_itm)
         and (now is None or in_expiry_span(now, settings))
     ):
         out.append(
@@ -624,6 +637,9 @@ def decide(
                 "close",
                 "Expiration day with a short strike in the money"
                 if exp_itm
+                else "Expiration day with a long option in the money: close before it is "
+                "exercised into shares"
+                if long_itm
                 else "Expiration day with a short strike near the money: close before "
                 "it can be assigned",
             )
@@ -1096,7 +1112,8 @@ AUTO_STEPS = [
             "From ⟦expiry_close_at⟧ ET (⟦levels:expiry⟧), "
             "close any short still in the "
             "money, or within ⟦expiry_pin_margin⟧% of its strike (0: in the money only), so "
-            "nothing is assigned by surprise.",
+            "nothing is assigned by surprise. Also a spread whose long option expires in the "
+            "money: it would be exercised automatically into shares.",
             "Except a Would own put you can pay for: it is left to be assigned, so you buy the "
             "shares at your price, only when your cash and sweep cover it after your other "
             "Would own puts. Never margin: without the cash it is closed and you are told why "
@@ -1386,7 +1403,8 @@ def rules_map(rules, settings: dict, accounts: list[tuple[str, str]] | None = No
                 f"Expiration day: from {settings.get('expiry_close_at', '15:45')} ET, a short "
                 "still in the money"
                 + (f" or within {pct(margin)} of its strike" if margin else "")
-                + " is closed (12:45 on early-close days)",
+                + ", or a spread's long option in the money (it would be exercised into "
+                "shares), is closed (12:45 on early-close days)",
             ),
             (
                 "earnings",

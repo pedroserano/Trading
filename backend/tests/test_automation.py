@@ -605,6 +605,44 @@ def test_expiry_rule_waits_for_its_close_time():
     assert not any(a.rule == "expiry" for a in decide(zero, 557, r, pin, ALL, now=at(15, 46)))
 
 
+def test_expiry_rule_closes_a_spread_whose_long_option_finishes_in_the_money():
+    s, r = merged_settings(None), Rules()
+    late = datetime(2026, 11, 11, 15, 46, tzinfo=ET)
+
+    def spread(pc, lo, hi, n=1):
+        a, b = leg(pc, lo, n), leg(pc, hi, -n)
+        return strat("Vertical", dte=0, defined=True, legs=[{**a, "dte": 0}, {**b, "dte": 0}])
+
+    # Debit call spread 600/610 at 605: the long call would be exercised into shares.
+    (a,) = [
+        a for a in decide(spread("C", 600, 610), 605, r, s, ALL, now=late) if a.rule == "expiry"
+    ]
+    assert a.kind == "close" and "exercised" in a.reason
+    # Below both strikes nothing expires in the money.
+    assert not any(
+        a.rule == "expiry" for a in decide(spread("C", 600, 610), 595, r, s, ALL, now=late)
+    )
+    # Debit put spread 560/550 at 555: the long put would sell shares short.
+    put = spread("P", 550, 560)
+    put["legs"] = [{**put["legs"][0], "quantity": -1}, {**put["legs"][1], "quantity": 1}]
+    assert ("expiry", "close") in kinds(decide(put, 555, r, s, ALL, now=late))
+    # A long put on shares it covers only sells them: left alone.
+    shares = {"kind": "EQUITY", "put_call": None, "strike": None, "quantity": 100}
+    collar = strat(
+        "Collar",
+        dte=0,
+        legs=[shares, {**leg("P", 560, 1), "dte": 0}, {**leg("C", 620, -1), "dte": 0}],
+    )
+    assert not any(a.rule == "expiry" for a in decide(collar, 555, r, s, ALL, now=late))
+    # A diagonal's long expiring later is not exercised today.
+    diag = strat(
+        "Diagonal",
+        dte=0,
+        legs=[{**leg("C", 600, 1), "dte": 30}, {**leg("C", 610, -1), "dte": 0}],
+    )
+    assert not any(a.rule == "expiry" for a in decide(diag, 605, r, s, ALL, now=late))
+
+
 def test_expiry_close_settings_are_validated():
     s = parse_settings({"expiry_close_at": "15:50", "expiry_pin_margin": "0.1"}, None)
     assert (s["expiry_close_at"], s["expiry_pin_margin"]) == ("15:50", pytest.approx(0.001))
